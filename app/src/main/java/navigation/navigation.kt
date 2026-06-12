@@ -1,5 +1,12 @@
 package com.example.ngilizcequizapp
+import com.google.mlkit.nl.languageid.LanguageIdentification
+import com.example.ngilizcequizapp.SpeechAssistant
 
+// Diğer importların...
+
+
+import androidx.compose.material.icons.outlined.BookmarkBorder // Genişletilmiş kütüphane gerekir
+import androidx.compose.material.icons.filled.BookmarkBorder
 
 
 import androidx.compose.animation.core.*
@@ -9,13 +16,10 @@ import androidx.compose.ui.draw.paint
 
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.TileMode
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.ShaderBrush
 
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.res.imageResource
 import androidx.compose.runtime.remember
 
@@ -37,9 +41,6 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -63,7 +64,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -93,8 +93,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import org.json.JSONArray
 import java.util.*
-import com.example.ngilizcequizapp.QuizRepository
-
+import android.content.Intent
 private val PureWhite = Color(0xFFFFFFFF)
 private val SoftGradientBlue = Color(0xFFE3F2FD)
 
@@ -233,7 +232,7 @@ fun DictionaryScreen() {
 @Composable
 fun WordPopup(
     word: String,
-    ttsHelper: com.example.ngilizcequizapp.TextToSpeechHelper, // ✅ Seslendirme için eklendi
+    ttsHelper: SpeechAssistant,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -674,7 +673,32 @@ fun EliteHomeScreen(
     showQuizPrompt: Boolean,
     onDismissQuizPrompt: () -> Unit
 ) {
-    // 🎨 Renk Tanımları
+
+    // 🎨 Tüm veriler EN ÜSTTE tek yerde tanımlandı
+    val dailyWords = listOf(
+        "Serendipity" to "Tesadüfi başarı, mutlu sürpriz",
+        "Resilient" to "Zorluklara karşı dayanıklı",
+        "Eloquent" to "Güzel ve etkili konuşan"
+    )
+
+    val dailyIdioms = listOf(
+        "Break a leg" to "İyi şanslar (sahne öncesi söylenir)",
+        "Piece of cake" to "Çok kolay, çocuk oyuncağı",
+        "Under the weather" to "Biraz halsiz veya hasta hissetmek"
+    )
+
+    // 🔹 STATE — tek yerde tanımlandı, tekrar edilmedi
+    var wordIndex by remember { mutableIntStateOf(0) }
+    var isBookmarked by remember { mutableStateOf(false) }
+
+    var idiomIndex by remember { mutableIntStateOf(0) }
+    var isIdiomBookmarked by remember { mutableStateOf(false) }
+
+    // 🔹 Güncel kelime ve deyim — tek yerde hesaplandı
+    val currentWord = dailyWords[wordIndex]
+    val currentIdiom = dailyIdioms[idiomIndex]
+
+    // 🎨 Renkler
     val BrokenIceBlueText = Color(0xFF2C3E50)
     val SoftIceBlue = Color(0xFFB3E5FC)
     val VividIceBlue = Color(0xFF5D9CEC)
@@ -718,9 +742,6 @@ fun EliteHomeScreen(
                     )
                 )
         )
-
-        // --- ✨ SABİT LOGO: MEWENGLISH (Yeşil alanda parlayan) ---
-
 
         // --- 🚀 ANA İÇERİK LİSTESİ ---
         LazyColumn(
@@ -781,10 +802,24 @@ fun EliteHomeScreen(
                         }
                         Spacer(modifier = Modifier.width(16.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Reading", color = BrokenIceBlueText, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
-                            Text(text = "Profesör Kedi ile hikaye oku", color = BrokenIceBlueText.copy(alpha = 0.6f), fontSize = 13.sp)
+                            Text(
+                                text = "Reading",
+                                color = BrokenIceBlueText,
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = "Profesör Kedi ile hikaye oku",
+                                color = BrokenIceBlueText.copy(alpha = 0.6f),
+                                fontSize = 13.sp
+                            )
                         }
-                        Icon(imageVector = Icons.Default.ArrowForwardIos, contentDescription = null, tint = Color(0xFF3897F0), modifier = Modifier.size(18.dp))
+                        Icon(
+                            imageVector = Icons.Default.ArrowForwardIos,
+                            contentDescription = null,
+                            tint = Color(0xFF3897F0),
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
             }
@@ -799,19 +834,36 @@ fun EliteHomeScreen(
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         repeat(4) { index ->
-                            Box(modifier = Modifier
-                                .weight(1f)
-                                .height(8.dp)
-                                .background(
-                                    color = if (index == 0) VividIceBlue else Color(0xFFE5E5EA),
-                                    shape = RoundedCornerShape(10.dp)
-                                ))
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(8.dp)
+                                    .background(
+                                        color = if (index == 0) VividIceBlue else Color(0xFFE5E5EA),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                            )
                         }
                     }
                     Spacer(modifier = Modifier.height(20.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        DashboardSmallCard(title = "Mistake Jar", imageRes = R.drawable.mistake_case, color = Color(0xFFFF6B6B), modifier = Modifier.weight(1f), onClick = { /* MistakeJar */ })
-                        DashboardSmallCard(title = "Word", imageRes = R.drawable.kelimelerim, color = VividIceBlue, modifier = Modifier.weight(1f), onClick = { navController.navigate(Screen.Word.route) })
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        DashboardSmallCard(
+                            title = "Mistake Jar",
+                            imageRes = R.drawable.mistake_case,
+                            color = Color(0xFFFF6B6B),
+                            modifier = Modifier.weight(1f),
+                            onClick = { /* MistakeJar */ }
+                        )
+                        DashboardSmallCard(
+                            title = "Word",
+                            imageRes = R.drawable.kelimelerim,
+                            color = VividIceBlue,
+                            modifier = Modifier.weight(1f),
+                            onClick = { navController.navigate(Screen.Word.route) }
+                        )
                     }
                 }
             }
@@ -819,29 +871,199 @@ fun EliteHomeScreen(
             // --- 4. GÖREVLER (Mission) ---
             item {
                 Column {
-                    Text(text = "Bugünkü Mission", color = BrokenIceBlueText, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                    Box(modifier = Modifier
-                        .fillMaxWidth()
-                        .wrapContentHeight()) {
-                        LazyRow(
-                            modifier = Modifier
-                                .padding(top = 16.dp)
-                                .fillMaxWidth(),
-                            contentPadding = PaddingValues(start = 4.dp, end = 4.dp, bottom = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            item { ActivitySmallCard(title = "Sheet Test", emoji = "🧪", accentColor = Color(0xFFFFAB91), modifier = Modifier.clickable { navController.navigate("sheet_screen") }) }
-                            item { ActivitySmallCard(title = "Listening", imageRes = R.drawable.listening, accentColor = Color(0xFF4FC3F7), modifier = Modifier
-                                .scale(1.05f)
-                                .clickable { navController.navigate(Screen.ListeningLevel.route) }) }
-                            item { ActivitySmallCard(title = "Idiom", emoji = "🌟", accentColor = Color(0xFF29B6F6)) }
+                    Text(
+                        text = "Bugünkü Mission",
+                        color = BrokenIceBlueText,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    LazyRow(
+                        modifier = Modifier
+                            .padding(top = 16.dp)
+                            .fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 1. Kart: Sheet Test
+                        item {
+                            ActivitySmallCard(
+                                title = "Sheet Test",
+                                emoji = "🧪",
+                                accentColor = Color(0xFFFFAB91),
+                                modifier = Modifier
+                                    .width(120.dp)   // ✅ Düzeltildi: boyut eklendi
+                                    .height(130.dp)  // ✅ Düzeltildi: boyut eklendi
+                                    .clickable { navController.navigate("sheet_screen") }
+                            )
+                        }
+
+                        // 2. Kart: Listening
+                        item {
+                            ActivitySmallCard(
+                                title = "Listening",
+                                imageRes = R.drawable.listening,
+                                accentColor = Color(0xFF4FC3F7),
+                                modifier = Modifier
+                                    .width(120.dp)   // ✅ Düzeltildi: boyut eklendi
+                                    .height(130.dp)  // ✅ Düzeltildi: boyut eklendi
+                                    .scale(1.05f)
+                                    .clickable { navController.navigate(Screen.ListeningLevel.route) }
+                            )
+                        }
+
+                        // 3. Kart: Idiom
+                        item {
+                            ActivitySmallCard(
+                                title = "Idiom",
+                                imageRes = R.drawable.ananbeanan,
+                                accentColor = Color(0xFF29B6F6),
+                                modifier = Modifier
+                                    .width(120.dp)   // ✅ Düzeltildi: boyut eklendi
+                                    .height(130.dp)  // ✅ Düzeltildi: boyut eklendi
+                                    .clickable { /* Idiom Navigasyon buraya */ }
+                            )
                         }
                     }
                 }
             }
 
-            // --- 5. GUIDE KARTI ---
+            // --- 5. GÜNÜN KELİMESİ ---
+            // ✅ Düzeltildi: dailyWords ve currentWord yeniden tanımlanmadı,
+            //    en üstteki state'ler kullanılıyor
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 120.dp)
+                        .padding(vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "Günün Kelimesi",
+                        color = BrokenIceBlueText,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                wordIndex = (wordIndex + 1) % dailyWords.size
+                                isBookmarked = false
+                            },
+                        shape = RoundedCornerShape(24.dp),
+                        color = Color(0xFFF8FAFC),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .padding(20.dp)
+                                .fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = currentWord.first,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = VividIceBlue,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = currentWord.second,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = BrokenIceBlueText.copy(alpha = 0.7f)
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { isBookmarked = !isBookmarked }
+                            ) {
+                                Icon(
+                                    imageVector = if (isBookmarked) Icons.Filled.Bookmark else Icons.Default.BookmarkBorder,
+                                    contentDescription = "Kaydet",
+                                    tint = if (isBookmarked) Color(0xFFFFD700) else Color.LightGray,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- 6. GÜNÜN DEYİMİ ---
+            // ✅ Düzeltildi: dailyIdioms yeniden tanımlanmadı,
+            //    currentIdiom en üstteki state'ten geliyor
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 120.dp)
+                        .padding(vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "Günün Deyimi",
+                        color = BrokenIceBlueText,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                idiomIndex = (idiomIndex + 1) % dailyIdioms.size
+                                isIdiomBookmarked = false
+                            },
+                        shape = RoundedCornerShape(24.dp),
+                        color = Color(0xFFFDFCFB),
+                        border = BorderStroke(1.dp, Color(0xFFF1F1F1))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .padding(20.dp)
+                                .fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = currentIdiom.first,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = Color(0xFFFF6B6B),
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = currentIdiom.second,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = BrokenIceBlueText.copy(alpha = 0.7f)
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { isIdiomBookmarked = !isIdiomBookmarked }
+                            ) {
+                                Icon(
+                                    imageVector = if (isIdiomBookmarked) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                                    contentDescription = "Kaydet",
+                                    tint = if (isIdiomBookmarked) Color(0xFFFFD700) else Color.LightGray,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- 7. GUIDE KARTI ---
             item {
                 Surface(
                     modifier = Modifier
@@ -853,22 +1075,47 @@ fun EliteHomeScreen(
                     shadowElevation = 4.dp,
                     border = BorderStroke(1.dp, Color(0xFFF0F0F0))
                 ) {
-                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier
-                            .size(70.dp)
-                            .background(Color.White, RoundedCornerShape(20.dp))
-                            .border(1.dp, Color(0xFFF5F5F5), RoundedCornerShape(20.dp)), contentAlignment = Alignment.Center) {
-                            Image(painter = painterResource(id = R.drawable.rehber), contentDescription = null, modifier = Modifier.size(50.dp))
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(70.dp)
+                                .background(Color.White, RoundedCornerShape(20.dp))
+                                .border(1.dp, Color(0xFFF5F5F5), RoundedCornerShape(20.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                painter = painterResource(id = R.drawable.rehber),
+                                contentDescription = null,
+                                modifier = Modifier.size(50.dp)
+                            )
                         }
                         Spacer(modifier = Modifier.width(20.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Guide", color = Color(0xFF2C3E50), fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
-                            Text(text = "Uygulama özelliğini keşfet", color = Color(0xFF2C3E50).copy(alpha = 0.6f), fontSize = 13.sp)
+                            Text(
+                                text = "Guide",
+                                color = Color(0xFF2C3E50),
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = "Uygulama özelliğini keşfet",
+                                color = Color(0xFF2C3E50).copy(alpha = 0.6f),
+                                fontSize = 13.sp
+                            )
                         }
-                        Icon(imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color.LightGray, modifier = Modifier.size(24.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = Color.LightGray,
+                            modifier = Modifier.size(24.dp)
+                        )
                     }
                 }
             }
+
         } // LazyColumn Sonu
 
         // --- QUIZ POP-UP ---
@@ -878,24 +1125,51 @@ fun EliteHomeScreen(
                 containerColor = Color.White,
                 shape = RoundedCornerShape(32.dp),
                 confirmButton = {
-                    Button(onClick = { onDismissQuizPrompt(); navController.navigate("quiz_path_test") }, colors = ButtonDefaults.buttonColors(containerColor = VividIceBlue)) {
+                    Button(
+                        onClick = {
+                            onDismissQuizPrompt()
+                            navController.navigate("quiz_path_test")
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = VividIceBlue)
+                    ) {
                         Text("Hadi Başlayalım", color = Color.White)
                     }
                 },
-                dismissButton = { TextButton(onClick = onDismissQuizPrompt) { Text("Belki Sonra", color = Color.Gray) } },
-                title = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                        Image(painter = painterResource(id = R.drawable.quiz_cat), contentDescription = null, modifier = Modifier
-                            .size(100.dp)
-                            .clip(CircleShape))
-                        Text(text = "Quiz Zamanı!", fontWeight = FontWeight.ExtraBold, color = BrokenIceBlueText)
+                dismissButton = {
+                    TextButton(onClick = onDismissQuizPrompt) {
+                        Text("Belki Sonra", color = Color.Gray)
                     }
                 },
-                text = { Text(text = "Bugün kısa bir quiz çözerek başlamak ister misin?", textAlign = TextAlign.Center) }
+                title = {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.quiz_cat),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(100.dp)
+                                .clip(CircleShape)
+                        )
+                        Text(
+                            text = "Quiz Zamanı!",
+                            fontWeight = FontWeight.ExtraBold,
+                            color = BrokenIceBlueText
+                        )
+                    }
+                },
+                text = {
+                    Text(
+                        text = "Bugün kısa bir quiz çözerek başlamak ister misin?",
+                        textAlign = TextAlign.Center
+                    )
+                }
             )
         }
     }
 }
+
 @Composable
 fun DrawerItem(
     label: String,
@@ -2294,22 +2568,23 @@ fun QuizCard(quiz: Quiz, onClick: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+
 fun QuizDetailScreen(navController: NavHostController, quizId: Int?) {
     val context = LocalContext.current
 
-    // 1. Verileri Repository'den çekiyoruz (Örnek: getQuizOne)
+    // 1. Verileri Repository'den çekiyoruz
     val questions = remember { QuizRepository.getQuizOne() }
 
-    // 2. Ses yardımcıları (Hibrit Yapı)
+    // 2. Ses yardımcısı (Sadece SpeechAssistant yeterli!)
+    // Tipini açıkça belirttik: remember<SpeechAssistant>
     val speechAssistant = remember { SpeechAssistant(context) }
-    val turkishTts = remember { TurkishTextToSpeechHelper(context) }
 
-    // 3. Can Hesaplama (%30 Mantığı)
+    // 3. Can Hesaplama
     val initialHearts = remember(questions) {
         kotlin.math.ceil(questions.size * 0.3).toInt().coerceAtLeast(1)
     }
 
-    // 4. State'ler
+    // 4. State'ler (Tip belirtimleri eklendi)
     var currentIndex by remember { mutableIntStateOf(0) }
     var score by remember { mutableIntStateOf(0) }
     var hearts by remember { mutableIntStateOf(initialHearts) }
@@ -2317,7 +2592,6 @@ fun QuizDetailScreen(navController: NavHostController, quizId: Int?) {
 
     // 5. Mevcut Soru
     val currentQuestion = questions.getOrNull(currentIndex)
-
     // Arkaplan Gradiyenti
     val iceBlueGradient = Brush.verticalGradient(
         colors = listOf(Color(0xFFE1F5FE), Color(0xFFB3E5FC), Color(0xFF81D4FA))
@@ -2412,8 +2686,8 @@ fun QuizDetailScreen(navController: NavHostController, quizId: Int?) {
                         QuestionType.LISTENING -> {
                             ListeningQuizContent(
                                 data = currentQuestion,
-                                tts = speechAssistant,
-                                ttsTurkish = turkishTts,
+                                tts = speechAssistant, // ✅ Sadece tek tts gönderiyoruz
+                                // ttsTurkish parametresini sildik, çünkü artık SpeechAssistant içinde her iki dil de var
                                 onAnswer = { isCorrect ->
                                     handleAnswer(isCorrect)
                                 }
@@ -2959,7 +3233,7 @@ fun ReadingDetailScreen(
     storyTitle: String, // Hikaye başlığı
     navController: NavController,
     // ttsHelper'ı opsiyonel yapıyoruz ( = null ), böylece navigasyonda yazmana gerek kalmaz
-    ttsHelper: com.example.ngilizcequizapp.TextToSpeechHelper? = null
+    ttsHelper: SpeechAssistant,
 ) {
     var showQuizPrompt by remember { mutableStateOf(false) }
     var showWordPopup by remember { mutableStateOf(false) }
@@ -3660,17 +3934,20 @@ fun InteractiveQuizScreen(question: NewQuestion, onNext: (Boolean) -> Unit) {
 @Composable
 fun QuizAppNavigation(
     speechAssistant: SpeechAssistant,
-    isDarkMode: Boolean,              // ✅ bunu ekle
-    onToggleDarkMode: () -> Unit      // ✅ bunu ekle
+    isDarkMode: Boolean,
+    // ✅ bunu ekle
+    onToggleDarkMode: () -> Unit,      // ✅ bunu ekle
+
 ) {
     var isDarkMode by remember { mutableStateOf(false) }
 
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+
+
     val context = LocalContext.current
-
-
+    val speechAssistant = remember { SpeechAssistant(context) }
     val dictionaryWords = remember { loadWordsFromAssets(context) }
     var showQuizPrompt by rememberSaveable { mutableStateOf(true) }
 
@@ -3681,11 +3958,14 @@ fun QuizAppNavigation(
         navController = navController,
         startDestination = Screen.Home.route
     ) {
+        // Navigasyon (NavHost) içinde:
+
         composable(Screen.Home.route) {
             DarkEliteHomeScreen(
                 navController = navController,
                 showQuizPrompt = true,
                 onDismissQuizPrompt = {},
+                speechAssistant = speechAssistant,
                 isDarkMode = isDarkMode
             )
         }
@@ -3694,7 +3974,9 @@ fun QuizAppNavigation(
                 navController = navController,
                 isDarkMode = isDarkMode, // Global değişkeni buraya gönderiyoruz
                 showQuizPrompt = true,
+                speechAssistant = speechAssistant,
                 onDismissQuizPrompt = { /* ... */ }
+
             )
         }
         // NavHost içinde şuraya ekle:
@@ -3714,11 +3996,8 @@ fun QuizAppNavigation(
             QuizTreeScreen(navController = navController)
         }
 
-        // Test rotalarını tek tek veya dinamik tanımlayabiliriz.
-        // Senin istediğin 5 test:
-        // 1. ADIM: Döngü aralığını genişletiyoruz (Örn: 1..20)
-        // 1. ADIM: Döngü aralığını 10'a çıkarıyoruz
-        for (i in 1..14) {
+
+        for (i in 1..55) {
             composable("test_$i") {
                 val quizList = when (i) {
                     1 -> QuizRepository.getQuizOne()
@@ -3735,7 +4014,47 @@ fun QuizAppNavigation(
                     12 -> QuizRepository.getQuizTwelve()
                     13 -> QuizRepository.getQuizThirteen()
                     14 -> QuizRepository.getQuizFourteen()
-
+                    15 -> QuizRepository.getQuizFifteen()
+                    16 -> QuizRepository.getQuizSixteen()
+                    17 -> QuizRepository.getQuizSeventeen()
+                    18 -> QuizRepository.getQuizEighteen()
+                    19 -> QuizRepository.getQuizNineteen()
+                    20 -> QuizRepository.getQuizTwenty()
+                    21 -> QuizRepository.getQuizTwentyOne()
+                    22 -> QuizRepository.getQuizTwentyTwo()
+                    23 -> QuizRepository.getQuizTwentyThree()
+                    24 -> QuizRepository.getQuizTwentyFour()
+                    25 -> QuizRepository.getQuizTwentyFive()
+                    26 -> QuizRepository.getQuizTwentySix()
+                    27 -> QuizRepository.getQuizTwentySeven()
+                    28 -> QuizRepository.getQuizTwentyEight()
+                    29 -> QuizRepository.getQuizTwentyNine()
+                    30 -> QuizRepository.getQuizThirty()
+                    31 -> QuizRepository.getQuizThirtyOne()
+                    32 -> QuizRepository.getQuizThirtyTwo()
+                    33 -> QuizRepository.getQuizThirtyThree()
+                    34 -> QuizRepository.getQuizThirtyFour()
+                    35 -> QuizRepository.getQuizThirtyFive()
+                    36 -> QuizRepository.getQuizThirtySix()
+                    37 -> QuizRepository.getQuizThirtySeven()
+                    38 -> QuizRepository.getQuizThirtyEight()
+                    39 -> QuizRepository.getQuizThirtyNine()
+                    40 -> QuizRepository.getQuizForty()
+                    41 -> QuizRepository.getQuizFortyOne()
+                    42 -> QuizRepository.getQuizFortyTwo()
+                    43 -> QuizRepository.getQuizFortyThree()
+                    44 -> QuizRepository.getQuizFortyFour()
+                    45 -> QuizRepository.getQuizFortyFive()
+                    46 -> QuizRepository.getQuizFortySix()
+                    47 -> QuizRepository.getQuizFortySeven()
+                    48 -> QuizRepository.getQuizFortyEight()
+                    49 -> QuizRepository.getQuizFortyNine()
+                    50 -> QuizRepository.getQuizFifty()
+                    51 -> QuizRepository.getQuizFiftyOne()
+                    52 -> QuizRepository.getQuizFiftyTwo()
+                    53 -> QuizRepository.getQuizFiftyThree() // 👈 Dinleme/Eylem Pekiştirme
+                    54 -> QuizRepository.getQuizFiftyFour()  // 👈 Büyük Eylem Finali
+                    55 -> QuizRepository.getQuizFiftyFive()  // 👈 Yeni Çeviri (Word Drop) Testi
                     else -> QuizRepository.getQuizOne()
                 }
 
@@ -3746,6 +4065,10 @@ fun QuizAppNavigation(
                     onQuizComplete = { navController.popBackStack() }
                 )
             }
+        }
+        // 15'ten başlayıp istediğin sayıya kadar (örneğin 20) buluttan çek
+        for (i in 15..20) {
+
         }
         // 1. SEVİYE SEÇİM EKRANI
         composable("ReadingLevelSelection") {
@@ -3859,6 +4182,7 @@ fun QuizAppNavigation(
                     navController = navController,
                     showQuizPrompt = showQuizPrompt,
                     onDismissQuizPrompt = { showQuizPrompt = false },
+                    speechAssistant = speechAssistant,
                     isDarkMode = isDarkMode
                 )
             }
@@ -3988,7 +4312,7 @@ fun PlaceholderTestScreen(navController: NavHostController, title: String) {
 @Composable
 fun ParagraphReadingScreen(
     paragraph: String,
-    ttsHelper: com.example.ngilizcequizapp.TextToSpeechHelper,
+    ttsHelper: SpeechAssistant,
     dictionary: List<WordItem>, // ✅ HATA BURADA: Bu satırın olduğundan emin ol!
     onFinished: (Int) -> Unit
 ) {
@@ -4126,7 +4450,7 @@ val pronunciationTestParagraph = """
 // ✅ DOĞRU: Fonksiyonun içinde
 @Composable
 fun QuizNavigationManager(
-    ttsHelper: com.example.ngilizcequizapp.TextToSpeechHelper
+    ttsHelper: SpeechAssistant,
 ) {
     // 1. Durum State'leri
     var selectedQuizTitle by remember { mutableStateOf<String?>(null) }
@@ -4558,42 +4882,8 @@ data class WordData(
 // Eski TextToSpeechHelper'ı bulup silebilirsin
 // veya ismini şu şekilde güncelleyebilirsin:
 
-class SpeechAssistant(context: Context) {
-    private var tts: TextToSpeech? = null
-    private var isReady = false
 
-    init {
-        tts = TextToSpeech(context) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                isReady = true
-                // A1 seviyesi için hızı biraz yavaş tutuyoruz
-                tts?.setSpeechRate(0.8f)
-            }
-        }
-    }
 
-    // ✅ HATAYI ÇÖZEN GÜNCEL FONKSİYON
-    fun speak(text: String, isTurkish: Boolean = false) { // isTurkish parametresini ekledik
-        if (isReady) {
-            // 1. Dili anlık olarak değiştiriyoruz
-            val locale = if (isTurkish) Locale("tr", "TR") else Locale.US
-            tts?.setLanguage(locale)
-
-            // 2. Seslendir
-            // NOT: params kullanımı modern Android cihazlarda daha stabil çalışır
-            val params = android.os.Bundle().apply {
-                putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "id_${System.currentTimeMillis()}")
-            }
-
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "unique_id")
-        }
-    }
-
-    fun shutDown() {
-        tts?.stop()
-        tts?.shutdown()
-    }
-}
 //QUİZ EKRANI KODLARI
 data class WordQuiz(
     val questionText: String,      // Kullanıcıya verilen Türkçe yönerge
@@ -4637,10 +4927,11 @@ fun WordBubble(
         )
     }
 }
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class) // 👈 Bu satırı ekle
 @Composable
 fun WordOrderingQuiz(
     quizStep: QuizStep,
-    ttsHelper: SpeechAssistant, // ✅ KURAL: SpeechAssistant kullanımı
+    ttsHelper: SpeechAssistant,
     onResult: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
@@ -5152,6 +5443,7 @@ fun MainScreen(ttsHelper: SpeechAssistant) {
 // BU FONKSİYON EKSİK OLDUĞU İÇİN HATA ALIYORDUN:
 @Composable
 fun MeetingQuizApp(ttsHelper: SpeechAssistant) {
+
     var currentStepIndex by remember { mutableStateOf(0) }
     var showFinalScreen by remember { mutableStateOf(false) }
     var currentResult by remember { mutableStateOf<QuizResult>(QuizResult.None) }
@@ -5174,10 +5466,14 @@ fun MeetingQuizApp(ttsHelper: SpeechAssistant) {
                         "free_writing" -> FreeWritingQuiz(currentStep) { isCorrect ->
                             currentResult = if (isCorrect) QuizResult.Correct else QuizResult.Wrong("Harika!")
                         }
-                        else -> WordOrderingQuiz(currentStep, ttsHelper) { isCorrect ->
-                            currentResult = if (isCorrect) QuizResult.Correct
-                            else QuizResult.Wrong(currentStep.correctSentence.joinToString(" "))
-                        }
+                        else -> WordOrderingQuiz(
+                            quizStep = currentStep,
+                            ttsHelper = ttsHelper,
+                            onResult = { isCorrect: Boolean -> // ✅ Tipi açıkça belirterek belirsizliği çözdük
+                                currentResult = if (isCorrect) QuizResult.Correct
+                                else QuizResult.Wrong(currentStep.correctSentence.joinToString(" "))
+                            }
+                        )
                     }
                 }
             }
