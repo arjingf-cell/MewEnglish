@@ -30,6 +30,7 @@ import androidx.compose.ui.draw.scale
 import java.util.Locale
 import androidx.compose.material.icons.filled.* // Tüm standart ikonları içeri aktarır
 import android.content.Context
+import android.net.Uri
 import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
 import android.util.Log
@@ -233,7 +234,8 @@ fun DictionaryScreen() {
 fun WordPopup(
     word: String,
     ttsHelper: SpeechAssistant,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    sourceStory: String? = null
 ) {
     val context = LocalContext.current
     var dictionaryReady by remember { mutableStateOf(false) }
@@ -272,7 +274,7 @@ fun WordPopup(
 
                     // KAYDET BUTONU (Sağ Üst)
                     IconButton(onClick = {
-                        val newWord = SavedWord(word = cleanWord, meaning = translation)
+                        val newWord = SavedWord(word = cleanWord, meaning = translation, sourceStory = sourceStory)
                         if (!WordStorage.savedWords.any { it.word == cleanWord }) {
                             WordStorage.savedWords.add(newWord)
                             WordStorage.saveToDisk(context)
@@ -492,20 +494,21 @@ fun AppScaffold(
     content: @Composable () -> Unit
 ) {
     val isDarkMode = LocalIsDarkMode.current
+    val appColors = LocalAppThemeColors.current
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
     // --- DİNAMİK RENKLER ---
-    val backgroundColor = if (isDarkMode) Color(0xFF121212) else Color.White
-    val BrokenIceBlue = Color(0xFFB0CFFF)
-    val VividIceBlue = Color(0xFF5D9CEC)
+    val backgroundColor = appColors.background
+    val BrokenIceBlue = appColors.border
+    val VividIceBlue = appColors.primary
 
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(
-                drawerContainerColor = backgroundColor, // Menü arka planı
+                drawerContainerColor = appColors.surface, // Menü arka planı
                 drawerShape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp)
             ) {
                 // ✅ HATA ÇÖZÜMÜ: Sadece gerekli parametreleri gönderiyoruz.
@@ -549,7 +552,7 @@ fun AppScaffold(
             },
             bottomBar = {
                 NavigationBar(
-                    containerColor = backgroundColor,
+                    containerColor = appColors.surface,
                     tonalElevation = 12.dp
                 ) {
                     val items = listOf(Screen.Home, Screen.Progress, Screen.Quiz, Screen.Word)
@@ -611,7 +614,7 @@ fun AppScaffold(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .background(backgroundColor)
+                    .mewScreenBackground()
             ) {
                 content()
             }
@@ -627,8 +630,9 @@ fun DrawerContent(
     modifier: Modifier = Modifier
 ) {
     val isDarkMode = LocalIsDarkMode.current  // ✅ bunu ekle
-    val currentBg = if (isDarkMode) Color(0xFF121212) else Color.White
-    val currentText = if (isDarkMode) Color.White else Color.Black
+    val appColors = LocalAppThemeColors.current
+    val currentBg = appColors.surface
+    val currentText = appColors.text
 
     Column(
         modifier = modifier // Gelen modifier'ı buraya işliyoruz
@@ -639,7 +643,7 @@ fun DrawerContent(
     ) {
         Text(
             text = "MewEnglish",
-            color = Color(0xFF3897F0),
+            color = appColors.primary,
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold
         )
@@ -855,7 +859,7 @@ fun EliteHomeScreen(
                             imageRes = R.drawable.mistake_case,
                             color = Color(0xFFFF6B6B),
                             modifier = Modifier.weight(1f),
-                            onClick = { /* MistakeJar */ }
+                            onClick = { navController.navigate("mistake_jar") }
                         )
                         DashboardSmallCard(
                             title = "Word",
@@ -1301,6 +1305,7 @@ fun ReadingLevelSelectionScreen(
     navController: NavHostController,
     onLevelSelected: (String) -> Unit
 ) {
+    val appColors = LocalAppThemeColors.current
     val levels = listOf(
         ListeningListeningLevelData("A1", "Beginner", Color(0xFFE0F7FA), Color(0xFF1CB0F6)),
         ListeningListeningLevelData("A2", "Elementary", Color(0xFFE1F5FE), Color(0xFF03A9F4)),
@@ -1310,15 +1315,9 @@ fun ReadingLevelSelectionScreen(
         ListeningListeningLevelData("C2", "Mastery", Color(0xFFF3E5F5), Color(0xFF9C27B0))
     )
 
-    val backgroundBrush = Brush.verticalGradient(
-        colors = listOf(Color(0xFFE3F2FD), Color.White),
-        startY = 0f,
-        endY = 1500f
-    )
-
     Box(modifier = Modifier
         .fillMaxSize()
-        .background(backgroundBrush)) {
+        .mewScreenBackground()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -1329,7 +1328,7 @@ fun ReadingLevelSelectionScreen(
             // Başlık Bölümü
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { navController.popBackStack() }) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Geri", tint = Color(0xFF2C3E50))
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Geri", tint = appColors.text)
                 }
                 Column(modifier = Modifier.padding(start = 8.dp)) {
                     Text(
@@ -1337,13 +1336,13 @@ fun ReadingLevelSelectionScreen(
                         style = TextStyle(
                             fontSize = 28.sp,
                             fontWeight = FontWeight.Black,
-                            color = Color(0xFF2C3E50)
+                            color = appColors.text
                         )
                     )
                     Text(
                         text = "Okuma becerini seç ve hikayeye başla",
                         fontSize = 14.sp,
-                        color = Color(0xFF2C3E50).copy(alpha = 0.6f)
+                        color = appColors.textMuted
                     )
                 }
             }
@@ -1371,13 +1370,14 @@ fun ReadingLevelSelectionCard( // 👈 Yeni isim
     data: ListeningListeningLevelData,
     onClick: () -> Unit
 ) {
+    val appColors = LocalAppThemeColors.current
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .height(110.dp)
             .clickable { onClick() },
         shape = RoundedCornerShape(28.dp),
-        color = Color.White,
+        color = appColors.surface,
         shadowElevation = 2.dp,
         border = BorderStroke(1.dp, data.accentColor.copy(alpha = 0.15f))
     ) {
@@ -1407,12 +1407,12 @@ fun ReadingLevelSelectionCard( // 👈 Yeni isim
                     text = data.id,
                     fontSize = 22.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    color = Color(0xFF2C3E50)
+                    color = appColors.text
                 )
                 Text(
                     text = data.description,
                     fontSize = 13.sp,
-                    color = Color.Gray
+                    color = appColors.textMuted
                 )
             }
 
@@ -1459,6 +1459,7 @@ fun ReadingListScreen(
     onReadingSelected: (String) -> Unit // 👈 Tıklama aksiyonunu alıyoruz
 ) {
     // 1. ADIM: Hikaye Listeleri (Doğru yer burası)
+    val appColors = LocalAppThemeColors.current
     val readingMap = mapOf(
         "A1" to listOf("My Special Day", "Daily Routine", "My Family", "My Dream House", "At the Grocery Store", "Summer Weather", "What Time Is It?", "My Favorite Hobbies", "Where Is The Bank?", "Feeling Sick", "Weekend In Paris", "Future Plans"),
         "A2" to listOf("A Trip to London", "Healthy Living", "Shopping Mall", "The New Restaurant", "My Last Vacation", "Interesting Jobs", "Cooking Dinner", "Meeting Friends"),
@@ -1474,15 +1475,7 @@ fun ReadingListScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color.White,
-                        Color(0xFFE3F2FD).copy(alpha = 0.5f),
-                        Color(0xFFBBDEFB).copy(alpha = 0.3f)
-                    )
-                )
-            )
+            .mewScreenBackground()
     ) {
         LazyColumn(
             modifier = Modifier
@@ -1494,12 +1487,12 @@ fun ReadingListScreen(
                 // Geri butonu ve Başlık
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Geri", tint = Color(0xFF0288D1))
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Geri", tint = appColors.primary)
                     }
                     Text(
                         text = "$level Reading",
                         style = MaterialTheme.typography.headlineMedium,
-                        color = Color(0xFF0288D1),
+                        color = appColors.primary,
                         fontWeight = FontWeight.ExtraBold
                     )
                 }
@@ -1507,14 +1500,15 @@ fun ReadingListScreen(
             }
 
             items(readings) { item ->
+                val isCompleted = ReadingProgressStore.isCompleted(LocalContext.current, item)
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 8.dp)
                         .clickable { onReadingSelected(item) }, // 👈 Hata burada çözüldü
                     shape = RoundedCornerShape(24.dp), // Daha yumuşak köşeler
-                    color = Color.White,
-                    border = BorderStroke(1.dp, Color(0xFFE3F2FD)),
+                    color = appColors.surface,
+                    border = BorderStroke(1.dp, appColors.border),
                     shadowElevation = 4.dp
                 ) {
                     Row(
@@ -1526,14 +1520,14 @@ fun ReadingListScreen(
                     ) {
                         Text(
                             text = item,
-                            color = Color(0xFF2C3E50), // BrokenIceBlueText
+                            color = appColors.text, // BrokenIceBlueText
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp
                         )
                         Icon(
-                            imageVector = Icons.Default.MenuBook,
+                            imageVector = if (isCompleted) Icons.Default.CheckCircle else Icons.Default.MenuBook,
                             contentDescription = null,
-                            tint = Color(0xFF1CB0F6).copy(alpha = 0.6f)
+                            tint = if (isCompleted) appColors.success else appColors.primary.copy(alpha = 0.6f)
                         )
                     }
                 }
@@ -1562,6 +1556,7 @@ fun QuizListScreen(
     onNavigateToQuiz: () -> Unit,      // ✅ KURAL: Quiz (Singular)
     onQuizSelected: (String) -> Unit
 ) {
+    val appColors = LocalAppThemeColors.current
     // İçerik buraya...
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
@@ -1577,7 +1572,7 @@ fun QuizListScreen(
 
     Box(modifier = Modifier
         .fillMaxSize()
-        .background(Color(0xFFE1F5FE))) {
+        .mewScreenBackground()) {
         Column(modifier = Modifier.fillMaxSize()) {
 
             // Header - Logo buraya gelecek
@@ -1590,7 +1585,7 @@ fun QuizListScreen(
                 Text(
                     text = "Quiz", // ✅ KURAL: Bold
                     style = TextStyle(fontSize = 32.sp, fontWeight = FontWeight.Black),
-                    color = Color(0xFF01579B)
+                    color = appColors.primary
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 // Kategori Chip'leri
@@ -1608,7 +1603,7 @@ fun QuizListScreen(
 
 
                 Spacer(modifier = Modifier.height(32.dp))
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 40.dp), thickness = 2.dp, color = Color.White.copy(alpha = 0.5f))
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 40.dp), thickness = 2.dp, color = appColors.border.copy(alpha = 0.7f))
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Seviye Kartları
@@ -1904,7 +1899,7 @@ fun DashboardSmallCard(
     }
 }
 @Composable
-fun MistakeJarScreen(navController: NavHostController) {
+fun LegacyMistakeJarScreen(navController: NavHostController) {
     val darkMode = LocalIsDarkMode.current
     val bgColor = if (darkMode) Color(0xFF121212) else Color.White
     val textColor = if (darkMode) Color.White else Color(0xFF2C3E50)
@@ -2615,7 +2610,7 @@ fun QuizDetailScreen(navController: NavHostController, quizId: Int?) {
 
     Box(modifier = Modifier
         .fillMaxSize()
-        .background(iceBlueGradient)) {
+        .mewScreenBackground()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -2736,78 +2731,15 @@ fun QuizDetailScreen(navController: NavHostController, quizId: Int?) {
 fun QuizResultScreen(
     navController: NavHostController,
     score: Int,
-    totalQuestions: Int, // ✅ Parametre ismin bu
+    totalQuestions: Int,
     onDone: () -> Unit
 ) {
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = Color(0xFFE1F5FE)
-    ) {
-        Column(
-            modifier = Modifier
-                .padding(32.dp)
-                .fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            // ✅ Siyah Kedi Görseli (Instagram stili kutu yerine senin kedi olsun)
-            Image(
-                painter = painterResource(id = R.drawable.cat_logo), // Siyah kedi dosya adın
-                contentDescription = null,
-                modifier = Modifier
-                    .size(150.dp)
-                    .clip(CircleShape)
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Text(
-                text = "Quiz Completed!", // ✅ KURAL: Bold
-                style = TextStyle(
-                    fontSize = 30.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFF01579B)
-                )
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "Your Score", // ✅ KURAL: Bold
-                style = TextStyle(fontSize = 18.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
-            )
-
-            // ✅ HATA BURADA DÜZELTİLDİ: 'total' yerine 'totalQuestions' yazıldı
-            Text(
-                text = "$score / $totalQuestions",
-                style = TextStyle(
-                    fontSize = 54.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = Color(0xFF01579B)
-                )
-            )
-
-            Spacer(modifier = Modifier.height(48.dp))
-
-            Button(
-                onClick = onDone,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(60.dp),
-                shape = RoundedCornerShape(30.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF01579B),
-                    contentColor = Color.White
-                ),
-                elevation = ButtonDefaults.buttonElevation(8.dp)
-            ) {
-                Text(
-                    text = "Back to Home", // ✅ KURAL: Bold
-                    style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                )
-            }
-        }
-    }
+    com.example.ngilizcequizapp.quiz.engine.QuizResultScreen(
+        navController = navController,
+        score = score,
+        totalQuestions = totalQuestions,
+        onDone = onDone
+    )
 }
 // Soru İlerleme Çubuğu
 @Composable
@@ -3088,13 +3020,10 @@ fun ReadingSectionContent(content: String) {
 
                         // DÜZELTİLEN KAYDETME BUTONU
                         IconButton(onClick = {
-                            // 1. Ortak depoya (WordStorage) ekleme yapıyoruz
-                            WordStorage.savedWords.add(
-                                SavedWord(
-                                    word = selectedWordForDialog!!,
-                                    meaning = selectedTranslation!!
-                                )
-                            )
+                            val selectedWord = selectedWordForDialog!!
+                            WordStorage.savedWords.removeAll { it.word.equals(selectedWord, ignoreCase = true) }
+                            WordStorage.savedWords.add(SavedWord(word = selectedWord, meaning = selectedTranslation!!))
+                            WordStorage.saveToDisk(context)
                             // 2. Bildirim veriyoruz
                             android.widget.Toast.makeText(context, "${selectedWordForDialog} listeye eklendi!", android.widget.Toast.LENGTH_SHORT).show()
 
@@ -3133,7 +3062,8 @@ fun ReadingSectionContent(content: String) {
 data class SavedWord(
     val word: String,
     val meaning: String,
-    var userNote: String = ""
+    var userNote: String = "",
+    val sourceStory: String? = null
 )
 
 
@@ -3149,18 +3079,40 @@ object WordStorage {
         val sharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val json = Gson().toJson(savedWords.toList())
         sharedPreferences.edit().putString(KEY_SAVED_WORDS, json).apply()
+        
+        val size = savedWords.size
+        if (size >= 1) {
+            AchievementManager.unlockBadge(context, "common_word_intro")
+        }
+        if (size >= 20) {
+            AchievementManager.unlockBadge(context, "regular_word_chaser")
+        }
+        if (size >= 100) {
+            AchievementManager.unlockBadge(context, "rare_word_collector")
+        }
+        if (size >= 250) {
+            AchievementManager.unlockBadge(context, "epic_lexicon_master")
+        }
     }
 
     // Verileri Cihaz Hafızasından Yükle
     fun loadFromDisk(context: Context) {
+        AppDictionary.initialize(context)
         val sharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val json = sharedPreferences.getString(KEY_SAVED_WORDS, null)
         if (json != null) {
             val type = object : TypeToken<List<SavedWord>>() {}.type
             val list: List<SavedWord> = Gson().fromJson(json, type)
 
+            val hydrated = list.map { savedWord ->
+                val dictionaryMeaning = AppDictionary.words[savedWord.word.lowercase().trim()]
+                if (savedWord.meaning.isBlank() || savedWord.meaning.contains("bulunamad", ignoreCase = true) || savedWord.meaning == "Çeviri alınamadı") {
+                    savedWord.copy(meaning = dictionaryMeaning.orEmpty())
+                } else savedWord
+            }
             savedWords.clear()
-            savedWords.addAll(list)
+            savedWords.addAll(hydrated)
+            if (hydrated != list) saveToDisk(context)
         }
     }
 }
@@ -3235,24 +3187,58 @@ fun ReadingDetailScreen(
     // ttsHelper'ı opsiyonel yapıyoruz ( = null ), böylece navigasyonda yazmana gerek kalmaz
     ttsHelper: SpeechAssistant,
 ) {
+    val readingContext = LocalContext.current
+    LaunchedEffect(storyTitle) { ReadingProgressStore.markStarted(readingContext, storyTitle) }
+    DisposableEffect(ttsHelper) {
+        onDispose { ttsHelper.stop() }
+    }
     var showQuizPrompt by remember { mutableStateOf(false) }
     var showWordPopup by remember { mutableStateOf(false) }
     var selectedWordState by remember { mutableStateOf("") }
 
     val content = allStories[storyTitle] ?: "İçerik yükleniyor..."
     val scrollState = rememberScrollState()
+    val readingDarkMode = LocalIsDarkMode.current
+
+    if (showQuizPrompt) {
+        ReadingComprehensionQuiz(
+            title = storyTitle,
+            storyText = content,
+            ttsHelper = ttsHelper,
+            onClose = { navController.popBackStack() }
+        )
+        return
+    }
 
     // ✅ Hata Çözümü: 'originalWords' hatasını gidermek için içeriği kelimelere bölüyoruz
     val wordsList = remember(content) {
         content.split(Regex("\\s+")).filter { it.isNotBlank() }
     }
+    val readingProgress by remember {
+        derivedStateOf {
+            if (scrollState.maxValue == 0) 0f
+            else (scrollState.value.toFloat() / scrollState.maxValue.toFloat()).coerceIn(0f, 1f)
+        }
+    }
+    val accentBlue = Color(0xFF1E9AF2)
+    val pageTop = if (readingDarkMode) Color(0xFF071521) else Color(0xFFEAF7FF)
+    val pageBottom = if (readingDarkMode) Color(0xFF102235) else Color.White
+    val cardColor = if (readingDarkMode) Color(0xFF122335) else Color.White
+    val textColor = if (readingDarkMode) Color(0xFFEAF6FF) else Color(0xFF17324A)
+    val mutedColor = if (readingDarkMode) Color(0xFFA8BED2) else Color(0xFF6C8297)
+    val paleBlue = if (readingDarkMode) Color(0xFF1B3B55) else Color(0xFFE2F5FF)
+    val catImage = readingDrawableOrFallback("readingcat2", R.drawable.readingcat)
+    val storyImageName = remember(storyTitle) {
+        if (kotlin.random.Random.nextBoolean()) "readingcat2" else "readingcat3"
+    }
+    val storyImage = readingDrawableOrFallback(storyImageName, R.drawable.readingcat)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    colors = listOf(Color.White, Color(0xFFE3F2FD).copy(alpha = 0.5f))
+                    colors = listOf(pageTop, pageBottom)
                 )
             )
     ) {
@@ -3260,31 +3246,53 @@ fun ReadingDetailScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 18.dp)
         ) {
-            // BAŞLIK ALANI
-            Column(modifier = Modifier.padding(24.dp)) {
-                Text(
-                    text = "A1 LEVEL",
-                    color = Color(0xFF0288D1),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.ExtraBold
-                )
-                Text(
-                    text = storyTitle, // 👈 'title' yerine 'storyTitle' yazdık
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = Color.Black,
-                    fontWeight = FontWeight.Black
+            ReadingDetailTopBar(
+                title = "Reading",
+                accentBlue = accentBlue,
+                textColor = textColor,
+                surfaceColor = cardColor,
+                onBack = { navController.popBackStack() },
+                onSpeak = { ttsHelper.speak(content) }
+            )
+
+            Spacer(Modifier.height(14.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                LinearProgressIndicator(
+                    progress = { readingProgress },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(10.dp)
+                        .clip(CircleShape),
+                    color = accentBlue,
+                    trackColor = paleBlue
                 )
             }
 
+            Spacer(Modifier.height(16.dp))
+
+            ReadingStoryInfoCard(
+                title = storyTitle,
+                imageRes = storyImage,
+                surfaceColor = cardColor,
+                paleBlue = paleBlue,
+                textColor = textColor,
+                mutedColor = mutedColor,
+                accentBlue = accentBlue,
+                darkMode = readingDarkMode
+            )
+
+            Spacer(Modifier.height(16.dp))
             // METİN KARTI
             Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                shape = RoundedCornerShape(24.dp),
-                color = Color.White,
-                shadowElevation = 4.dp
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(26.dp),
+                color = cardColor,
+                shadowElevation = if (readingDarkMode) 0.dp else 7.dp
             ) {
                 Box(modifier = Modifier.padding(24.dp)) {
                     FlowRow(
@@ -3294,34 +3302,55 @@ fun ReadingDetailScreen(
                         // ✅ Hata Çözümü: 'word' tipini belirledik ve 'wordsList' üzerinden döndük
                         wordsList.forEach { word: String ->
                             val cleanWord = word.replace(Regex("[^a-zA-Z]"), "").lowercase().trim()
+                            val isSelected = cleanWord.isNotEmpty() && cleanWord == selectedWordState && showWordPopup
 
                             Text(
                                 text = "$word ",
                                 modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSelected) accentBlue.copy(alpha = .16f) else Color.Transparent)
                                     .clickable {
                                         if (cleanWord.isNotEmpty()) {
                                             selectedWordState = cleanWord
                                             showWordPopup = true
                                         }
                                     }
-                                    .padding(vertical = 2.dp),
-                                style = TextStyle(fontSize = 18.sp, color = Color(0xFF2C3E50))
+                                    .padding(horizontal = 1.dp, vertical = 4.dp),
+                                style = TextStyle(
+                                    fontSize = 19.sp,
+                                    lineHeight = 31.sp,
+                                    color = if (isSelected) accentBlue else textColor,
+                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium
+                                )
                             )
                         }
                     }
                 }
             }
 
+            Spacer(Modifier.height(16.dp))
+
+            ReadingMotivationCard(
+                imageRes = catImage,
+                surfaceColor = cardColor,
+                paleBlue = paleBlue,
+                textColor = textColor,
+                mutedColor = mutedColor,
+                darkMode = readingDarkMode
+            )
+
             Button(
                 onClick = { showQuizPrompt = true },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(24.dp)
-                    .height(65.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0288D1)),
-                shape = RoundedCornerShape(20.dp)
+                    .padding(top = 14.dp, bottom = 24.dp)
+                    .height(58.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = accentBlue),
+                shape = RoundedCornerShape(18.dp)
             ) {
-                Text("Okumayı Bitirdim! +20 XP", fontWeight = FontWeight.ExtraBold)
+                Icon(Icons.Default.Quiz, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Sorulara Geçelim", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
             }
         }
 
@@ -3330,11 +3359,149 @@ fun ReadingDetailScreen(
             WordPopup(
                 word = selectedWordState,
                 ttsHelper = ttsHelper, // Artık null değil, kesinleşti!
-                onDismiss = { showWordPopup = false }
+                onDismiss = { showWordPopup = false },
+                sourceStory = storyTitle
             )
         }
     }
 }
+
+@Composable
+private fun ReadingDetailTopBar(
+    title: String,
+    accentBlue: Color,
+    textColor: Color,
+    surfaceColor: Color,
+    onBack: () -> Unit,
+    onSpeak: () -> Unit
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        FilledIconButton(
+            onClick = onBack,
+            modifier = Modifier.size(44.dp),
+            colors = IconButtonDefaults.filledIconButtonColors(containerColor = surfaceColor, contentColor = textColor)
+        ) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Geri")
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = title,
+            modifier = Modifier.weight(1f),
+            color = textColor,
+            fontSize = 25.sp,
+            fontWeight = FontWeight.Black
+        )
+        FilledIconButton(
+            onClick = onSpeak,
+            modifier = Modifier.size(44.dp),
+            colors = IconButtonDefaults.filledIconButtonColors(containerColor = accentBlue, contentColor = Color.White)
+        ) {
+            Icon(Icons.Default.VolumeUp, contentDescription = "Seslendir")
+        }
+    }
+}
+
+@Composable
+private fun ReadingStoryInfoCard(
+    title: String,
+    imageRes: Int,
+    surfaceColor: Color,
+    paleBlue: Color,
+    textColor: Color,
+    mutedColor: Color,
+    accentBlue: Color,
+    darkMode: Boolean
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = surfaceColor,
+        shadowElevation = if (darkMode) 0.dp else 5.dp
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, color = textColor, fontSize = 22.sp, lineHeight = 27.sp, fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ReadingInfoChip(Icons.Default.School, "A1", paleBlue, accentBlue)
+                    ReadingInfoChip(Icons.Default.Schedule, "2 min", paleBlue, mutedColor)
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Box(
+                modifier = Modifier
+                    .size(86.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(paleBlue),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    painter = painterResource(imageRes),
+                    contentDescription = null,
+                    modifier = Modifier.size(74.dp),
+                    contentScale = ContentScale.Fit
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReadingInfoChip(icon: ImageVector, label: String, backgroundColor: Color, contentColor: Color) {
+    Surface(shape = RoundedCornerShape(50), color = backgroundColor) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp), tint = contentColor)
+            Spacer(Modifier.width(5.dp))
+            Text(label, color = contentColor, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+        }
+    }
+}
+
+@Composable
+private fun ReadingMotivationCard(
+    imageRes: Int,
+    surfaceColor: Color,
+    paleBlue: Color,
+    textColor: Color,
+    mutedColor: Color,
+    darkMode: Boolean
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        color = surfaceColor,
+        shadowElevation = if (darkMode) 0.dp else 4.dp
+    ) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(paleBlue),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(painterResource(imageRes), null, Modifier.size(58.dp), contentScale = ContentScale.Fit)
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Great reading!", color = textColor, fontSize = 17.sp, fontWeight = FontWeight.Black)
+                Text("Tap any word to learn its meaning.", color = mutedColor, fontSize = 13.sp, lineHeight = 17.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun readingDrawableOrFallback(name: String, fallback: Int): Int {
+    val context = LocalContext.current
+    return remember(name, fallback) {
+        context.resources.getIdentifier(name, "drawable", context.packageName).takeIf { it != 0 } ?: fallback
+    }
+}
+
 fun loadLargeDictionary(context: Context): Map<String, String> {
     val dictionaryMap = mutableMapOf<String, String>()
     try {
@@ -3577,7 +3744,10 @@ fun ActionCard(
 
 @Composable
 fun MyWordsScreen(navController: NavHostController) {
+    val context = LocalContext.current
+    val appColors = LocalAppThemeColors.current
     var searchQuery by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { WordStorage.loadFromDisk(context) }
 
     // Kaydedilen kelimeleri gözlemlenebilir bir state olarak alıyoruz
     // Not: WordStorage.savedWords'ün bir SnapshotStateList olması anlık güncellenme için önemlidir
@@ -3609,7 +3779,7 @@ fun MyWordsScreen(navController: NavHostController) {
             Text(
                 text = "Kelimelerim",
                 style = TextStyle(fontSize = 32.sp, fontWeight = FontWeight.Black),
-                color = Color(0xFF01579B)
+                color = appColors.primary
             )
 
             // Arama Çubuğu (Daha şeffaf ve temaya uygun)
@@ -3619,22 +3789,22 @@ fun MyWordsScreen(navController: NavHostController) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 16.dp),
-                placeholder = { Text("Kelime ara...", color = Color(0xFF01579B).copy(alpha = 0.5f)) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color(0xFF01579B)) },
+                placeholder = { Text("Kelime ara...", color = appColors.textMuted) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = appColors.primary) },
                 shape = RoundedCornerShape(15.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     // Çerçeve renkleri
-                    focusedBorderColor = Color(0xFF01579B),
-                    unfocusedBorderColor = Color(0xFF01579B).copy(alpha = 0.3f),
+                    focusedBorderColor = appColors.primary,
+                    unfocusedBorderColor = appColors.border,
 
                     // İç dolgu (container) rengi
-                    focusedContainerColor = Color.White.copy(alpha = 0.5f),
-                    unfocusedContainerColor = Color.White.copy(alpha = 0.5f),
+                    focusedContainerColor = appColors.surface.copy(alpha = 0.82f),
+                    unfocusedContainerColor = appColors.surface.copy(alpha = 0.82f),
 
                     // Yazı ve imleç renkleri
-                    focusedTextColor = Color(0xFF01579B),
-                    unfocusedTextColor = Color(0xFF01579B),
-                    cursorColor = Color(0xFF01579B)
+                    focusedTextColor = appColors.text,
+                    unfocusedTextColor = appColors.text,
+                    cursorColor = appColors.primary
                 )
             )
 
@@ -3646,7 +3816,7 @@ fun MyWordsScreen(navController: NavHostController) {
                     item {
                         Text(
                             text = if (searchQuery.isEmpty()) "Henüz kelime kaydetmedin." else "Sonuç bulunamadı.",
-                            color = Color(0xFF01579B).copy(alpha = 0.6f),
+                            color = appColors.textMuted,
                             modifier = Modifier.padding(top = 20.dp)
                         )
                     }
@@ -3659,6 +3829,7 @@ fun MyWordsScreen(navController: NavHostController) {
                         onRemove = {
                             // WordStorage içinde silme fonksiyonunu çağırıyoruz
                             WordStorage.savedWords.remove(wordItem)
+                            WordStorage.saveToDisk(context)
                         }
                     )
                 }
@@ -3669,12 +3840,13 @@ fun MyWordsScreen(navController: NavHostController) {
 
 @Composable
 fun SavedWordItemWithDelete(wordItem: SavedWord, onRemove: () -> Unit) { // 'WordData' yerine 'SavedWord' yapıldı
+    val appColors = LocalAppThemeColors.current
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
         shape = RoundedCornerShape(20.dp),
-        color = Color.White.copy(alpha = 0.8f),
+        color = appColors.surface.copy(alpha = 0.92f),
         shadowElevation = 2.dp
     ) {
         Row(
@@ -3690,12 +3862,13 @@ fun SavedWordItemWithDelete(wordItem: SavedWord, onRemove: () -> Unit) { // 'Wor
                 Text(
                     text = wordItem.word,
                     style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.ExtraBold),
-                    color = Color(0xFF01579B)
+                    color = appColors.primary
                 )
                 Text(
-                    text = wordItem.meaning,
+                    text = AppDictionary.words[wordItem.word.lowercase().trim()]
+                        ?: wordItem.meaning.ifBlank { "Anlam bulunamadı" },
                     style = TextStyle(fontSize = 15.sp),
-                    color = Color(0xFF2C3E50).copy(alpha = 0.7f)
+                    color = appColors.textMuted
                 )
             }
 
@@ -3704,7 +3877,7 @@ fun SavedWordItemWithDelete(wordItem: SavedWord, onRemove: () -> Unit) { // 'Wor
                 Icon(
                     imageVector = Icons.Default.Bookmark,
                     contentDescription = "Kaldır",
-                    tint = Color(0xFF0288D1),
+                    tint = appColors.primary,
                     modifier = Modifier.size(28.dp)
                 )
             }
@@ -3936,11 +4109,9 @@ fun QuizAppNavigation(
     speechAssistant: SpeechAssistant,
     isDarkMode: Boolean,
     // ✅ bunu ekle
-    onToggleDarkMode: () -> Unit,      // ✅ bunu ekle
+    onThemeChange: (Boolean) -> Unit,
 
 ) {
-    var isDarkMode by remember { mutableStateOf(false) }
-
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -3951,13 +4122,25 @@ fun QuizAppNavigation(
     val dictionaryWords = remember { loadWordsFromAssets(context) }
     var showQuizPrompt by rememberSaveable { mutableStateOf(true) }
 
+    LaunchedEffect(AppNotificationRouter.pendingRoute) {
+        AppNotificationRouter.pendingRoute?.let { route ->
+            navController.navigate(route) { launchSingleTop = true }
+            AppNotificationRouter.pendingRoute = null
+        }
+    }
 
 
 
-    NavHost(
-        navController = navController,
-        startDestination = Screen.Home.route
-    ) {
+
+    LaunchedEffect(Unit) {
+        AchievementManager.init(context)
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        NavHost(
+            navController = navController,
+            startDestination = Screen.Home.route
+        ) {
         // Navigasyon (NavHost) içinde:
 
         composable(Screen.Home.route) {
@@ -3986,8 +4169,8 @@ fun QuizAppNavigation(
             SettingsScreen(
                 isDarkMode = isDarkMode, // 👈 Burası global 'var' olan değişken olmalı
                 onThemeChange = { newValue ->
-                    isDarkMode = newValue // 🚀 Global değişkeni güncelliyoruz
-                    android.util.Log.d("MewEnglish", "Yeni Durum: $isDarkMode")
+                    onThemeChange(newValue)
+                    android.util.Log.d("MewEnglish", "Yeni Durum: $newValue")
                 },
                 onBack = { navController.popBackStack() }
             )
@@ -3997,72 +4180,75 @@ fun QuizAppNavigation(
         }
 
 
-        for (i in 1..55) {
+        for (i in 1..QuizDataHolder.quizSteps.size) {
             composable("test_$i") {
-                val quizList = when (i) {
-                    1 -> QuizRepository.getQuizOne()
-                    2 -> QuizRepository.getQuizTwo()
-                    3 -> QuizRepository.getQuizThree()
-                    4 -> QuizRepository.getQuizFour()
-                    5 -> QuizRepository.getQuizFive()
-                    6 -> QuizRepository.getQuizSix()
-                    7 -> QuizRepository.getQuizSeven()
-                    8 -> QuizRepository.getQuizEight()
-                    9 -> QuizRepository.getQuizNine()
-                    10 -> QuizRepository.getQuizTen()
-                    11 -> QuizRepository.getQuizEleven()
-                    12 -> QuizRepository.getQuizTwelve()
-                    13 -> QuizRepository.getQuizThirteen()
-                    14 -> QuizRepository.getQuizFourteen()
-                    15 -> QuizRepository.getQuizFifteen()
-                    16 -> QuizRepository.getQuizSixteen()
-                    17 -> QuizRepository.getQuizSeventeen()
-                    18 -> QuizRepository.getQuizEighteen()
-                    19 -> QuizRepository.getQuizNineteen()
-                    20 -> QuizRepository.getQuizTwenty()
-                    21 -> QuizRepository.getQuizTwentyOne()
-                    22 -> QuizRepository.getQuizTwentyTwo()
-                    23 -> QuizRepository.getQuizTwentyThree()
-                    24 -> QuizRepository.getQuizTwentyFour()
-                    25 -> QuizRepository.getQuizTwentyFive()
-                    26 -> QuizRepository.getQuizTwentySix()
-                    27 -> QuizRepository.getQuizTwentySeven()
-                    28 -> QuizRepository.getQuizTwentyEight()
-                    29 -> QuizRepository.getQuizTwentyNine()
-                    30 -> QuizRepository.getQuizThirty()
-                    31 -> QuizRepository.getQuizThirtyOne()
-                    32 -> QuizRepository.getQuizThirtyTwo()
-                    33 -> QuizRepository.getQuizThirtyThree()
-                    34 -> QuizRepository.getQuizThirtyFour()
-                    35 -> QuizRepository.getQuizThirtyFive()
-                    36 -> QuizRepository.getQuizThirtySix()
-                    37 -> QuizRepository.getQuizThirtySeven()
-                    38 -> QuizRepository.getQuizThirtyEight()
-                    39 -> QuizRepository.getQuizThirtyNine()
-                    40 -> QuizRepository.getQuizForty()
-                    41 -> QuizRepository.getQuizFortyOne()
-                    42 -> QuizRepository.getQuizFortyTwo()
-                    43 -> QuizRepository.getQuizFortyThree()
-                    44 -> QuizRepository.getQuizFortyFour()
-                    45 -> QuizRepository.getQuizFortyFive()
-                    46 -> QuizRepository.getQuizFortySix()
-                    47 -> QuizRepository.getQuizFortySeven()
-                    48 -> QuizRepository.getQuizFortyEight()
-                    49 -> QuizRepository.getQuizFortyNine()
-                    50 -> QuizRepository.getQuizFifty()
-                    51 -> QuizRepository.getQuizFiftyOne()
-                    52 -> QuizRepository.getQuizFiftyTwo()
-                    53 -> QuizRepository.getQuizFiftyThree() // 👈 Dinleme/Eylem Pekiştirme
-                    54 -> QuizRepository.getQuizFiftyFour()  // 👈 Büyük Eylem Finali
-                    55 -> QuizRepository.getQuizFiftyFive()  // 👈 Yeni Çeviri (Word Drop) Testi
-                    else -> QuizRepository.getQuizOne()
+                val context = LocalContext.current
+                val quizList = QuizRepository.getQuizByNumber(i)
+
+                val progressBeforeQuiz = remember(i) { QuizTreeProgressStore.loadAll(context) }
+                val previousResult = progressBeforeQuiz[i - 1]
+                val fullStarCountBefore = progressBeforeQuiz.values.count {
+                    QuizTreeProgressStore.starsFor(it) == 3
                 }
 
                 MainQuizScreen(
                     quizList = quizList,
                     ttsHelper = speechAssistant,
                     navController = navController,
-                    onQuizComplete = { navController.popBackStack() }
+                    onQuizComplete = { navController.popBackStack() },
+                    previousResult = previousResult,
+                    fullStarCountBefore = fullStarCountBefore,
+                    quizIndex = i,
+                    quizTitle = QuizDataHolder.quizSteps.getOrNull(i - 1)?.title ?: "Quiz $i",
+                    onQuizResult = { correctAnswers, totalQuestions, completedAllQuestions ->
+                        if (completedAllQuestions) {
+                            val prevStars = QuizTreeProgressStore.starsFor(previousResult)
+                            val isSecondSolve = prevStars >= 1
+
+                            QuizTreeProgressStore.recordAttempt(
+                                context = context,
+                                quizIndex = i - 1,
+                                correctAnswers = correctAnswers,
+                                totalQuestions = totalQuestions
+                            )
+
+                            // Rozet tetikleyicileri
+                            val isPassed = totalQuestions > 0 && (correctAnswers.toFloat() / totalQuestions.toFloat()) >= 0.7f
+                            if (isPassed) {
+                                AchievementManager.unlockBadge(context, "common_first_step")
+                                
+                                val errors = totalQuestions - correctAnswers
+                                if (errors == 0) {
+                                    AchievementManager.unlockBadge(context, "rare_flawless")
+                                }
+                                
+                                val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+                                if (hour in 6..9) {
+                                    AchievementManager.unlockBadge(context, "common_morning_run")
+                                } else if (hour >= 0 && hour < 6) {
+                                    AchievementManager.unlockBadge(context, "common_night_owl")
+                                }
+                                
+                                val dayOfWeek = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK)
+                                if (dayOfWeek == java.util.Calendar.SATURDAY || dayOfWeek == java.util.Calendar.SUNDAY) {
+                                    AchievementManager.unlockBadge(context, "regular_weekend_warrior")
+                                }
+                            }
+
+                            if (isSecondSolve) {
+                                val errors = totalQuestions - correctAnswers
+                                val blueStars = when (errors) {
+                                    0 -> 3
+                                    1 -> 2
+                                    2 -> 1
+                                    else -> 0
+                                }
+                                QuizTreeProgressStore.saveReinforcementStars(context, i - 1, blueStars)
+                            }
+                        } else {
+                            QuizTreeProgressStore.addXp(context, 15)
+                        }
+                    }
                 )
             }
         }
@@ -4088,7 +4274,7 @@ fun QuizAppNavigation(
                 level = "A1",
                 navController = navController,
                 onReadingSelected = { storyTitle ->
-                    navController.navigate("ReadingDetail/$storyTitle")
+                    navController.navigate("ReadingDetail/${Uri.encode(storyTitle)}")
                 }
             )
         }
@@ -4111,7 +4297,7 @@ fun QuizAppNavigation(
                 level = "A1",
                 navController = navController,
                 onReadingSelected = { storyTitle ->
-                    navController.navigate("ReadingDetail/$storyTitle")
+                    navController.navigate("ReadingDetail/${Uri.encode(storyTitle)}")
                 }
             )
         }
@@ -4122,7 +4308,7 @@ fun QuizAppNavigation(
                 level = "A2",
                 navController = navController,
                 onReadingSelected = { storyTitle ->
-                    navController.navigate("ReadingDetail/$storyTitle")
+                    navController.navigate("ReadingDetail/${Uri.encode(storyTitle)}")
                 }
             )
         }
@@ -4133,7 +4319,7 @@ fun QuizAppNavigation(
                 level = "B1",
                 navController = navController,
                 onReadingSelected = { storyTitle ->
-                    navController.navigate("ReadingDetail/$storyTitle")
+                    navController.navigate("ReadingDetail/${Uri.encode(storyTitle)}")
                 }
             )
         }
@@ -4144,7 +4330,7 @@ fun QuizAppNavigation(
                 level = "B2",
                 navController = navController,
                 onReadingSelected = { storyTitle ->
-                    navController.navigate("ReadingDetail/$storyTitle")
+                    navController.navigate("ReadingDetail/${Uri.encode(storyTitle)}")
                 }
             )
         }
@@ -4155,7 +4341,7 @@ fun QuizAppNavigation(
                 level = "C1",
                 navController = navController,
                 onReadingSelected = { storyTitle ->
-                    navController.navigate("ReadingDetail/$storyTitle")
+                    navController.navigate("ReadingDetail/${Uri.encode(storyTitle)}")
                 }
             )
         }
@@ -4166,8 +4352,20 @@ fun QuizAppNavigation(
                 level = "C2",
                 navController = navController,
                 onReadingSelected = { storyTitle ->
-                    navController.navigate("ReadingDetail/$storyTitle")
+                    navController.navigate("ReadingDetail/${Uri.encode(storyTitle)}")
                 }
+            )
+        }
+
+        composable(
+            route = "ReadingDetail/{storyTitle}",
+            arguments = listOf(navArgument("storyTitle") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val storyTitle = Uri.decode(backStackEntry.arguments?.getString("storyTitle") ?: "")
+            ReadingDetailScreen(
+                storyTitle = storyTitle,
+                navController = navController,
+                ttsHelper = speechAssistant
             )
         }
 
@@ -4190,6 +4388,26 @@ fun QuizAppNavigation(
         // progress ekranı
         composable(route = "progress_screen") {
             ProgressScreen(navController = navController)
+        }
+
+        composable("reading_screen") {
+            ReadingScreen(navController)
+        }
+
+        composable("mistake_jar") {
+            MistakeJarScreen(navController)
+        }
+        composable(
+            route = "mistake_review/{mistakeId}",
+            arguments = listOf(navArgument("mistakeId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            MistakeReviewScreen(
+                navController = navController,
+                mistakeId = backStackEntry.arguments?.getString("mistakeId").orEmpty()
+            )
+        }
+        composable("words_screen") {
+            MyWordsScreen(navController)
         }
 
         composable("sheet_test_screen") {
@@ -4297,7 +4515,20 @@ fun QuizAppNavigation(
                 )
             }
         }
+        
+        composable("badges_screen") {
+            BadgesScreen(navController)
+        }
     }
+
+    // Global Rozet Bildirimi Overlay'i
+    AchievementManager.activeToast?.let { badge ->
+        AchievementToast(
+            badge = badge,
+            onDismiss = { AchievementManager.activeToast = null }
+        )
+    }
+}
 }
 
 @Composable
@@ -4641,9 +4872,11 @@ fun QuizTreeScreen(
     onQuizSelected: (String) -> Unit
 ) {
     val scrollState = rememberScrollState()
+    val isDarkMode = LocalIsDarkMode.current
+    val appColors = LocalAppThemeColors.current
 
     // Arka plan resmini yükleyip dikeyde tekrar etmesini (Repeat) sağlıyoruz
-    val bgImage = ImageBitmap.imageResource(id = R.drawable.quiztreescreen) // Resim ismini kontrol et
+    val bgImage = ImageBitmap.imageResource(id = R.drawable.quiz_tree_cat) // Resim ismini kontrol et
     val backgroundBrush = remember(bgImage) {
         ShaderBrush(
             ImageShader(
@@ -4654,18 +4887,25 @@ fun QuizTreeScreen(
         )
     }
 
-    val deepBlue = Color(0xFF01579B)
+    val deepBlue = appColors.primary
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .paint(
-                painter = painterResource(id = R.drawable.quiztreescreen),
+                painter = painterResource(id = R.drawable.quiz_tree_cat),
                 contentScale = ContentScale.FillBounds, // Ekran genişliğine yayar
                 // Eğer dikeyde tekrar etmesini istiyorsan TileMode kullanmalıyız.
                 // Ama basitçe resmi görmek için şimdilik bunu kullan:
             )
     ) {
+        if (isDarkMode) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(appColors.background.copy(alpha = 0.78f))
+            )
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -4834,25 +5074,27 @@ fun QuizAppContainer(navController: NavController) { // navController'ı paramet
 }
 @Composable
 fun VerticalConnectorLine() {
+    val appColors = LocalAppThemeColors.current
     Canvas(modifier = Modifier
         .height(30.dp)
         .width(2.dp)) {
-        drawLine(color = Color(0xFFBDBDBD), start = Offset(0f, 0f), end = Offset(0f, size.height), strokeWidth = 6f)
+        drawLine(color = appColors.border, start = Offset(0f, 0f), end = Offset(0f, size.height), strokeWidth = 6f)
     }
 }
 
 @Composable
 fun BranchingLine() {
+    val appColors = LocalAppThemeColors.current
     Canvas(modifier = Modifier
         .fillMaxWidth()
         .height(60.dp)) {
         val midX = size.width / 2
         // Ana hattan 3'e dağılan çizim
-        drawLine(Color(0xFFBDBDBD), Offset(midX, 0f), Offset(midX, 30f), 6f)
-        drawLine(Color(0xFFBDBDBD), Offset(size.width * 0.17f, 30f), Offset(size.width * 0.83f, 30f), 6f)
-        drawLine(Color(0xFFBDBDBD), Offset(size.width * 0.17f, 30f), Offset(size.width * 0.17f, 60f), 6f)
-        drawLine(Color(0xFFBDBDBD), Offset(midX, 30f), Offset(midX, 60f), 6f)
-        drawLine(Color(0xFFBDBDBD), Offset(size.width * 0.83f, 30f), Offset(size.width * 0.83f, 60f), 6f)
+        drawLine(appColors.border, Offset(midX, 0f), Offset(midX, 30f), 6f)
+        drawLine(appColors.border, Offset(size.width * 0.17f, 30f), Offset(size.width * 0.83f, 30f), 6f)
+        drawLine(appColors.border, Offset(size.width * 0.17f, 30f), Offset(size.width * 0.17f, 60f), 6f)
+        drawLine(appColors.border, Offset(midX, 30f), Offset(midX, 60f), 6f)
+        drawLine(appColors.border, Offset(size.width * 0.83f, 30f), Offset(size.width * 0.83f, 60f), 6f)
     }
 }
 @Composable

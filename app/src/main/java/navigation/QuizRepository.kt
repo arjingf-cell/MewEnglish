@@ -8,6 +8,7 @@ import com.airbnb.lottie.LottieComposition
 import com.airbnb.lottie.compose.*
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import com.example.ngilizcequizapp.SpeechAssistant
 import android.content.Context
 import android.speech.tts.TextToSpeech
@@ -253,11 +254,26 @@ val sectionThemes = listOf(
 
 @Composable
 fun QuizTreeScreen(navController: NavController, levelName: String = "A1") {
-    val lastSolvedIndex by remember { mutableIntStateOf(200) }
+    val context = LocalContext.current
+    val progress = remember { QuizTreeProgressStore.loadAll(context) }
+    val lastSolvedIndex = remember(progress) { QuizTreeProgressStore.lastSolvedIndex(progress) }
+    val coins = remember(progress) { QuizTreeProgressStore.getCoins(context) }
+    val gems = remember(progress) { QuizTreeProgressStore.getGems(context) }
+
     val allSteps = remember { QuizDataHolder.quizSteps }
     val mapItems = remember { buildMapItems(allSteps) }
     val scrollState = rememberLazyListState()
+    val solvedCount = remember(progress, allSteps) {
+        allSteps.indices.count { quizIndex ->
+            val result = progress[quizIndex]
+            val stars = QuizTreeProgressStore.starsFor(result)
+            stars >= 1
+        }
+    }
+    var skipQuizIndex by remember { mutableStateOf<Int?>(null) }
     val screenWidth = LocalConfiguration.current.screenWidthDp.dp
+    val coroutineScope = rememberCoroutineScope()
+    var showBalloonDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = Color(0xFFF8FAFC),
@@ -266,8 +282,8 @@ fun QuizTreeScreen(navController: NavController, levelName: String = "A1") {
             QuizTreeTopBar(
                 navController = navController,
                 levelName = levelName,
-                coins = 1250,
-                gems = 85
+                coins = coins,
+                gems = gems
             )
         }
     ) { paddingValues ->
@@ -281,7 +297,41 @@ fun QuizTreeScreen(navController: NavController, levelName: String = "A1") {
             ) {
                 // ✅ YAMA: %60 muhabbeti ve Professor Cat olan banner
                 item {
-                    ProgressBannerCard(screenWidth)
+                    QuizTreeBanner(screenWidth)
+                }
+
+                // Gösterge (Toplam quiz sayısı ve çözülmüş olanlar)
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Tamamlanan Konular",
+                            style = TextStyle(
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF64748B)
+                            )
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0xFFE2E8F0)
+                        ) {
+                            Text(
+                                text = "$solvedCount / ${allSteps.size}",
+                                style = TextStyle(
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF1E293B)
+                                ),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
                 }
 
                 itemsIndexed(
@@ -299,6 +349,7 @@ fun QuizTreeScreen(navController: NavController, levelName: String = "A1") {
                             val quizIndex = mapItem.quizIndex
                             val isSolved = quizIndex <= lastSolvedIndex
                             val isLocked = if (quizIndex == 0) false else quizIndex > lastSolvedIndex + 1
+                            val starCount = QuizTreeProgressStore.starsFor(progress[quizIndex])
 
                             // ✅ HİZALAMA: Görseldeki gibi zigzag akışı
                             val alignment = when {
@@ -314,10 +365,13 @@ fun QuizTreeScreen(navController: NavController, levelName: String = "A1") {
                                     .height(90.dp),
                                 contentAlignment = alignment
                             ) {
+                                val blueStarCount = QuizTreeProgressStore.getReinforcementStars(context, quizIndex)
                                 DuoQuizNode(
                                     step = mapItem.step,
                                     isSolved = isSolved,
                                     isLocked = isLocked,
+                                    starCount = starCount,
+                                    blueStarCount = blueStarCount,
                                     sectionIndex = mapItem.sectionIndex,
                                     currentIndex = index,
                                     totalQuestions = mapItems.size,
@@ -325,6 +379,8 @@ fun QuizTreeScreen(navController: NavController, levelName: String = "A1") {
                                     onClick = {
                                         if (!isLocked) {
                                             navController.navigate("test_${quizIndex + 1}")
+                                        } else {
+                                            skipQuizIndex = quizIndex
                                         }
                                     }
                                 )
@@ -334,6 +390,99 @@ fun QuizTreeScreen(navController: NavController, levelName: String = "A1") {
                         is MapItem.SectionHeader -> MasteryCard()
                     }
                 }
+            }
+
+            skipQuizIndex?.let { targetIndex ->
+                SkipQuizDialog(
+                    onConfirm = {
+                        val prefs = context.getSharedPreferences("quiz_tree_progress", Context.MODE_PRIVATE)
+                        val editor = prefs.edit()
+                        for (i in (lastSolvedIndex + 1) until targetIndex) {
+                            editor.putString("quiz_attempt_$i", "0/0/0")
+                        }
+                        editor.apply()
+                        skipQuizIndex = null
+                        navController.navigate("test_${targetIndex + 1}")
+                    },
+                    onDismiss = {
+                        skipQuizIndex = null
+                    }
+                )
+            }
+
+            // 🎈 Sağ Kenardaki Yüzen Balon ve Konuşma Balonu
+            Row(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (showBalloonDialog) {
+                    Surface(
+                        modifier = Modifier
+                            .width(200.dp)
+                            .shadow(elevation = 6.dp, shape = RoundedCornerShape(16.dp)),
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color.White
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "Kaldığın quizden devam etmek ister misin?",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1E293B),
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                Button(
+                                    onClick = {
+                                        showBalloonDialog = false
+                                        val targetQuizIndex = Math.min(lastSolvedIndex + 1, allSteps.lastIndex)
+                                        val targetMapItemIndex = mapItems.indexOfFirst {
+                                            it is MapItem.QuizNode && it.quizIndex == targetQuizIndex
+                                        }
+                                        if (targetMapItemIndex >= 0) {
+                                            coroutineScope.launch {
+                                                scrollState.animateScrollToItem(targetMapItemIndex + 2)
+                                            }
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF58CC02)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text("Evet", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Button(
+                                    onClick = {
+                                        showBalloonDialog = false
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF5350)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text("Hayır", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+
+                FloatingBalloonButton(
+                    onClick = {
+                        showBalloonDialog = !showBalloonDialog
+                    }
+                )
             }
         }
     }
@@ -355,6 +504,7 @@ fun QuizTreeTopBar(
     // ✅ Lottie kompozisyonlarını doğru şekilde yüklüyoruz
     val coinComposition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.anim_coin))
     val gemComposition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.anim_diamond))
+    val xpComposition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.badge))
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -371,16 +521,29 @@ fun QuizTreeTopBar(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // SOL: Altın
+                val context = LocalContext.current
+                val xp = remember(coins, gems) { com.example.ngilizcequizapp.QuizTreeProgressStore.getXp(context) }
+
+                // SOL: Altın (No plus)
                 AnimatedResourceTag(
                     composition = coinComposition,
-                    value = coins.toString()
+                    value = coins.toString(),
+                    showPlus = false
                 )
 
-                // SAĞ: Elmas
+                // ORTA: XP (No plus, loop only once)
+                AnimatedResourceTag(
+                    composition = xpComposition,
+                    value = "$xp XP",
+                    showPlus = false,
+                    iterations = 1
+                )
+
+                // SAĞ: Elmas (With plus at the end)
                 AnimatedResourceTag(
                     composition = gemComposition,
-                    value = gems.toString()
+                    value = gems.toString(),
+                    showPlus = true
                 )
             }
 
@@ -429,74 +592,77 @@ fun QuizTreeTopBar(
     }
 }
 @Composable
-fun ProgressBannerCard(screenWidth: androidx.compose.ui.unit.Dp) {
-    // Hatırladığımız o kritik eşik değeri
-    val progressValue = 0.60f
-    val progressPercent = (progressValue * 100).toInt()
-
+fun ProgressBannerCard(screenWidth: androidx.compose.ui.unit.Dp, navController: NavController) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp),
-        shape = RoundedCornerShape(28.dp),
+            .padding(16.dp)
+            .height(180.dp),
+        shape = RoundedCornerShape(32.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(4.dp) // Görseldeki derinlik için biraz artırdım
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        border = BorderStroke(1.5.dp, Color(0xFFE2E8F0))
     ) {
-        Box(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Bottom
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1.2f)
+                    .fillMaxHeight()
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // --- İLERLEME HALKASI ---
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.size(65.dp)) {
-                    CircularProgressIndicator(
-                        progress = { progressValue },
-                        color = Color(0xFF42A5F5), // MewEnglish ana mavisi
-                        trackColor = Color(0xFFE3F2FD),
-                        strokeWidth = 6.dp,
-                        strokeCap = StrokeCap.Round
-                    )
+                Column {
                     Text(
-                        text = "$progressPercent%",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF1E293B)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(16.dp))
-
-                // --- METİN ALANI ---
-                Column(modifier = Modifier.weight(1f)) {
-                    // %60'a ulaşıldığı için özel bir tebrik mesajı
-                    Text(
-                        text = if (progressPercent >= 60) "Almost there, Arji!" else "Keep going!",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
-                    Text(
-                        text = if (progressPercent >= 60)
-                            "You've passed the 60% mark. Professor Cat is proud!"
-                        else "Complete more quizzes to grow your tree!",
+                        text = "Reading Pieces",
+                        color = Color(0xFF0284C7),
                         fontSize = 11.sp,
-                        color = Color.Gray,
-                        lineHeight = 14.sp
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Reading",
+                        color = Color(0xFF0F172A),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Choose your level and practice with short reading passages.",
+                        color = Color(0xFF64748B),
+                        fontSize = 10.sp,
+                        lineHeight = 13.sp
                     )
                 }
 
-                // Karakterin gelmesi için sağda güvenli alan bırakıyoruz
-                Spacer(modifier = Modifier.width(60.dp))
+                Button(
+                    onClick = { navController.navigate("ReadingLevelSelection") },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1CB0F6)),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Text(
+                        text = "Start Reading",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
-            // --- PROFESSOR CAT (REHBER KARAKTER) ---
-            // Karakterin konumu ve büyüklüğü emülatörde görselle tam uyuşmalı
             Image(
-                painter = painterResource(id = R.drawable.professor_cat),
-                contentDescription = "Professor Cat Guide",
+                painter = painterResource(id = R.drawable.readingcat),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
                 modifier = Modifier
-                    .size(90.dp) // Biraz daha belirgin olması için büyüttüm
-                    .align(Alignment.CenterEnd)
-                    .offset(x = (5).dp, y = (10).dp) // Kartın köşesinden hafif taşma efekti
+                    .weight(0.8f)
+                    .fillMaxHeight(0.90f)
+                    .padding(end = 12.dp, bottom = 8.dp)
             )
         }
     }
@@ -547,6 +713,18 @@ fun ResourceTag(icon: ImageVector, value: String) {
 }
 @Composable
 fun QuizTreeBanner(screenWidth: Dp) {
+    var startAnim by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        startAnim = true
+    }
+
+    // Ekranın en sağından soluna doğru ilerlesin
+    val animatedOffset by animateDpAsState(
+        targetValue = if (startAnim) 0.dp else screenWidth,
+        animationSpec = tween(durationMillis = 1500, easing = FastOutSlowInEasing),
+        label = "cat_slide"
+    )
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -558,24 +736,25 @@ fun QuizTreeBanner(screenWidth: Dp) {
         Box(modifier = Modifier.fillMaxSize().background(
             Brush.horizontalGradient(listOf(Color(0xFFE0EAFC), Color(0xFFCFDEF3)))
         )) {
-            // 🐱 Profesör Kedi (Sağdan Sola Fade ve %60 Genişlik)
+            // 🐱 Profesör Kedi (Sağdan Sola Hareketi, Sığdırma ve Sona Doğru Solma)
             Image(
                 painter = painterResource(id = R.drawable.professor_cat),
                 contentDescription = null,
-                contentScale = ContentScale.Crop,
+                contentScale = ContentScale.Crop, // Resmi kutucuğa dikeyde tam sığdır (boşluk kalmasın)
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .fillMaxHeight()
-                    .fillMaxWidth(0.60f) // En fazla %60
-                    .graphicsLayer(alpha = 0.99f)
+                    .fillMaxWidth(0.70f) // Ekranın %70'inde dursun
+                    .offset(x = animatedOffset)
+                    .graphicsLayer(alpha = 0.99f) // DstIn blend mode offscreen buffer için gerekli
                     .drawWithContent {
                         val colors = listOf(Color.Black, Color.Transparent)
                         drawContent()
                         drawRect(
                             brush = Brush.horizontalGradient(
                                 colors = colors,
-                                startX = size.width,
-                                endX = 0f // Sağdan sola doğru fade
+                                startX = size.width * 0.55f, // Sağ tarafta daha uzun süre net kalsın (solma geç başlasın)
+                                endX = 0f // Sol sınırda tamamen bitsin
                             ),
                             blendMode = BlendMode.DstIn
                         )
@@ -586,22 +765,98 @@ fun QuizTreeBanner(screenWidth: Dp) {
             Column(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .fillMaxWidth(0.45f) // En fazla %45[cite: 1]
+                    .fillMaxWidth(0.45f) // En fazla %45
                     .padding(20.dp),
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(
-                    text = "Keep going!",
+                    text = "Quiz Zamanı!",
                     style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Black, color = Color(0xFF1A2B5E)),
-                    softWrap = true // Kelime bölünmez[cite: 1]
+                    softWrap = true // Kelime bölünmez
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Complete more quizzes to grow your tree!",
-                    style = TextStyle(fontSize = 12.sp, color = Color(0xFF4466AA)),
-                    softWrap = true // Kelime bütünlüğü korunur[cite: 1]
+                    text = "Hemen quizleri çöz, kelimeleri pekiştirerek İngilizce ağacını büyüt!",
+                    style = TextStyle(fontSize = 12.sp, color = Color(0xFF4466AA), fontWeight = FontWeight.Medium),
+                    softWrap = true // Kelime bütünlüğü korunur
                 )
             }
+        }
+    }
+}
+@Composable
+fun FloatingBalloonButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "balloon")
+    val floatAnim by infiniteTransition.animateFloat(
+        initialValue = -6f,
+        targetValue = 6f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "balloon_float"
+    )
+
+    Box(
+        modifier = modifier
+            .offset(y = floatAnim.dp)
+            .size(56.dp)
+            .shadow(elevation = 6.dp, shape = CircleShape)
+            .background(Color.White, CircleShape)
+            .clickable { onClick() }
+            .padding(8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val w = size.width
+            val h = size.height
+            val balloonRadius = w * 0.35f
+            val balloonCenterX = w / 2f
+            val balloonCenterY = h / 2f - 4f
+
+            // String (İp)
+            val path = Path().apply {
+                moveTo(balloonCenterX, balloonCenterY + balloonRadius)
+                quadraticTo(
+                    balloonCenterX - 4f, balloonCenterY + balloonRadius + w * 0.2f,
+                    balloonCenterX + 2f, balloonCenterY + balloonRadius + w * 0.4f
+                )
+            }
+            drawPath(
+                path = path,
+                color = Color.LightGray,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f, cap = StrokeCap.Round)
+            )
+
+            // Tie (Düğüm)
+            val tiePath = Path().apply {
+                moveTo(balloonCenterX, balloonCenterY + balloonRadius)
+                lineTo(balloonCenterX - 4f, balloonCenterY + balloonRadius + 4f)
+                lineTo(balloonCenterX + 4f, balloonCenterY + balloonRadius + 4f)
+                close()
+            }
+            drawPath(tiePath, color = Color(0xFFF1F5F9))
+
+            // Balloon Body (Beyaz 3D Görünüm)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color.White, Color(0xFFE2E8F0)),
+                    center = Offset(balloonCenterX - 3f, balloonCenterY - 3f),
+                    radius = balloonRadius
+                ),
+                radius = balloonRadius,
+                center = Offset(balloonCenterX, balloonCenterY)
+            )
+
+            // Shine (Parlama)
+            drawCircle(
+                color = Color.White.copy(alpha = 0.8f),
+                radius = balloonRadius * 0.25f,
+                center = Offset(balloonCenterX - balloonRadius * 0.3f, balloonCenterY - balloonRadius * 0.3f)
+            )
         }
     }
 }
@@ -666,6 +921,7 @@ fun QuizNodeWrapper(
             step = step, // 'item.step' yerine sadece 'step'
             isSolved = isSolved,
             isLocked = isLocked,
+            starCount = 0,
             sectionIndex = sectionIndex,
             nodeColor = currentColor,
             totalQuestions = 10,
@@ -687,10 +943,12 @@ fun DuoQuizNode(
     modifier: Modifier = Modifier,
     isSolved: Boolean,
     isLocked: Boolean,
+    starCount: Int,
+    blueStarCount: Int = 0,
     sectionIndex: Int,
     nodeColor: Color,
-    currentIndex: Int,     // Yamalanan: image_6b08aa.jpg hatasını çözer
-    totalQuestions: Int,   // Yamalanan: image_6b08aa.jpg hatasını çözer
+    currentIndex: Int,
+    totalQuestions: Int,
     onClick: () -> Unit
 ) {
     val actionBlue = Color(0xFF42A5F5)
@@ -712,7 +970,7 @@ fun DuoQuizNode(
             .padding(vertical = 10.dp, horizontal = 12.dp)
             .width(dynamicWidth)
             .height(72.dp)
-            .clickable(enabled = !finalLockedState) { onClick() },
+            .clickable { onClick() },
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (finalLockedState) lockedBackground else Color.White
@@ -733,16 +991,13 @@ fun DuoQuizNode(
                 contentAlignment = Alignment.Center
             ) {
                 if (finalLockedState) {
-                    Icon(
-                        imageVector = Icons.Default.Lock, // Yamalanan: 'padlock' yerine sistem ikonu
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = Color(0xFF94A3B8)
+                    Image(
+                        painter = painterResource(id = R.drawable.padlock),
+                        contentDescription = "Locked",
+                        modifier = Modifier.size(24.dp)
                     )
-                } else if (isSolved) {
-                    Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = actionBlue, modifier = Modifier.size(20.dp))
                 } else {
-                    Text(text = step.qmoji, fontSize = 16.sp)
+                    Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = actionBlue, modifier = Modifier.size(20.dp))
                 }
             }
 
@@ -758,8 +1013,18 @@ fun DuoQuizNode(
 
                 if (!finalLockedState) {
                     Row(modifier = Modifier.padding(top = 2.dp)) {
-                        repeat(3) {
-                            Icon(imageVector = Icons.Default.Star, contentDescription = null, modifier = Modifier.size(14.dp), tint = if (isSolved) Color(0xFFFFB300) else Color(0xFFE2E8F0))
+                        repeat(3) { index ->
+                            val starColor = when {
+                                index < blueStarCount -> Color(0xFF42A5F5) // Blue Star
+                                index < starCount -> Color(0xFFFFB300) // Yellow Star
+                                else -> Color(0xFFE2E8F0) // Gray Star
+                            }
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = starColor
+                            )
                         }
                     }
                 }
@@ -777,6 +1042,16 @@ data class QuizStep(
     val type: String = "ordering",
     val wordMap: Map<String, String> = emptyMap()
 )
+
+class QuizList(
+    val wordsLearned: Int,
+    val questions: List<VocabularyLevelDataQuiz>
+) : List<VocabularyLevelDataQuiz> by questions
+
+fun quizListOf(wordsLearned: Int, vararg elements: VocabularyLevelDataQuiz): QuizList {
+    return QuizList(wordsLearned, elements.toList())
+}
+
 sealed class MapItem {
     data class QuizNode(val step: QuizStep, val quizIndex: Int, val sectionIndex: Int) : MapItem()
     data class SectionHeader(val sectionNumber: Int, val unitNumber: Int, val title: String) : MapItem()
@@ -1672,10 +1947,10 @@ fun eslestirme(
     val leftWords = remember(pairs) { pairs.map { it.first }.shuffled() }
     val rightWords = remember(pairs) { pairs.map { it.second }.shuffled() }
 
-    var selectedLeft by remember { mutableStateOf<String?>(null) }
-    var selectedRight by remember { mutableStateOf<String?>(null) }
+    var selectedLeft by remember(data) { mutableStateOf<String?>(null) }
+    var selectedRight by remember(data) { mutableStateOf<String?>(null) }
 
-    val matchedLeftWords = remember { mutableStateListOf<String>() }
+    val matchedLeftWords = remember(data) { mutableStateListOf<String>() }
 
     Column(
         modifier = Modifier
@@ -2455,6 +2730,10 @@ fun VisualQuizContent(
             )
         }
 
+        val shuffledOptions = remember(data) {
+            data.options.shuffled()
+        }
+
         // Izgara Şıklar (Grid)
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
@@ -2462,7 +2741,7 @@ fun VisualQuizContent(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier.weight(1f)
         ) {
-            items(data.options) { optionText ->
+            items(shuffledOptions) { optionText ->
                 val isThisSelected = selectedOption == optionText
 
                 Box(
@@ -2850,12 +3129,13 @@ fun GorselQuestionUI(
     tts: SpeechAssistant,
     onAnswer: (Boolean) -> Unit
 ) {
+    val shuffledOptions = remember(data) { data.options.shuffled() }
     Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
         Text(text = data.questionTurkish, style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold))
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        data.options.forEach { option ->
+        shuffledOptions.forEach { option ->
             Button(
                 onClick = {
                     // data.isCorrect artık String bekliyor, option da String!
@@ -3237,159 +3517,557 @@ fun TranslationQuizScreen(
 
 object QuizRepository {
 
-
-
+    private val imageMap = mapOf(
+        "alone" to R.drawable.alone,
+        "ananbeanan" to R.drawable.ananbeanan,
+        "angry" to R.drawable.angry,
+        "answer" to R.drawable.answer,
+        "apple" to R.drawable.apple,
+        "ask" to R.drawable.ask,
+        "baby" to R.drawable.baby,
+        "balcony" to R.drawable.balcony,
+        "bank" to R.drawable.bank,
+        "bathroom" to R.drawable.bathroom,
+        "bbq" to R.drawable.bbq,
+        "bed" to R.drawable.bed,
+        "bedroom" to R.drawable.bedroom,
+        "belt" to R.drawable.belt,
+        "bench" to R.drawable.bench,
+        "bill" to R.drawable.bill,
+        "bird" to R.drawable.bird,
+        "black cat" to R.drawable.blackcat,
+        "black_paw" to R.drawable.black_paw,
+        "blackcat" to R.drawable.blackcat,
+        "board" to R.drawable.board,
+        "body" to R.drawable.body,
+        "boil" to R.drawable.boil,
+        "book" to R.drawable.book,
+        "booking" to R.drawable.booking,
+        "boot" to R.drawable.boot,
+        "bored" to R.drawable.bored,
+        "bowl" to R.drawable.bowl,
+        "boy" to R.drawable.boy,
+        "bread" to R.drawable.bread,
+        "breakfast" to R.drawable.breakfast,
+        "brother" to R.drawable.brother,
+        "brush" to R.drawable.brush,
+        "burger" to R.drawable.burger,
+        "bus" to R.drawable.bus,
+        "bus_stop" to R.drawable.bus_stop,
+        "buy" to R.drawable.buy,
+        "calm" to R.drawable.calm,
+        "camp" to R.drawable.camp,
+        "car" to R.drawable.car,
+        "carpet" to R.drawable.carpet,
+        "carrot" to R.drawable.carrot,
+        "carry" to R.drawable.carry,
+        "cat" to R.drawable.cat,
+        "cat_logo" to R.drawable.cat_logo,
+        "cat_splash" to R.drawable.cat_splash,
+        "cat_splashh" to R.drawable.cat_splashh,
+        "catt_splash" to R.drawable.catt_splash,
+        "chair" to R.drawable.chair,
+        "check_in" to R.drawable.check_in,
+        "check_out" to R.drawable.check_out,
+        "chef" to R.drawable.chef,
+        "chess" to R.drawable.chess,
+        "chicken" to R.drawable.chicken,
+        "cinema" to R.drawable.cinema,
+        "classmate" to R.drawable.classmate,
+        "classroom" to R.drawable.classroom,
+        "clock" to R.drawable.clock,
+        "cloudy" to R.drawable.cloudy,
+        "coat" to R.drawable.coat,
+        "coke" to R.drawable.coke,
+        "cola" to R.drawable.cola,
+        "cold" to R.drawable.cold,
+        "cold_2" to R.drawable.cold_2,
+        "collect" to R.drawable.collect,
+        "come" to R.drawable.come,
+        "cook" to R.drawable.cook,
+        "cooker" to R.drawable.cooker,
+        "cool" to R.drawable.cool,
+        "cup" to R.drawable.cup,
+        "cupboard" to R.drawable.cupboard,
+        "curtain" to R.drawable.curtain,
+        "customer" to R.drawable.customer,
+        "cut" to R.drawable.cut,
+        "dad" to R.drawable.dad,
+        "daily_idiom" to R.drawable.daily_idiom,
+        "dance" to R.drawable.dance,
+        "desk" to R.drawable.desk,
+        "dicti" to R.drawable.dicti,
+        "dictionary" to R.drawable.dictionary,
+        "dining table" to R.drawable.dining_table,
+        "dining_table" to R.drawable.dining_table,
+        "diningroom" to R.drawable.diningroom,
+        "diningtable" to R.drawable.dining_table,
+        "dishwasher" to R.drawable.dishwasher,
+        "doctor" to R.drawable.doctor,
+        "dog" to R.drawable.dog,
+        "door" to R.drawable.door,
+        "drawer" to R.drawable.drawer,
+        "drawing" to R.drawable.drawing,
+        "dress" to R.drawable.dress,
+        "dress_up" to R.drawable.dress_up,
+        "drink" to R.drawable.drink,
+        "drive" to R.drawable.drive,
+        "drugstore" to R.drawable.drugstore,
+        "eat" to R.drawable.eat,
+        "education" to R.drawable.education,
+        "egg" to R.drawable.egg,
+        "elevator" to R.drawable.elevator,
+        "eraser" to R.drawable.eraser,
+        "excited" to R.drawable.excited,
+        "exercise" to R.drawable.exercise,
+        "family" to R.drawable.family,
+        "family_photo" to R.drawable.family,
+        "father" to R.drawable.dad,
+        "fence" to R.drawable.fence,
+        "find" to R.drawable.find,
+        "fish" to R.drawable.fish,
+        "fishing" to R.drawable.fishing,
+        "foggy" to R.drawable.foggy,
+        "fold_up" to R.drawable.fold_up,
+        "football" to R.drawable.football,
+        "fork" to R.drawable.fork,
+        "friend" to R.drawable.friend,
+        "game_console" to R.drawable.game_console,
+        "gaming" to R.drawable.gaming,
+        "garage" to R.drawable.garage,
+        "garden" to R.drawable.garden,
+        "glass" to R.drawable.glass,
+        "glasses" to R.drawable.glasses,
+        "glove" to R.drawable.glove,
+        "go" to R.drawable.go,
+        "grammar" to R.drawable.grammar,
+        "grandfather" to R.drawable.grandfather,
+        "grandmother" to R.drawable.grandmother,
+        "grate" to R.drawable.grate,
+        "grater" to R.drawable.grater,
+        "green_paw" to R.drawable.green_paw,
+        "guest" to R.drawable.guest,
+        "hang" to R.drawable.hang,
+        "happy" to R.drawable.happy,
+        "hat" to R.drawable.hat,
+        "hike" to R.drawable.hike,
+        "home" to R.drawable.home,
+        "homework" to R.drawable.homework,
+        "honey" to R.drawable.honey,
+        "hospital" to R.drawable.hospital,
+        "hot" to R.drawable.hot,
+        "hotel" to R.drawable.hotel,
+        "house" to R.drawable.house,
+        "ic_cat_paw" to R.drawable.ic_cat_paw,
+        "ic_launcher_background" to R.drawable.ic_launcher_background,
+        "ic_launcher_foreground" to R.drawable.ic_launcher_foreground,
+        "icecat" to R.drawable.icecat,
+        "iron" to R.drawable.iron,
+        "jacket" to R.drawable.jacket,
+        "juice" to R.drawable.juice,
+        "jump" to R.drawable.jump,
+        "kedi1" to R.drawable.kedi1,
+        "kedi2" to R.drawable.kedi2,
+        "kedi3" to R.drawable.kedi3,
+        "kedi4" to R.drawable.kedi4,
+        "kelimelerim" to R.drawable.kelimelerim,
+        "kettle" to R.drawable.kettle,
+        "key" to R.drawable.key,
+        "kisi1" to R.drawable.kisi1,
+        "kisi2" to R.drawable.kisi2,
+        "kisi3" to R.drawable.kisi3,
+        "kisi4" to R.drawable.kisi4,
+        "kisi5" to R.drawable.kisi5,
+        "kisi6" to R.drawable.kisi6,
+        "kitap1" to R.drawable.kitap1,
+        "kitchen" to R.drawable.kitchen,
+        "kitchen cabinet" to R.drawable.cupboard,
+        "knife" to R.drawable.knife,
+        "kupa" to R.drawable.kupa,
+        "lamp" to R.drawable.lamp,
+        "laundryroom" to R.drawable.laundryroom,
+        "learn" to R.drawable.learn,
+        "learn_word" to R.drawable.learn_word,
+        "lesson" to R.drawable.lesson,
+        "library" to R.drawable.library,
+        "listen" to R.drawable.listen,
+        "listening" to R.drawable.listening,
+        "listening_quiz_1" to R.drawable.listening_quiz_1,
+        "listening_quiz_2" to R.drawable.listening_quiz_2,
+        "livingroom" to R.drawable.livingroom,
+        "lobby" to R.drawable.lobby,
+        "logo_tp_app" to R.drawable.logo_tp_app,
+        "look" to R.drawable.look,
+        "luggage" to R.drawable.luggage,
+        "man" to R.drawable.man,
+        "mash" to R.drawable.mash,
+        "master" to R.drawable.master,
+        "meat" to R.drawable.meat,
+        "meeting" to R.drawable.meeting,
+        "meeting_in_class" to R.drawable.meeting_in_class,
+        "meeting_phone" to R.drawable.meeting_phone,
+        "meeting_stranger" to R.drawable.meeting_stranger,
+        "menu" to R.drawable.menu,
+        "milk" to R.drawable.milk,
+        "mirror" to R.drawable.mirror,
+        "mistake" to R.drawable.mistake,
+        "mistake_case" to R.drawable.mistake_case,
+        "mother" to R.drawable.mother,
+        "movie" to R.drawable.movie,
+        "museum" to R.drawable.museum,
+        "music" to R.drawable.music,
+        "my_logoo" to R.drawable.my_logoo,
+        "napkin" to R.drawable.napkin,
+        "nervous" to R.drawable.nervous,
+        "new_word" to R.drawable.new_word,
+        "notebook" to R.drawable.notebook,
+        "nurse" to R.drawable.nurse,
+        "old_woman" to R.drawable.old_woman,
+        "open" to R.drawable.open,
+        "order" to R.drawable.order,
+        "oven" to R.drawable.oven,
+        "padlock" to R.drawable.padlock,
+        "paint" to R.drawable.paint,
+        "pan" to R.drawable.pan,
+        "park" to R.drawable.park,
+        "partly_cloudy" to R.drawable.partly_cloudy,
+        "partner" to R.drawable.partner,
+        "passport" to R.drawable.passport,
+        "pay" to R.drawable.pay,
+        "peel" to R.drawable.peel,
+        "peeler" to R.drawable.peeler,
+        "pencil" to R.drawable.pencil,
+        "pharmacy" to R.drawable.pharmacy,
+        "pizza" to R.drawable.pizza,
+        "plant1" to R.drawable.plant1,
+        "plant2" to R.drawable.plant2,
+        "plant3" to R.drawable.plant3,
+        "plant4" to R.drawable.plant4,
+        "plate" to R.drawable.plate,
+        "play" to R.drawable.play,
+        "play_snowball" to R.drawable.play_snowball,
+        "pocket" to R.drawable.pocket,
+        "police_station" to R.drawable.police_station,
+        "post_office" to R.drawable.post_office,
+        "pot" to R.drawable.pot,
+        "pour" to R.drawable.pour,
+        "pp1" to R.drawable.pp1,
+        "pp2" to R.drawable.pp2,
+        "pp3" to R.drawable.pp3,
+        "pp4" to R.drawable.pp4,
+        "pp5" to R.drawable.pp5,
+        "pp6" to R.drawable.pp6,
+        "prefer" to R.drawable.prefer,
+        "principal" to R.drawable.principal,
+        "professor_cat" to R.drawable.professor_cat,
+        "proud" to R.drawable.proud,
+        "put_on" to R.drawable.put_on,
+        "pyjamas" to R.drawable.pyjamas,
+        "question" to R.drawable.question,
+        "quiz_cat" to R.drawable.quiz_cat,
+        "quiz_icon" to R.drawable.quiz_icon,
+        "quiz_resim_1" to R.drawable.quiz_resim_1,
+        "quiz_resim_2" to R.drawable.quiz_resim_2,
+        "quiz_resim_3" to R.drawable.quiz_resim_3,
+        "quiz_resim_4" to R.drawable.quiz_resim_4,
+        "quiz_resim_5" to R.drawable.quiz_resim_5,
+        "quiz_resim_6" to R.drawable.quiz_resim_6,
+        "quiz_tree_cat" to R.drawable.quiz_tree_cat,
+        "quiztreescreen" to R.drawable.quiztreescreen,
+        "rainy" to R.drawable.rainy,
+        "read" to R.drawable.read,
+        "reading" to R.drawable.reading,
+        "reading_banner" to R.drawable.reading_banner,
+        "readingcat" to R.drawable.readingcat,
+        "readingcat1" to R.drawable.readingcat1,
+        "reception" to R.drawable.reception,
+        "refrigerator" to R.drawable.refrigerator,
+        "rehber" to R.drawable.rehber,
+        "rehber1" to R.drawable.rehber1,
+        "reservation" to R.drawable.reservation,
+        "restaurant" to R.drawable.restaurant,
+        "rice" to R.drawable.rice,
+        "ride" to R.drawable.ride,
+        "roof" to R.drawable.roof,
+        "room" to R.drawable.room,
+        "run" to R.drawable.run,
+        "sad" to R.drawable.sad,
+        "salad" to R.drawable.salad,
+        "salad_1" to R.drawable.salad,
+        "salt" to R.drawable.salt,
+        "scared" to R.drawable.scared,
+        "scarf" to R.drawable.scarf,
+        "schoolbag" to R.drawable.schoolbag,
+        "serve" to R.drawable.serve,
+        "ses" to R.drawable.ses,
+        "shelf" to R.drawable.shelf,
+        "shirt" to R.drawable.shirt,
+        "shoe" to R.drawable.shoe,
+        "shoes" to R.drawable.shoes,
+        "shorts" to R.drawable.shorts,
+        "sick" to R.drawable.sick,
+        "sing" to R.drawable.sing,
+        "sink" to R.drawable.sink,
+        "sister" to R.drawable.sister,
+        "sister_in_law" to R.drawable.sister_in_law,
+        "sit" to R.drawable.sit,
+        "skate" to R.drawable.skate,
+        "skirt" to R.drawable.skirt,
+        "sleep" to R.drawable.sleep,
+        "sleepy" to R.drawable.sleepy,
+        "snowy" to R.drawable.snowy,
+        "sock" to R.drawable.sock,
+        "socks" to R.drawable.socks,
+        "soda" to R.drawable.soda,
+        "sofa" to R.drawable.sofa,
+        "soup" to R.drawable.soup,
+        "speak" to R.drawable.speak,
+        "splashscreen" to R.drawable.splashscreen,
+        "spoon" to R.drawable.spoon,
+        "stand" to R.drawable.stand,
+        "stir" to R.drawable.stir,
+        "stormy" to R.drawable.stormy,
+        "student" to R.drawable.student,
+        "study" to R.drawable.study,
+        "sugar" to R.drawable.sugar,
+        "sun" to R.drawable.sun,
+        "sunny" to R.drawable.sunny,
+        "supermarket" to R.drawable.supermarket,
+        "supermarkets" to R.drawable.supermarkets,
+        "surprised" to R.drawable.surprised,
+        "swimming" to R.drawable.swimming,
+        "table" to R.drawable.table,
+        "take off" to R.drawable.takeoff,
+        "take_off" to R.drawable.take_off,
+        "take_photo" to R.drawable.take_photo,
+        "takeoff" to R.drawable.takeoff,
+        "taste" to R.drawable.taste,
+        "taxi" to R.drawable.taxi,
+        "tea" to R.drawable.tea,
+        "teacher" to R.drawable.teacher,
+        "television" to R.drawable.television,
+        "tent" to R.drawable.tent,
+        "test" to R.drawable.test,
+        "this_that_cat_image" to R.drawable.this_that_cat_image,
+        "tie" to R.drawable.tie,
+        "tired" to R.drawable.tired,
+        "toaster" to R.drawable.toaster,
+        "train" to R.drawable.train,
+        "travel" to R.drawable.travel,
+        "tray" to R.drawable.tray,
+        "trousers" to R.drawable.trousers,
+        "truee" to R.drawable.truee,
+        "waiter" to R.drawable.waiter,
+        "waitress" to R.drawable.waitress,
+        "wake up" to R.drawable.wakeup,
+        "wakeup" to R.drawable.wakeup,
+        "walk" to R.drawable.walk,
+        "wardrobe" to R.drawable.wardrobe,
+        "warm" to R.drawable.warm,
+        "wash" to R.drawable.wash,
+        "washing machine" to R.drawable.washingmachine,
+        "washingmachine" to R.drawable.washingmachine,
+        "watch" to R.drawable.watch,
+        "water" to R.drawable.water,
+        "wear" to R.drawable.wear,
+        "what" to R.drawable.what,
+        "what_is_your" to R.drawable.what_is_your,
+        "window" to R.drawable.window,
+        "windy" to R.drawable.windy,
+        "woman" to R.drawable.woman,
+        "word" to R.drawable.word,
+        "worried" to R.drawable.worried,
+        "write" to R.drawable.write,
+        "wrong" to R.drawable.wrong,
+        "wrongg" to R.drawable.wrongg,
+        "zip_up" to R.drawable.zip_up
     )
+
+    fun getQuizByNumber(quizNumber: Int): List<VocabularyLevelDataQuiz> {
+        return when (quizNumber) {
+            1 -> getQuizOne()
+            2 -> getQuizTwo()
+            3 -> getQuizThree()
+            4 -> getQuizFour()
+            5 -> getQuizFive()
+            6 -> getQuizSix()
+            7 -> getQuizSeven()
+            8 -> getQuizEight()
+            9 -> getQuizNine()
+            10 -> getQuizTen()
+            11 -> getQuizEleven()
+            12 -> getQuizTwelve()
+            13 -> getQuizThirteen()
+            14 -> getQuizFourteen()
+            15 -> getQuizFifteen()
+            16 -> getQuizSixteen()
+            17 -> getQuizSeventeen()
+            18 -> getQuizEighteen()
+            19 -> getQuizNineteen()
+            20 -> getQuizTwenty()
+            21 -> getQuizTwentyOne()
+            22 -> getQuizTwentyTwo()
+            23 -> getQuizTwentyThree()
+            24 -> getQuizTwentyFour()
+            25 -> getQuizTwentyFive()
+            26 -> getQuizTwentySix()
+            27 -> getQuizTwentySeven()
+            28 -> getQuizTwentyEight()
+            29 -> getQuizTwentyNine()
+            30 -> getQuizThirty()
+            31 -> getQuizThirtyOne()
+            32 -> getQuizThirtyTwo()
+            33 -> getQuizThirtyThree()
+            34 -> getQuizThirtyFour()
+            35 -> getQuizThirtyFive()
+            36 -> getQuizThirtySix()
+            37 -> getQuizThirtySeven()
+            38 -> getQuizThirtyEight()
+            39 -> getQuizThirtyNine()
+            40 -> getQuizForty()
+            41 -> getQuizFortyOne()
+            42 -> getQuizFortyTwo()
+            43 -> getQuizFortyThree()
+            44 -> getQuizFortyFour()
+            45 -> getQuizFortyFive()
+            46 -> getQuizFortySix()
+            47 -> getQuizFortySeven()
+            48 -> getQuizFortyEight()
+            49 -> getQuizFortyNine()
+            50 -> getQuizFifty()
+            51 -> getQuizFiftyOne()
+            52 -> getQuizFiftyTwo()
+            53 -> getQuizFiftyThree()
+            54 -> getQuizFiftyFour()
+            55 -> getQuiz55()
+            56 -> getQuiz56()
+            57 -> getQuiz57()
+            58 -> getQuiz58()
+            59 -> getQuiz59()
+            60 -> getQuiz60()
+            61 -> getQuiz61()
+            62 -> getQuiz62()
+            63 -> getQuiz63()
+            64 -> getQuiz64()
+            65 -> getQuiz65()
+            66 -> getQuiz66()
+            67 -> getQuiz67()
+            68 -> getQuiz68()
+            69 -> getQuiz69()
+            70 -> getQuiz70()
+            71 -> getQuiz71()
+            72 -> getQuiz72()
+            73 -> getQuiz73()
+            74 -> getQuiz74()
+            75 -> getQuiz75()
+            76 -> getQuiz76()
+            77 -> getQuiz77()
+            78 -> getQuiz78()
+            79 -> getQuiz79()
+            80 -> getQuiz80()
+            81 -> getQuiz81()
+            82 -> getQuiz82()
+            83 -> getQuiz83()
+            84 -> getQuiz84()
+            85 -> getQuiz85()
+            86 -> getQuiz86()
+            87 -> getQuiz87()
+            88 -> getQuiz88()
+            89 -> getQuiz89()
+            90 -> getQuiz90()
+            91 -> getQuiz91()
+            92 -> getQuiz92()
+            93 -> getQuiz93()
+            94 -> getQuiz94()
+            95 -> getQuiz95()
+            96 -> getQuiz96()
+            97 -> getQuiz97()
+            98 -> getQuiz98()
+            99 -> getQuiz99()
+            100 -> getQuiz100()
+            101 -> getQuiz101()
+            102 -> getQuiz102()
+            103 -> getQuiz103()
+            104 -> getQuiz104()
+            105 -> getQuiz105()
+            106 -> getQuiz106()
+            107 -> getQuiz107()
+            108 -> getQuiz108()
+            109 -> getQuiz109()
+            110 -> getQuiz110()
+            111 -> getQuiz111()
+            112 -> getQuiz112()
+            113 -> getQuiz113()
+            114 -> getQuiz114()
+            115 -> getQuiz115()
+            116 -> getQuiz116()
+            117 -> getQuiz117()
+            118 -> getQuiz118()
+            119 -> getQuiz119()
+            120 -> getQuiz120()
+            121 -> getQuiz121()
+            122 -> getQuiz122()
+            123 -> getQuiz123()
+            124 -> getQuiz124()
+            125 -> getQuiz125()
+            126 -> getQuiz126()
+            127 -> getQuiz127()
+            128 -> getQuiz128()
+            129 -> getQuiz129()
+            130 -> getQuiz130()
+            131 -> getQuiz131()
+            132 -> getQuiz132()
+            133 -> getQuiz133()
+            134 -> getQuiz134()
+            135 -> getQuiz135()
+            136 -> getQuiz136()
+            137 -> getQuiz137()
+            138 -> getQuiz138()
+            139 -> getQuiz139()
+            140 -> getQuiz140()
+            141 -> getQuiz141()
+            142 -> getQuiz142()
+            143 -> getQuiz143()
+            144 -> getQuiz144()
+            145 -> getQuiz145()
+            146 -> getQuiz146()
+            147 -> getQuiz147()
+            148 -> getQuiz148()
+            149 -> getQuiz149()
+            150 -> getQuiz150()
+            151 -> getQuiz151()
+            152 -> getQuiz152()
+            153 -> getQuiz153()
+            154 -> getQuiz154()
+            155 -> getQuiz155()
+            156 -> getQuiz156()
+            157 -> getQuiz157()
+            158 -> getQuiz158()
+            159 -> getQuiz159()
+            160 -> getQuiz160()
+            161 -> getQuiz161()
+            162 -> getQuiz162()
+            163 -> getQuiz163()
+            164 -> getQuiz164()
+            165 -> getQuiz164()
+            166 -> getQuiz166()
+            else -> getQuizOne()
+        }
+    }
+
     fun getQuizTwo(): List<VocabularyLevelDataQuiz> {
         return listOf(
             createListening(
-                id = 1, // ID'leri sıralı yapmak takibi kolaylaştırır
+                id = 1,
                 qTurkish = "Hello",
                 res = R.drawable.kisi1,
                 ansEnglish = "Merhaba",
-                opts = listOf("Merhaba", "Nasılsın", "Nasıl gidiyor") // Doğru şık listede olmalı
+                opts = listOf("Merhaba", "Nasılsın", "Nasıl gidiyor")
             ),
             createListening(
                 id = 2,
-                qTurkish = "How are you?",private val imageMap = mapOf(
-                    // --- Temel Nesneler ---
-                    "water" to R.drawable.water,
-            "apple" to R.drawable.apple,
-            "book" to R.drawable.book,
-            "car" to R.drawable.car,
-            "cat" to R.drawable.cat,
-            "dog" to R.drawable.dog,
-            "bird" to R.drawable.bird,
-            "fish" to R.drawable.fish,
-            "tea" to R.drawable.tea,
-            "milk" to R.drawable.milk,
-            "juice" to R.drawable.juice,
-            "bread" to R.drawable.bread,
-            "sugar" to R.drawable.sugar,
-            "honey" to R.drawable.honey,
-            "hot" to R.drawable.hot,
-            "cold" to R.drawable.cold,
-            "teacher" to R.drawable.teacher,
-            "nurse" to R.drawable.nurse,
-            "student" to R.drawable.student,
-            "partner" to R.drawable.partner,
-            "friend" to R.drawable.friend,
-
-            // --- Karakterler & Uygulama Görselleri ---
-            "kisi1" to R.drawable.kisi1,
-            "kisi2" to R.drawable.kisi2,
-            "kisi3" to R.drawable.kisi3,
-            "kisi4" to R.drawable.kisi4,
-            "kedi1" to R.drawable.kedi1,
-            "kedi2" to R.drawable.kedi2,
-            "kedi3" to R.drawable.kedi3,
-            "kedi4" to R.drawable.kedi4,
-            "cat_logo" to R.drawable.cat_logo, // Uygulama ana logosu ve maskot
-
-            // --- Aile Üyeleri ---
-            "father" to R.drawable.dad,
-            "mother" to R.drawable.mother,
-            "brother" to R.drawable.brother,
-            "sister" to R.drawable.sister,
-            "grandfather" to R.drawable.grandfather,
-            "grandmother" to R.drawable.grandmother,
-            "baby" to R.drawable.baby,
-            "family_photo" to R.drawable.family,
-
-            // --- Ev & Mekanlar ---
-            "house" to R.drawable.house,
-            "garden" to R.drawable.garden,
-            "balcony" to R.drawable.balcony,
-            "garage" to R.drawable.garage,
-            "roof" to R.drawable.roof,
-            "door" to R.drawable.door,
-            "window" to R.drawable.window,
-            "bedroom" to R.drawable.bedroom,
-            "livingroom" to R.drawable.livingroom,
-            "kitchen" to R.drawable.kitchen,
-            "bathroom" to R.drawable.bathroom,
-            "diningroom" to R.drawable.diningroom,
-            "laundryroom" to R.drawable.laundryroom,
-
-            // --- Eşyalar & Mobilyalar ---
-            "washing machine" to R.drawable.washingmachine,
-            "refrigerator" to R.drawable.refrigerator,
-            "wardrobe" to R.drawable.wardrobe,
-            "curtain" to R.drawable.curtain,
-            "shelf" to R.drawable.shelf,
-            "drawer" to R.drawable.drawer,
-            "oven" to R.drawable.oven,
-            "cooker" to R.drawable.cooker,
-            "carpet" to R.drawable.carpet,
-            "mirror" to R.drawable.mirror,
-            "bed" to R.drawable.bed,
-            "chair" to R.drawable.chair,
-            "dining table" to R.drawable.diningtable,
-            "lamp" to R.drawable.lamp,
-            "sofa" to R.drawable.sofa,
-            "television" to R.drawable.television,
-            "table" to R.drawable.table,
-            "bbq" to R.drawable.bbq,
-            "fence" to R.drawable.fence,
-
-            // --- Eylemler (Yeni Eklenenler) ---
-            "eat" to R.drawable.eat,
-            "drink" to R.drawable.drink,
-            "sleep" to R.drawable.sleep,
-            "read" to R.drawable.read,
-            "write" to R.drawable.write,
-            "run" to R.drawable.run,
-            "walk" to R.drawable.walk,
-            "watch" to R.drawable.watch,
-            "listen" to R.drawable.listen,
-            "jump" to R.drawable.jump,
-            "sing" to R.drawable.sing,
-            "speak" to R.drawable.speak,
-            "open" to R.drawable.open,
-            "play" to R.drawable.play,
-            "sit" to R.drawable.sit,
-            "stand" to R.drawable.stand,
-            "look" to R.drawable.look,
-            "dance" to R.drawable.dance,
-            "go" to R.drawable.go,
-            "brush" to R.drawable.brush,
-            "come" to R.drawable.come,
-            "wake up" to R.drawable.wakeup,
-            "fork" to R.drawable.fork,
-            "knife" to R.drawable.knife,
-            "spoon" to R.drawable.spoon,
-            "plate" to R.drawable.plate,
-            "glass" to R.drawable.glass,
-            "pan" to R.drawable.pan,
-            "bowl" to R.drawable.bowl,
-            "pot" to R.drawable.pot,
-            "cup" to R.drawable.cup,
-            "napkin" to R.drawable.napkin,
-            "sink" to R.drawable.sink,
-            "kitchen cabinet" to R.drawable.cupboard, // Opsiyonel: Mutfak dolabı için
-            "kettle" to R.drawable.kettle,
-            "toaster" to R.drawable.toaster,
-            "tray" to R.drawable.tray,
-            "grater" to R.drawable.grater,
-            "peeler" to R.drawable.peeler,
-            "grate" to R.drawable.grate,
-            "carry" to R.drawable.carry,
-            "pour" to R.drawable.pour,
-            "peel" to R.drawable.peel,
-            "take off" to R.drawable.takeoff,
-            "black cat" to R.drawable.blackcat,
-            "iron" to R.drawable.iron,
-            "wear" to R.drawable.wear,
-            "shoe" to R.drawable.shoe
-
-
-
-
-
-
-
-
-                    res = R.drawable.kisi3,
+                qTurkish = "How are you?",
+                res = R.drawable.kisi3,
                 ansEnglish = "Nasılsın?",
                 opts = listOf("Nasılsın?", "Merhaba", "Nerelisin")
             ),
@@ -3404,7 +4082,7 @@ object QuizRepository {
                 id = 4,
                 qTurkish = "Hi",
                 res = R.drawable.kedi3,
-                ansEnglish = "Selam", // Farklılık olsun diye Selam/Merhaba
+                ansEnglish = "Selam",
                 opts = listOf("Nasılsın", "Görüşürüz", "Selam")
             ),
             createListening(
@@ -3442,18 +4120,18 @@ object QuizRepository {
                 ansEnglish = "Ne?",
                 opts = listOf("Ne?", "Neresi?", "Nasıl?")
             ),
-            // Eşleştirme sorusunun yapısını düzelttik:
             createMatching(
                 id = 10,
-                questionText = "Soruları cevaplarla eşleştir", // qTurkish -> questionText
-                image = R.drawable.cat_logo,                 // res -> image
-                pairs = "How are you?,How?,What is your name?,What?,I am fine", // ansEnglish -> pairs
-                turkishOptions = listOf("Nasılsın?", "Nasıl", "İsmin ne?", "Ne", "İyiyim") // opts -> turkishOptions
+                questionText = "Soruları cevaplarla eşleştir",
+                image = R.drawable.cat_logo,
+                pairs = "How are you?,How?,What is your name?,What?,I am fine",
+                turkishOptions = listOf("Nasılsın?", "Nasıl", "İsmin ne?", "Ne", "İyiyim")
             )
         )
     }
     fun getQuizOne(): List<VocabularyLevelDataQuiz> {
-        return listOf(
+        return quizListOf(
+            4,
             createListening(
                 id = 11,
                 qTurkish = "Nice to meet you!",
@@ -4426,7 +5104,7 @@ object QuizRepository {
                 listOf("Çekmeceyi aç", "Dolabı hemen kapat.", "Çekmece çok sıkışmış."), qTr = false),
 
             // --- 3. BÖLÜM: ESKİ KONULARLA HARMANLANMIŞ MIX ---
-            createListening(1814, "The dining table is in the dining room.", R.drawable.diningtable, "Yemek masası yemek odasındadır.",
+            createListening(1814, "The dining table is in the dining room.", R.drawable.dining_table, "Yemek masası yemek odasındadır.",
                 listOf("Yemek masası mutfakta.", "Yemek masası yemek odasındadır.", "Yemek odası çok geniş."), qTr = false),
 
             createListening(1815, "The mirror is in the bathroom", R.drawable.mirror, "Ayna banyodadır.",
@@ -4520,7 +5198,7 @@ object QuizRepository {
             createVisual(2001, "Hangisi gardırop?", R.drawable.wardrobe, "wardrobe",
                 listOf("shelf", "drawer", "wardrobe", "bed")), // 3. şık
 
-            createVisual(2002, "Hangisi yemek masası?", R.drawable.diningtable, "dining table",
+            createVisual(2002, "Hangisi yemek masası?", R.drawable.dining_table, "dining table",
                 listOf("diningtable", "table", "chair", "cooker")), // 1. şık
 
             createVisual(2003, "Hangisi bahçe?", R.drawable.garden, "garden",
@@ -9382,7 +10060,7 @@ object QuizRepository {
 
     // ─────────────────────────────────────────────────────────────────────────────
 // createTranslation yardımcı fonksiyonu
-// VocabularyLevelDataQuiz modelini TRANSLATION tipiyle oluşturur.
+// VocabularyLevelDataQuiz modelini FILL_IN_BLANK veya TRANSLATION_BUILDER tipiyle oluşturur.
 //
 // Kullanımı:
 //   createTranslation(
@@ -9392,27 +10070,22642 @@ object QuizRepository {
 //       correctAnswer = "I want",
 //       options = listOf("I", "want", "you", "look")
 //   )
-//
-// NOT: QuestionType.TRANSLATION enum'unuza ekli olmalı.
-//      Yoksa FILL_IN_BLANK veya yeni bir tip ekleyebilirsiniz.
 // ─────────────────────────────────────────────────────────────────────────────
 
-    private fun createTranslation(
-        id: Int,
-        questionTurkish: String,
-        imageRes: Int,
-        correctAnswer: String,
-        options: List<String>
-    ): VocabularyLevelDataQuiz {
-        return VocabularyLevelDataQuiz(
-            id = id,
-            questionTurkish = questionTurkish,
-            imageRes = imageRes,
-            correctAnswer = correctAnswer.trim(),   // baştaki/sondaki boşlukları temizle
-            options = options,
-            questionType = QuestionType.TRANSLATION // QuestionType enum'una TRANSLATION ekleyin
+    fun getQuiz55(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING AKIŞI (Görsel Sayısı 5 Olana Kadar)
+        // ========================================================
+
+        // 1. GÖRSEL (Görsel No: 1) - DRESS
+        createVisual(
+            id = 1,
+            questionTurkish = "elbise",
+            imageRes = R.drawable.dress,
+            correctAnswer = "dress",
+            options = listOf("dress", "pocket", "coat")
+        ),
+        // 2. LISTENING - DRESS PEKİŞTİREÇ
+        createListening(
+            id = 2,
+            qTurkish = "I want a red dress.",
+            res = R.drawable.dress,
+            ansEnglish = "Ben kırmızı bir elbise istiyorum.",
+            opts = listOf("Ben kırmızı bir elbise istiyorum.", "Mavi gömleğimi yıka.", "Yeni kabanını ütüle.")
+        ),
+
+        // 3. GÖRSEL (Görsel No: 2) - POCKET
+        createVisual(
+            id = 3,
+            questionTurkish = "cep",
+            imageRes = R.drawable.pocket,
+            correctAnswer = "pocket",
+            options = listOf("coat", "pocket", "boot")
+        ),
+        // 4. LISTENING - POCKET PEKİŞTİREÇ
+        createListening(
+            id = 4,
+            qTurkish = "Look at my small pocket.",
+            res = R.drawable.pocket,
+            ansEnglish = "Benim küçük cebime bak.",
+            opts = listOf("Eski botunu temizle.", "Siyah kemerini bul.", "Benim küçük cebime bak.")
+        ),
+
+        // 5. GÖRSEL (Görsel No: 3) - COAT
+        createVisual(
+            id = 5,
+            questionTurkish = "kaban",
+            imageRes = R.drawable.coat,
+            correctAnswer = "coat",
+            options = listOf("shirt", "dress", "coat")
+        ),
+        // 6. LISTENING - COAT PEKİŞTİREÇ
+        createListening(
+            id = 6,
+            qTurkish = "Wash your dirty coat.",
+            res = R.drawable.coat,
+            ansEnglish = "Kirli kabanını yıka.",
+            opts = listOf("Yeni gömleğini ütüle.", "Kirli kabanını yıka.", "Kahverengi botunu giy.")
+        ),
+
+        // 7. GÖRSEL (Görsel No: 4) - BOOT
+        createVisual(
+            id = 7,
+            questionTurkish = "bot",
+            imageRes = R.drawable.boot,
+            correctAnswer = "boot",
+            options = listOf("boot", "pocket", "shirt")
+        ),
+        // 8. LISTENING - BOOT PEKİŞTİREÇ
+        createListening(
+            id = 8,
+            qTurkish = "Find your brown boot.",
+            res = R.drawable.boot,
+            ansEnglish = "Kahverengi botunu bul.",
+            opts = listOf("Kahverengi botunu bul.", "Kırmızı elbiseni satın al.", "Mavi gömleğine bak.")
+        ),
+
+        // 9. GÖRSEL (Görsel No: 5 - LİMİTE ULAŞILDI 🛑) - SHIRT
+        createVisual(
+            id = 9,
+            questionTurkish = "gömlek",
+            imageRes = R.drawable.shirt,
+            correctAnswer = "shirt",
+            options = listOf("coat", "shirt", "dress")
+        ),
+        // 10. LISTENING - SHIRT PEKİŞTİREÇ
+        createListening(
+            id = 10,
+            qTurkish = "She irons her new shirt.",
+            res = R.drawable.shirt,
+            ansEnglish = "O, yeni gömleğini ütüler.",
+            opts = listOf("O, güzel elbiseyi satın alır.", "O, yeni gömleğini ütüler.", "O, eski paltonu yıkar.")
+        ),
+
+        // ========================================================
+        // GÖRSEL SAYISI 5'E ULAŞTIĞI İÇİN KALANLAR SADECE LISTENING
+        // ========================================================
+
+        // 11. LISTENING - BUY (Güncellendi 🛠️)
+        createListening(
+            id = 11,
+            qTurkish = "buy",
+            res = R.drawable.buy,
+            ansEnglish = "satın almak",
+            opts = listOf("bakmak", "satın almak", "bulmak")
+        ),
+
+        // 12. LISTENING - FIND (Güncellendi 🛠️)
+        createListening(
+            id = 12,
+            qTurkish = "find",
+            res = R.drawable.find,
+            ansEnglish = "bulmak",
+            opts = listOf("bulmak", "ütülemek", "yıkamak")
+        ),
+
+        // 13. LISTENING - WASH (Güncellendi 🛠️)
+        createListening(
+            id = 13,
+            qTurkish = "wash",
+            res = R.drawable.wash,
+            ansEnglish = "yıkamak",
+            opts = listOf("ütülemek", "bakmak", "yıkamak")
+        ),
+
+        // 14. LISTENING - IRON (Güncellendi 🛠️)
+        createListening(
+            id = 14,
+            qTurkish = "iron",
+            res = R.drawable.iron,
+            ansEnglish = "ütülemek",
+            opts = listOf("ütülemek", "satın almak", "giyinmek")
+        ),
+
+        // 15. LISTENING - KARMA PEKİŞTİREÇ
+        createListening(
+            id = 15,
+            qTurkish = "I buy a beautiful dress.",
+            res = R.drawable.dress,
+            ansEnglish = "Ben güzel bir elbise satın alırım.",
+            opts = listOf("Ben eski bir bot bulurum.", "Cebimde bir anahtar ararım.", "Ben güzel bir elbise satın alırım.")
+        ),
+
+        // ========================================================
+        // EN SONUNDA BÜYÜK MATCHING FİNALİ 🏁
+        // ========================================================
+        createMatching(
+            id = 16,
+            questionText = "Kıyafetler ve Eylemler Eşleştirmesi",
+            image = R.drawable.cat_logo,
+            pairs = "dress,pocket,coat,boot,shirt",
+            turkishOptions = listOf("elbise", "cep", "kaban", "bot", "gömlek")
         )
-    }
+    )
+}
+
+    fun getQuiz56(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING AKIŞI (Görsel Sayısı 5 Olana Kadar)
+        // ========================================================
+
+        // 1. GÖRSEL (Görsel No: 1) - BELT
+        createVisual(
+            id = 1,
+            questionTurkish = "kemer",
+            imageRes = R.drawable.belt,
+            correctAnswer = "belt",
+            options = listOf("belt", "socks", "trousers")
+        ),
+        // 2. LISTENING - BELT PEKİŞTİREÇ
+        createListening(
+            id = 2,
+            qTurkish = "Find your black belt.",
+            res = R.drawable.belt,
+            ansEnglish = "Siyah kemerini bul.",
+            opts = listOf("Kırmızı elbiseni ütüle.", "Siyah kemerini bul.", "Kirli çorabını yıka.")
+        ),
+
+        // 3. GÖRSEL (Görsel No: 2) - TROUSERS
+        createVisual(
+            id = 3,
+            questionTurkish = "pantolon",
+            imageRes = R.drawable.trousers,
+            correctAnswer = "trousers",
+            options = listOf("skirt", "trousers", "shoes")
+        ),
+        // 4. LISTENING - TROUSERS PEKİŞTİREÇ
+        createListening(
+            id = 4,
+            qTurkish = "Iron your blue trousers.",
+            res = R.drawable.trousers,
+            ansEnglish = "Mavi pantolonunu ütüle.",
+            opts = listOf("Mavi pantolonunu ütüle.", "Yeni gömleğini satın al.", "Kahverengi botuna bak.")
+        ),
+
+        // 5. GÖRSEL (Görsel No: 3) - SKIRT
+        createVisual(
+            id = 5,
+            questionTurkish = "etek",
+            imageRes = R.drawable.skirt,
+            correctAnswer = "skirt",
+            options = listOf("belt", "dress", "skirt")
+        ),
+        // 6. LISTENING - SKIRT PEKİŞTİREÇ (GÜNCELLENDİ 🛠️)
+        createListening(
+            id = 6,
+            qTurkish = "She buys a green skirt.",
+            res = R.drawable.skirt,
+            ansEnglish = "O, yeşil bir etek satın alır.",
+            opts = listOf("O, temiz bir kaban ister.", "O, yeşil bir etek satın alır.", "O, eski çorabını yıkar.")
+        ),
+
+        // 7. GÖRSEL (Görsel No: 4) - SOCKS
+        createVisual(
+            id = 7,
+            questionTurkish = "çorap",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "socks",
+            options = listOf("socks", "shoes", "boot")
+        ),
+        // 8. LISTENING - SOCKS PEKİŞTİREÇ
+        createListening(
+            id = 8,
+            qTurkish = "Wash your dirty socks.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kirli çoraplarını yıka.",
+            opts = listOf("Benim küçük cebime bak.", "Kirli çoraplarını yıka.", "Yeni ayakkabını giy.")
+        ),
+
+        // 9. GÖRSEL (Görsel No: 5 - LİMİTE ULAŞILDI 🛑) - SHOES
+        createVisual(
+            id = 9,
+            questionTurkish = "ayakkabı",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "shoes",
+            options = listOf("trousers", "shoes", "belt")
+        ),
+        // 10. LISTENING - SHOES PEKİŞTİREÇ
+        createListening(
+            id = 10,
+            qTurkish = "I want a new shoes.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Ben yeni bir ayakkabı istiyorum.",
+            opts = listOf("Ben yeni bir ayakkabı istiyorum.", "Mavi gömleğime bak.", "Siyah kemerini bul.")
+        ),
+
+        // ========================================================
+        // GÖRSEL SAYISI 5'E ULAŞTIĞI İÇİN KALANLAR SADECE LISTENING
+        // ========================================================
+
+        // 11. LISTENING - WEAR
+        createListening(
+            id = 11,
+            qTurkish = "wear",
+            res = R.drawable.wear,
+            ansEnglish = "giymek",
+            opts = listOf("çıkarmak", "bulmak", "giymek")
+        ),
+
+        // 12. LISTENING - TAKE OFF
+        createListening(
+            id = 12,
+            qTurkish = "take off",
+            res = R.drawable.cat_logo,
+            ansEnglish = "çıkarmak",
+            opts = listOf("çıkarmak", "ütülemek", "bakmak")
+        ),
+
+        // 13. LISTENING - PUT ON
+        createListening(
+            id = 13,
+            qTurkish = "put on",
+            res = R.drawable.cat_logo,
+            ansEnglish = "giyinmek / üstüne giymek",
+            opts = listOf("yıkamak", "giyinmek / üstüne giymek", "satın almak")
+        ),
+
+        // 14. LISTENING - WEAR PEKİŞTİREÇ
+        createListening(
+            id = 14,
+            qTurkish = "He wears a warm coat.",
+            res = R.drawable.wear,
+            ansEnglish = "O, sıcak bir palto giyer.",
+            opts = listOf("O, sıcak bir palto giyer.", "O, eski bir bot bulur.", "O, temiz bir gömlek ister.")
+        ),
+
+        // 15. LISTENING - TAKE OFF & SHOES KOMBO PEKİŞTİREÇ
+        createListening(
+            id = 15,
+            qTurkish = "Take off your black shoes.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Siyah ayakkabılarını çıkar.",
+            opts = listOf("Sarı eteğini ütüle.", "Siyah kemerini bul.", "Siyah ayakkabılarını çıkar.")
+        ),
+
+        // ========================================================
+        // EN SONUNDA BÜYÜK MATCHING FİNALİ 🏁
+        // ========================================================
+        createMatching(
+            id = 16,
+            questionText = "Kıyafetler ve Giyim Eylemleri Ustası",
+            image = R.drawable.cat_logo,
+            pairs = "belt,trousers,skirt,socks,shoes",
+            turkishOptions = listOf("kemer", "pantolon", "etek", "çorap", "ayakkabı")
+        )
+    )
+}
+
+    fun getQuiz57(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (10. SORUYA KADAR)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - SCARF
+        createVisual(
+            id = 1,
+            questionTurkish = "atkı",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "scarf",
+            options = listOf("scarf", "shorts", "glasses")
+        ),
+        // 2. Soru: LISTENING (1) - SCARF PEKİŞTİREÇ
+        createListening(
+            id = 2,
+            qTurkish = "Wear your warm scarf.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Sıcak atkını tak.",
+            opts = listOf("Sıcak atkını tak.", "Mavi pijamanı ütüle.", "Yeni saatine bak.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - PYJAMAS
+        createVisual(
+            id = 3,
+            questionTurkish = "pijama",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pyjamas",
+            options = listOf("watch", "pyjamas", "scarf")
+        ),
+        // 4. Soru: LISTENING (2) - PYJAMAS PEKİŞTİREÇ
+        createListening(
+            id = 4,
+            qTurkish = "I iron my blue pyjamas.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Mavi pijamamı ütülerim.",
+            opts = listOf("Kirli şortunu yıka.", "Yeni gözlüğünü bul.", "Mavi pijamamı ütülerim.")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - SHORTS
+        createVisual(
+            id = 5,
+            questionTurkish = "şort",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "shorts",
+            options = listOf("pyjamas", "glasses", "shorts")
+        ),
+        // 6. Soru: LISTENING (3) - SHORTS PEKİŞTİREÇ
+        createListening(
+            id = 6,
+            qTurkish = "Wash your dirty shorts.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kirli şortunu yıka.",
+            opts = listOf("Eski atkını çıkar.", "Kirli şortunu yıka.", "Güzel saatini satın al.")
+        ),
+
+        // 7. Soru: GÖRSEL (4) - GLASSES
+        createVisual(
+            id = 7,
+            questionTurkish = "gözlük",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "glasses",
+            options = listOf("glasses", "watch", "scarf")
+        ),
+        // 8. Soru: LISTENING (4) - GLASSES PEKİŞTİREÇ
+        createListening(
+            id = 8,
+            qTurkish = "I find my new glasses.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Yeni gözlüğümü buluyorum.",
+            opts = listOf("Yeni gözlüğümü buluyorum.", "Siyah kemerimi arıyorum.", "Temiz gömleğimi giyiyorum.")
+        ),
+
+        // 9. Soru: GÖRSEL (5 - LİMİT DOLDU 🛑) - WATCH
+        createVisual(
+            id = 9,
+            questionTurkish = "kol saati",
+            imageRes = R.drawable.watch,
+            correctAnswer = "watch",
+            options = listOf("shorts", "watch", "pyjamas")
+        ),
+        // 10. Soru: LISTENING (5) - WATCH PEKİŞTİREÇ
+        createListening(
+            id = 10,
+            qTurkish = "Look at my black watch.",
+            res = R.drawable.watch,
+            ansEnglish = "Benim siyah saatime bak.",
+            opts = listOf("Kırmızı elbiseni satın al.", "Benim siyah saatime bak.", "Yeşil eteğini yıka.")
+        ),
+
+        // ========================================================
+        // 11-15 ARASI: GÖRSEL HAKKI BİTTİĞİ İÇİN SAF LISTENING
+        // ========================================================
+
+        // 11. Soru: LISTENING - SCARF
+        createListening(
+            id = 11,
+            qTurkish = "I buy a red scarf.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Ben kırmızı bir atkı satın alırım.",
+            opts = listOf("Ben eski bir şort bulurum.", "Ben kırmızı bir atkı satın alırım.", "Cebimde bir anahtar ararım.")
+        ),
+
+        // 12. Soru: LISTENING - SHORTS
+        createListening(
+            id = 12,
+            qTurkish = "He wears a blue shorts.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "O, mavi bir şort giyer.",
+            opts = listOf("O, mavi bir şort giyer.", "O, yeni bir pijama ister.", "O, siyah gözlüğünü çıkarır.")
+        ),
+
+        // 13. Soru: LISTENING - WATCH & GLASSES KOMBO
+        createListening(
+            id = 13,
+            qTurkish = "Look at my new watch and glasses.",
+            res = R.drawable.watch,
+            ansEnglish = "Benim yeni saatime ve gözlüğüme bak.",
+            opts = listOf("Mavi pantolonunu ve gömleğini ütüle.", "Siyah kemerini ve botunu bul.", "Benim yeni saatime ve gözlüğüme bak.")
+        ),
+
+        // 14. Soru: LISTENING - PYJAMAS
+        createListening(
+            id = 14,
+            qTurkish = "Put on your warm pyjamas.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Sıcak pijamanı giy.",
+            opts = listOf("Sıcak pijamanı giy.", "Kirli çorabını yıka.", "Yeni ayakkabını satın al.")
+        ),
+
+        // 15. Soru: LISTENING - SCARF GENEL
+        createListening(
+            id = 15,
+            qTurkish = "She finds her beautiful scarf.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "O, güzel atkısını bulur.",
+            opts = listOf("O, yeni gömleğini ütüler.", "O, güzel atkısını bulur.", "O, kahverengi botunu giyer.")
+        ),
+
+        // ========================================================
+        // 16. Soru: BÜYÜK MATCHING FİNALİ 🏁
+        // ========================================================
+        createMatching(
+            id = 16,
+            questionText = "Kıyafet ve Aksesuar Kombinleri Ustası",
+            image = R.drawable.cat_logo,
+            pairs = "scarf,pyjamas,shorts,glasses,watch",
+            turkishOptions = listOf("atkı", "pijama", "şort", "gözlük", "kol saati")
+        )
+    )
+}
+
+    fun getQuiz58(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (4 GÖRSEL TAMAMLANANA KADAR)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - FOLD UP
+        createVisual(
+            id = 1,
+            questionTurkish = "katlamak",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "fold up",
+            options = listOf("fold up", "zip up", "hang up")
+        ),
+        // 2. Soru: LISTENING (1) - FOLD UP PEKİŞTİREÇ
+        createListening(
+            id = 2,
+            qTurkish = "Fold up your blue trousers.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Mavi pantolonunu katla.",
+            opts = listOf("Mavi pantolonunu katla.", "Mavi pijamanı ütüle.", "Sıcak atkını tak.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - ZIP UP
+        createVisual(
+            id = 3,
+            questionTurkish = "fermuarını çekmek",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "zip up",
+            options = listOf("fold up", "zip up", "dress up")
+        ),
+        // 4. Soru: LISTENING (2) - ZIP UP PEKİŞTİREÇ
+        createListening(
+            id = 4,
+            qTurkish = "Zip up your warm coat.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Sıcak kabanının fermuarını çek.",
+            opts = listOf("Kirli şortunu yıka.", "Sıcak kabanının fermuarını çek.", "Yeni gözlüğünü bul.")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - DRESS UP
+        createVisual(
+            id = 5,
+            questionTurkish = "şık giyinmek",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "dress up",
+            options = listOf("dress up", "zip up", "hang up")
+        ),
+        // 6. Soru: LISTENING (3) - DRESS UP PEKİŞTİREÇ
+        createListening(
+            id = 6,
+            qTurkish = "She loves to dress up.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "O, şık giyinmeyi sever.",
+            opts = listOf("O, yeni bir pijama ister.", "O, şık giyinmeyi sever.", "O, kırmızı bir atkı satın alır.")
+        ),
+
+        // 7. Soru: GÖRSEL (4 - SON GÖRSEL HAKKI 🛑) - HANG UP
+        createVisual(
+            id = 7,
+            questionTurkish = "askıya asmak",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "hang up",
+            options = listOf("fold up", "hang up", "zip up")
+        ),
+        // 8. Soru: LISTENING (4) - HANG UP PEKİŞTİREÇ
+        createListening(
+            id = 8,
+            qTurkish = "Hang up your red dress.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kırmızı elbiseni askıya as.",
+            opts = listOf("Yeni gözlüğünü tak.", "Benim siyah saatime bak.", "Kırmızı elbiseni askıya as.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN 9-15 ARASI TAMAMEN SAF LISTENING
+        // ========================================================
+
+        // 9. Soru: LISTENING - FOLD UP PEKİŞTİREÇ (Güncellendi 🛠️)
+        createListening(
+            id = 9,
+            qTurkish = "I fold up my new shorts.",
+            res = R.drawable.cat_logo, // 👈 Nesne görseli bağlandı
+            ansEnglish = "Yeni şortumu katlıyorum.",
+            opts = listOf("Yeni şortumu katlıyorum.", "Kirli çorabımı yıkıyorum.", "Mavi pijamamı ütülüyorum.")
+        ),
+
+        // 10. Soru: LISTENING - ZIP UP PEKİŞTİREÇ (Güncellendi 🛠️)
+        createListening(
+            id = 10,
+            qTurkish = "Zip up your dirty coat.",
+            res = R.drawable.coat, // 👈 Nesne görseli bağlandı
+            ansEnglish = "Kirli kabanının fermuarını çek.",
+            opts = listOf("Kahverengi botunu bul.", "Sıcak atkını tak.", "Kirli kabanının fermuarını çek.")
+        ),
+
+        // 11. Soru: LISTENING - HANG UP PEKİŞTİREÇ
+        createListening(
+            id = 11,
+            qTurkish = "Look at my watch and hang up your shirt.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Saatime bak ve gömleğini askıya as.",
+            opts = listOf("Saatime bak ve gömleğini askıya as.", "Mavi pantolonunu ve gömleğini ütüle.", "Siyah kemerini ve botunu bul.")
+        ),
+
+        // 12. Soru: LISTENING - DRESS UP PEKİŞTİREÇ (Güncellendi 🛠️)
+        createListening(
+            id = 12,
+            qTurkish = "Put on your glasses and dress up.",
+            res = R.drawable.cat_logo, // 👈 Nesne görseli bağlandı
+            ansEnglish = "Gözlüklerini tak ve şık giyin.",
+            opts = listOf("Sıcak pijamanı giy ve uyu.", "Gözlüklerini tak ve şık giyin.", "Güzel atkını bul ve çık.")
+        ),
+
+        // 13. Soru: LISTENING - FOLD UP TEKRAR
+        createListening(
+            id = 13,
+            qTurkish = "Fold up your blue pyjamas.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Mavi pijamanı katla.",
+            opts = listOf("Mavi pijamanı katla.", "Siyah kemerini bul.", "Yeni botunu giy.")
+        ),
+
+        // 14. Soru: LISTENING - HANG UP TEKRAR
+        createListening(
+            id = 14,
+            qTurkish = "Hang up your warm coat.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Sıcak kabanını askıya as.",
+            opts = listOf("Kirli şortunu yıka.", "Sıcak kabanını askıya as.", "Yeni gözlüğünü bul.")
+        ),
+
+        // 15. Soru: LISTENING - ZIP UP TEKRAR (Güncellendi 🛠️)
+        createListening(
+            id = 15,
+            qTurkish = "Find your belt and zip up your coat.",
+            res = R.drawable.coat, // 👈 Nesne görseli bağlandı
+            ansEnglish = "Kemerini bul ve kabanının fermuarını çek.",
+            opts = listOf("Kemerini bul ve kabanının fermuarını çek.", "Mavi pantolonunu katla.", "Sarı eteğini yıka.")
+        ),
+
+        // ========================================================
+        // EN SONUNDA BÜYÜK MATCHING FİNALİ 🏁
+        // ========================================================
+        createMatching(
+            id = 16,
+            questionText = "Dolaylı Kıyafet Eylemleri Ustası",
+            image = R.drawable.cat_logo,
+            pairs = "fold up,zip up,dress up,hang up",
+            turkishOptions = listOf("katlamak", "fermuarını çekmek", "şık giyinmek", "askıya asmak")
+        )
+    )
+}
+
+    fun getQuiz59(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (4 FİİL GÖRSELİ BİTENE KADAR)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - FOLD UP (Ağırlık Fiilde)
+        createVisual(
+            id = 1,
+            questionTurkish = "katlamak",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "fold up",
+            options = listOf("fold up", "hang up", "zip up")
+        ),
+        // 2. Soru: LISTENING (1) - FOLD UP + PYJAMAS (Kombinasyon)
+        createListening(
+            id = 2,
+            qTurkish = "Fold up your warm pyjamas.",
+            res = R.drawable.cat_logo, // Hedef kıyafet nesnesi görseli
+            ansEnglish = "Sıcak pijamanı katla.",
+            opts = listOf("Sıcak pijamanı katla.", "Siyah kemerini bul.", "Yeni botunu temizle.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - HANG UP
+        createVisual(
+            id = 3,
+            questionTurkish = "askıya asmak",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "hang up",
+            options = listOf("zip up", "hang up", "dress up")
+        ),
+        // 4. Soru: LISTENING (2) - HANG UP + SCARF (Kombinasyon)
+        createListening(
+            id = 4,
+            qTurkish = "Hang up your beautiful scarf.",
+            res = R.drawable.cat_logo, // Hedef kıyafet nesnesi görseli
+            ansEnglish = "Güzel atkını askıya as.",
+            opts = listOf("Mavi pantolonunu ütüle.", "Kirli şortunu yıka.", "Güzel atkını askıya as.")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - DRESS UP
+        createVisual(
+            id = 5,
+            questionTurkish = "şık giyinmek",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "dress up",
+            options = listOf("dress up", "fold up", "zip up")
+        ),
+        // 6. Soru: LISTENING (3) - DRESS UP + GLASSES & WATCH (Kombinasyon)
+        createListening(
+            id = 6,
+            qTurkish = "Put on your glasses and dress up.",
+            res = R.drawable.cat_logo, // Hedef nesne görseli
+            ansEnglish = "Gözlüklerini tak ve şık giyin.",
+            opts = listOf("Gözlüklerini tak ve şık giyin.", "Yeni ayakkabını giy.", "Siyah kemerini bul.")
+        ),
+
+        // 7. Soru: GÖRSEL (4 - SON GÖRSEL 🛑) - ZIP UP
+        createVisual(
+            id = 7,
+            questionTurkish = "fermuarını çekmek",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "zip up",
+            options = listOf("hang up", "fold up", "zip up")
+        ),
+        // 8. Soru: LISTENING (4) - ZIP UP + COAT (Kombinasyon)
+        createListening(
+            id = 8,
+            qTurkish = "Zip up your dirty coat.",
+            res = R.drawable.coat, // Hedef nesne görseli
+            ansEnglish = "Kirli kabanının fermuarını çek.",
+            opts = listOf("Yeni gömleğini ütüle.", "Kirli kabanının fermuarını çek.", "Kahverengi botunu giy.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN 9-15 ARASI TAMAMEN SAF LISTENING (FİİL+NESNE TEKRARLARI)
+        // ========================================================
+
+        // 9. Soru: LISTENING - FOLD UP + SHORTS
+        createListening(
+            id = 9,
+            qTurkish = "I fold up my new shorts.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Yeni şortumu katlıyorum.",
+            opts = listOf("Yeni şortumu katlıyorum.", "Kirli çorabımı yıkıyorum.", "Eski botumu buluyorum.")
+        ),
+
+        // 10. Soru: LISTENING - HANG UP + DRESS
+        createListening(
+            id = 10,
+            qTurkish = "Hang up your red dress.",
+            res = R.drawable.dress,
+            ansEnglish = "Kırmızı elbiseni askıya as.",
+            opts = listOf("Kırmızı elbiseni askıya as.", "Mavi gömleğine bak.", "Yeni saatini satın al.")
+        ),
+
+        // 11. Soru: LISTENING - ZIP UP + COAT (Alternatif cümle)
+        createListening(
+            id = 11,
+            qTurkish = "He zips up his warm coat.",
+            res = R.drawable.coat,
+            ansEnglish = "O, sıcak kabanının fermuarını çeker.",
+            opts = listOf("O, sarı eteğini ütüler.", "O, sıcak kabanının fermuarını çeker.", "O, temiz gömleğini giyer.")
+        ),
+
+        // 12. Soru: LISTENING - DRESS UP + WATCH
+        createListening(
+            id = 12,
+            qTurkish = "Look at my black watch and dress up.",
+            res = R.drawable.watch,
+            ansEnglish = "Benim siyah saatime bak ve şık giyin.",
+            opts = listOf("Benim siyah saatime bak ve şık giyin.", "Mavi pantolonunu katla.", "Sıcak atkını askıya as.")
+        ),
+
+        // 13. Soru: LISTENING - FOLD UP + SHIRT
+        createListening(
+            id = 13,
+            qTurkish = "She folds up her new shirt.",
+            res = R.drawable.shirt,
+            ansEnglish = "O, yeni gömleğini katlar.",
+            opts = listOf("O, yeni gömleğini katlar.", "O, güzel elbiseyi satın alır.", "O, eski kabanını yıkar.")
+        ),
+
+        // 14. Soru: LISTENING - HANG UP + COAT
+        createListening(
+            id = 14,
+            qTurkish = "Hang up your warm coat.",
+            res = R.drawable.coat,
+            ansEnglish = "Sıcak kabanını askıya as.",
+            opts = listOf("Kirli şortunu yıka.", "Sıcak kabanını askıya as.", "Yeni gözlüğünü bul.")
+        ),
+
+        // 15. Soru: LISTENING - BÜYÜK ULTRA KOMBO PEKİŞTİREÇ
+        createListening(
+            id = 15,
+            qTurkish = "Find your belt and zip up your coat.",
+            res = R.drawable.coat,
+            ansEnglish = "Kemerini bul ve kabanının fermuarını çek.",
+            opts = listOf("Kemerini bul ve kabanının fermuarını çek.", "Mavi pantolonunu düzgünce katla.", "Güzel atkını askıya as.")
+        ),
+
+        // ========================================================
+        // EN SONUNDA BÜYÜK MATCHING FİNALİ 🏁
+        // ========================================================
+        createMatching(
+            id = 16,
+            questionText = "Kıyafet & Eylem Karması Ustası",
+            image = R.drawable.cat_logo,
+            pairs = "fold up,zip up,dress up,hang up",
+            turkishOptions = listOf("katlamak", "fermuarını çekmek", "şık giyinmek", "askıya asmak")
+        )
+    )
+}
+
+    fun getQuiz60(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (12. SORUYA KADAR - 6 GÖRSEL)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - DRESS UP
+        createVisual(
+            id = 1,
+            questionTurkish = "şık giyinmek",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "dress up",
+            options = listOf("dress up", "wear", "wash")
+        ),
+        // 2. Soru: LISTENING (1) - WASH + SHORTS
+        createListening(
+            id = 2,
+            qTurkish = "Wash your dirty shorts.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kirli şortunu yıka.",
+            opts = listOf("Kirli şortunu yıka.", "Mavi pantolonunu katla.", "Yeni gömleğini ütüle.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - SCARF
+        createVisual(
+            id = 3,
+            questionTurkish = "atkı",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "scarf",
+            options = listOf("scarf", "pyjamas", "belt")
+        ),
+        // 4. Soru: LISTENING (2) - HANG UP + SCARF
+        createListening(
+            id = 4,
+            qTurkish = "Hang up your beautiful scarf.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Güzel atkını askıya as.",
+            opts = listOf("Siyah kemerini bul.", "Güzel atkını askıya as.", "Mavi pijamanı ütüle.")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - BUY
+        createVisual(
+            id = 5,
+            questionTurkish = "satın almak",
+            imageRes = R.drawable.buy,
+            correctAnswer = "buy",
+            options = listOf("iron", "buy", "hang up")
+        ),
+        // 6. Soru: LISTENING (3) - WEAR + COAT
+        createListening(
+            id = 6,
+            qTurkish = "He wears a warm coat.",
+            res = R.drawable.coat,
+            ansEnglish = "O, sıcak bir palto giyer.",
+            opts = listOf("O, yeni bir gömlek satın alır.", "O, eski şortunu yıkar.", "O, sıcak bir palto giyer.")
+        ),
+
+        // 7. Soru: GÖRSEL (4) - PYJAMAS
+        createVisual(
+            id = 7,
+            questionTurkish = "pijama",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pyjamas",
+            options = listOf("shorts", "trousers", "pyjamas")
+        ),
+        // 8. Soru: LISTENING (4) - IRON + PYJAMAS (GÜNCELLENDİ 🛠️)
+        createListening(
+            id = 8,
+            qTurkish = "I iron my purple pyjamas.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Mor pijamamı ütülerim.",
+            opts = listOf("Mor pijamamı ütülerim.", "Kirli kabanımı yıkarım.", "Sıcak atkımı takarım.")
+        ),
+
+        // 9. Soru: GÖRSEL (5) - BOOT
+        createVisual(
+            id = 9,
+            questionTurkish = "bot",
+            imageRes = R.drawable.boot,
+            correctAnswer = "boot",
+            options = listOf("boot", "fold up", "dress up")
+        ),
+        // 10. Soru: LISTENING (5) - DRESS UP + GLASSES
+        createListening(
+            id = 10,
+            qTurkish = "Put on your glasses and dress up.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Gözlüklerini tak ve şık giyin.",
+            opts = listOf("Sarı eteğini ütüle.", "Gözlüklerini tak ve şık giyin.", "Siyah kemerini bul.")
+        ),
+
+        // 11. Soru: GÖRSEL (6 - LİMİT DOLDU 🛑) - SHORTS
+        createVisual(
+            id = 11,
+            questionTurkish = "şort",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "shorts",
+            options = listOf("shorts", "pyjamas", "scarf")
+        ),
+        // 12. Soru: LISTENING (6) - FOLD UP + SHORTS
+        createListening(
+            id = 12,
+            qTurkish = "Fold up your new shorts.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Yeni şortumu katla.",
+            opts = listOf("Kırmızı elbiseni askıya as.", "Yeni şortumu katla.", "Sıcak kabanının fermuarını çek.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN 13-15 ARASI SAF LISTENING (ULTRA KARMA)
+        // ========================================================
+
+        // 13. Soru: LISTENING - WASH + SOCKS
+        createListening(
+            id = 13,
+            qTurkish = "Wash your dirty socks.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kirli çoraplarını yıka.",
+            opts = listOf("Kirli çoraplarını yıka.", "Siyah ayakkabılarını çıkar.", "Mavi pantolonunu ütüle.")
+        ),
+
+        // 14. Soru: LISTENING - IRON + SHIRT
+        createListening(
+            id = 14,
+            qTurkish = "She irons her new shirt.",
+            res = R.drawable.shirt,
+            ansEnglish = "O, yeni gömleğini ütüler.",
+            opts = listOf("O, güzel elbiseyi satın alır.", "O, yeni gömleğini ütüler.", "O, eski atkısını katlar.")
+        ),
+
+        // 15. Soru: LISTENING - ZIP UP + COAT + BELT
+        createListening(
+            id = 15,
+            qTurkish = "Find your belt and zip up your coat.",
+            res = R.drawable.coat,
+            ansEnglish = "Kemerini bul ve kabanının fermuarını çek.",
+            opts = listOf("Kemerini bul ve kabanının fermuarını çek.", "Mavi pantolonunu düzgünce katla.", "Güzel atkısını askıya as.")
+        ),
+
+        // ========================================================
+        // EN SONUNDA BÜYÜK EŞİT MATCHING FİNALİ 🏁
+        // ========================================================
+        createMatching(
+            id = 16,
+            questionText = "Kıyafetler ve Eylemler Dengesi Ustası",
+            image = R.drawable.cat_logo,
+            pairs = "dress up,scarf,buy,pyjamas,boot,shorts",
+            turkishOptions = listOf("şık giyinmek", "atkı", "satın almak", "pijama", "bot", "şort")
+        )
+    )
+}
+
+    fun getQuiz61(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (12. SORUYA KADAR - 6 GÖRSEL)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - FIND
+        createVisual(
+            id = 1,
+            questionTurkish = "bulmak",
+            imageRes = R.drawable.find,
+            correctAnswer = "find",
+            options = listOf("find", "fold up", "zip up")
+        ),
+        // 2. Soru: LISTENING (1) - FIND PEKİŞTİREÇ (Güncellendi 🛠️)
+        createListening(
+            id = 2,
+            qTurkish = "Find your brown watch.",
+            res = R.drawable.watch,
+            ansEnglish = "Kahverengi saatini bul.",
+            opts = listOf("Kahverengi saatini bul.", "Mor pijamanı ütüle.", "Mavi pantolonunu katla.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - POCKET
+        createVisual(
+            id = 3,
+            questionTurkish = "cep",
+            imageRes = R.drawable.pocket,
+            correctAnswer = "pocket",
+            options = listOf("pocket", "scarf", "boot")
+        ),
+        // 4. Soru: LISTENING (2) - POCKET + FIND KOMBO
+        createListening(
+            id = 4,
+            qTurkish = "Find the money in my pocket.",
+            res = R.drawable.pocket,
+            ansEnglish = "Cebimdeki parayı bul.",
+            opts = listOf("Kirli şortunu yıka.", "Cebimdeki parayı bul.", "Sıcak kabanını askıya as.")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - RED DRESS
+        createVisual(
+            id = 5,
+            questionTurkish = "kırmızı elbise",
+            imageRes = R.drawable.dress,
+            correctAnswer = "red dress",
+            options = listOf("purple pyjamas", "red dress", "blue trousers")
+        ),
+        // 6. Soru: LISTENING (3) - RED DRESS + HANG UP
+        createListening(
+            id = 6,
+            qTurkish = "Hang up your new red dress.",
+            res = R.drawable.dress,
+            ansEnglish = "Yeni kırmızı elbiseni askıya as.",
+            opts = listOf("Yeni kırmızı elbiseni askıya as.", "Eski şortunu yıka.", "Mor pijamanı katla.")
+        ),
+
+        // 7. Soru: GÖRSEL (4) - TAKE OFF
+        createVisual(
+            id = 7,
+            questionTurkish = "çıkarmak (kıyafet)",
+            imageRes = R.drawable.takeoff,
+            correctAnswer = "take off",
+            options = listOf("take off", "dress up", "zip up")
+        ),
+        // 8. Soru: LISTENING (4) - TAKE OFF + BOOT
+        createListening(
+            id = 8,
+            qTurkish = "Take off your dirty boot.",
+            res = R.drawable.boot,
+            ansEnglish = "Kirli botunu çıkar.",
+            opts = listOf("Kirli botunu çıkar.", "Sıcak atkını askıya as.", "Mavi gömleğini ütüle.")
+        ),
+
+        // 9. Soru: GÖRSEL (5) - FOLD UP
+        createVisual(
+            id = 9,
+            questionTurkish = "katlamak",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "fold up",
+            options = listOf("fold up", "take off", "find")
+        ),
+        // 10. Soru: LISTENING (5) - FOLD UP + SHORTS
+        createListening(
+            id = 10,
+            qTurkish = "Fold up your new shorts.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Yeni şortumu katla.",
+            opts = listOf("Mor pijamanı giy.", "Yeni şortumu katla.", "Kırmızı elbiseni askıya as.")
+        ),
+
+        // 11. Soru: GÖRSEL (6) - SCARF
+        createVisual(
+            id = 11,
+            questionTurkish = "atkı",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "scarf",
+            options = listOf("scarf", "pocket", "boot")
+        ),
+        // 12. Soru: LISTENING (6) - TAKE OFF + SCARF KOMBO
+        createListening(
+            id = 12,
+            qTurkish = "Take off your beautiful scarf.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Güzel atkını çıkar.",
+            opts = listOf("Güzel atkını askıya as.", "Güzel atkını çıkar.", "Yeni gömleğini ütüle.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN 13-15 ARASI SAF LISTENING
+        // ========================================================
+
+        // 13. Soru: LISTENING - FIND + POCKET
+        createListening(
+            id = 13,
+            qTurkish = "He finds a key in his pocket.",
+            res = R.drawable.pocket,
+            ansEnglish = "O, cebinde bir anahtar bulur.",
+            opts = listOf("O, cebinde bir anahtar bulur.", "O, kırmızı elbiseyi askıya asar.", "O, kirli şortunu yıkar.")
+        ),
+
+        // 14. Soru: LISTENING - BUY + RED DRESS
+        createListening(
+            id = 14,
+            qTurkish = "She wants to buy a red dress.",
+            res = R.drawable.dress,
+            ansEnglish = "O, kırmızı bir elbise satın almak istiyor.",
+            opts = listOf("O, mor bir pijama ütülüyor.", "O, kırmızı bir elbise satın almak istiyor.", "O, eski saatini buluyor.")
+        ),
+
+        // 15. Soru: LISTENING - TAKE OFF + COAT
+        createListening(
+            id = 15,
+            qTurkish = "Zip up or take off your warm coat.",
+            res = R.drawable.coat,
+            ansEnglish = "Sıcak kabanının fermuarını çek veya çıkar.",
+            opts = listOf("Sıcak kabanının fermuarını çek veya çıkar.", "Mavi pantolonunu katla veya yıka.", "Siyah kemerini bul ve tak.")
+        ),
+
+        // ========================================================
+        // EN SONUNDA BÜYÜK EŞİT MATCHING FİNALİ 🏁
+        // ========================================================
+        createMatching(
+            id = 16,
+            questionText = "Yeni Kelimeler Başlangıç Ustası",
+            image = R.drawable.cat_logo,
+            pairs = "find,pocket,red dress,take off,fold up,scarf",
+            turkishOptions = listOf("bulmak", "cep", "kırmızı elbise", "çıkarmak (kıyafet)", "katlamak", "atkı")
+        )
+    )
+}
+
+    fun getQuiz62(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (12. SORUYA KADAR - 6 GÖRSEL)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - GLOVE
+        createVisual(
+            id = 1,
+            questionTurkish = "eldiven",
+            imageRes = R.drawable.glove,
+            correctAnswer = "glove",
+            options = listOf("glove", "tie", "jacket")
+        ),
+        // 2. Soru: LISTENING (1) - TAKE OFF + GLOVE (Güncellendi 🛠️)
+        createListening(
+            id = 2,
+            qTurkish = "Take off your blue glove.",
+            res = R.drawable.glove,
+            ansEnglish = "Mavi eldivenini çıkar.",
+            opts = listOf("Mavi eldivenini çıkar.", "Mor pijamanı katla.", "Kırmızı elbiseni askıya as.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - TIE
+        createVisual(
+            id = 3,
+            questionTurkish = "kravat",
+            imageRes = R.drawable.tie,
+            correctAnswer = "tie",
+            options = listOf("tie", "jacket", "pocket")
+        ),
+        // 4. Soru: LISTENING (2) - FIND + TIE
+        createListening(
+            id = 4,
+            qTurkish = "I cannot find my new tie.",
+            res = R.drawable.tie,
+            ansEnglish = "Yeni kravatımı bulamıyorum.",
+            opts = listOf("Yeni şortumu yıkayamıyorum.", "Yeni kravatımı bulamıyorum.", "Mavi pantolonunu ütüleyemiyorum.")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - JACKET
+        createVisual(
+            id = 5,
+            questionTurkish = "ceket",
+            imageRes = R.drawable.jacket,
+            correctAnswer = "jacket",
+            options = listOf("jacket", "coat", "glove")
+        ),
+        // 6. Soru: LISTENING (3) - ZIP UP + JACKET
+        createListening(
+            id = 6,
+            qTurkish = "Zip up your blue jacket.",
+            res = R.drawable.jacket,
+            ansEnglish = "Mavi ceketinin fermuarını çek.",
+            opts = listOf("Mavi ceketinin fermuarını çek.", "Mor pijamanı temizle.", "Siyah saatine bak.")
+        ),
+
+        // 7. GÖRSEL (4) - POCKET
+        createVisual(
+            id = 7,
+            questionTurkish = "cep",
+            imageRes = R.drawable.pocket,
+            correctAnswer = "pocket",
+            options = listOf("pocket", "glove", "tie")
+        ),
+        // 8. Soru: LISTENING (4) - JACKET + POCKET KOMBO
+        createListening(
+            id = 8,
+            qTurkish = "Put the money into your jacket pocket.",
+            res = R.drawable.jacket,
+            ansEnglish = "Parayı ceketinin cebine koy.",
+            opts = listOf("Parayı ceketinin cebine koy.", "Kırmızı elbiseni askıya as.", "Eski çoraplarını yıka.")
+        ),
+
+        // 9. Soru: GÖRSEL (5) - TAKE OFF
+        createVisual(
+            id = 9,
+            questionTurkish = "çıkarmak (kıyafet)",
+            imageRes = R.drawable.takeoff,
+            correctAnswer = "take off",
+            options = listOf("take off", "hang up", "buy")
+        ),
+        // 10. Soru: LISTENING (5) - TAKE OFF + JACKET (Güncellendi 🛠️)
+        createListening(
+            id = 10,
+            qTurkish = "He takes off his blue jacket.",
+            res = R.drawable.jacket,
+            ansEnglish = "O, mavi ceketini çıkarır.",
+            opts = listOf("O, kırmızı elbiseyi askıya asar.", "O, mavi ceketini çıkarır.", "O, yeni kravatını bulur.")
+        ),
+
+        // 11. Soru: GÖRSEL (6) - RED DRESS
+        createVisual(
+            id = 11,
+            questionTurkish = "kırmızı elbise",
+            imageRes = R.drawable.dress,
+            correctAnswer = "red dress",
+            options = listOf("red dress", "purple pyjamas", "shorts")
+        ),
+        // 12. Soru: LISTENING (6) - WASH + RED DRESS
+        createListening(
+            id = 12,
+            qTurkish = "Wash your new red dress.",
+            res = R.drawable.dress,
+            ansEnglish = "Yeni kırmızı elbiseni yıka.",
+            opts = listOf("Mavi ceketini katla.", "Yeni kırmızı elbiseni yıka.", "Yeni kravatını bul.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN 13-15 ARASI SAF LISTENING
+        // ========================================================
+
+        // 13. Soru: LISTENING - FIND + GLOVE (Güncellendi 🛠️)
+        createListening(
+            id = 13,
+            qTurkish = "She cannot find her plastic glove.",
+            res = R.drawable.glove,
+            ansEnglish = "O, plastik eldivenini bulamıyor.",
+            opts = listOf("O, plastik eldivenini bulamıyor.", "O, kırmızı elbisesini askıya asıyor.", "O, mavi ceketini ütülüyor.")
+        ),
+
+        // 14. Soru: LISTENING - IRON + TIE
+        createListening(
+            id = 14,
+            qTurkish = "Iron your new tie.",
+            res = R.drawable.tie,
+            ansEnglish = "Yeni kravatını ütüle.",
+            opts = listOf("Yeni kravatını ütüle.", "Kirli şortunu katla.", "Mor pijamanı çıkar.")
+        ),
+
+        // 15. Soru: LISTENING - HANG UP + JACKET (Güncellendi 🛠️)
+        createListening(
+            id = 15,
+            qTurkish = "Hang up your new jacket.",
+            res = R.drawable.jacket,
+            ansEnglish = "Yeni ceketini askıya as.",
+            opts = listOf("Yeni ceketini askıya as.", "Yeni eldivenlerini bul.", "Cebindeki paraya bak.")
+        ),
+
+        // ========================================================
+        // EN SONUNDA BÜYÜK EŞİT MATCHING FİNALİ 🏁
+        // ========================================================
+        createMatching(
+            id = 16,
+            questionText = "Kıyafet Aksesuarları Ustası",
+            image = R.drawable.cat_logo,
+            pairs = "glove,tie,jacket,pocket,take off,find",
+            turkishOptions = listOf("eldiven", "kravat", "ceket", "cep", "çıkarmak (kıyafet)", "bulmak")
+        )
+    )
+}
+
+    fun getQuiz63(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (12. SORUYA KADAR - 6 GÖRSEL)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - SHIRT
+        createVisual(
+            id = 1,
+            questionTurkish = "gömlek",
+            imageRes = R.drawable.shirt,
+            correctAnswer = "shirt",
+            options = listOf("shirt", "trousers", "jacket")
+        ),
+        // 2. Soru: LISTENING (1) - IRON + SHIRT KOMBO
+        createListening(
+            id = 2,
+            qTurkish = "Iron your clean shirt.",
+            res = R.drawable.shirt,
+            ansEnglish = "Temiz gömleğini ütüle.",
+            opts = listOf("Temiz gömleğini ütüle.", "Mavi ceketini askıya as.", "Yeni kravatını bul.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - TROUSERS
+        createVisual(
+            id = 3,
+            questionTurkish = "pantolon",
+            imageRes = R.drawable.trousers,
+            correctAnswer = "trousers",
+            options = listOf("trousers", "shorts", "dress")
+        ),
+        // 4. Soru: LISTENING (2) - FOLD UP + TROUSERS
+        createListening(
+            id = 4,
+            qTurkish = "Fold up your blue trousers.",
+            res = R.drawable.trousers,
+            ansEnglish = "Mavi pantolonunu katla.",
+            opts = listOf("Kirli şortunu yıka.", "Mavi pantolonunu katla.", "Yeni eldivenini çıkar.")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - SHOES
+        createVisual(
+            id = 5,
+            questionTurkish = "ayakkabı",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "shoes",
+            options = listOf("shoes", "boot", "socks")
+        ),
+        // 6. Soru: LISTENING (3) - TAKE OFF + SHOES
+        createListening(
+            id = 6,
+            qTurkish = "Take off your dirty shoes.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kirli ayakkabılarını çıkar.",
+            opts = listOf("Kirli ayakkabılarını çıkar.", "Yeni kravatını ütüle.", "Siyah ceketini askıya as.")
+        ),
+
+        // 7. Soru: GÖRSEL (4) - HAT
+        createVisual(
+            id = 7,
+            questionTurkish = "şapka",
+            imageRes = R.drawable.hat,
+            correctAnswer = "hat",
+            options = listOf("hat", "scarf", "tie")
+        ),
+        // 8. Soru: LISTENING (4) - FIND + HAT KOMBO (Güncellendi 🛠️)
+        createListening(
+            id = 8,
+            qTurkish = "I cannot find my yellow hat.",
+            res = R.drawable.hat,
+            ansEnglish = "Sarı şapkamı bulamıyorum.",
+            opts = listOf("Mavi ceketimi göremiyorum.", "Sarı şapkamı bulamıyorum.", "Plastik eldivenimi arıyorum.")
+        ),
+
+        // 9. Soru: GÖRSEL (5) - SOCKS
+        createVisual(
+            id = 9,
+            questionTurkish = "çorap",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "socks",
+            options = listOf("socks", "shoes", "trousers")
+        ),
+        // 10. Soru: LISTENING (5) - WASH + SOCKS
+        createListening(
+            id = 10,
+            qTurkish = "Wash your dirty socks.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kirli çoraplarını yıka.",
+            opts = listOf("Kirli çoraplarını yıka.", "Yeni gömleğini katla.", "Kırmızı elbiseni askıya as.")
+        ),
+
+        // 11. Soru: GÖRSEL (6) - IRON
+        createVisual(
+            id = 11,
+            questionTurkish = "ütülemek",
+            imageRes = R.drawable.iron,
+            correctAnswer = "iron",
+            options = listOf("iron", "fold up", "zip up")
+        ),
+        // 12. Soru: LISTENING (6) - IRON + TIE KOMBO
+        createListening(
+            id = 12,
+            qTurkish = "She irons her new tie.",
+            res = R.drawable.tie,
+            ansEnglish = "O, yeni kravatını ütüler.",
+            opts = listOf("O, yeni kravatını ütüler.", "O, siyah ceketini çıkarır.", "O, plastik eldivenini bulur.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN 13-15 ARASI SAF LISTENING
+        // ========================================================
+
+        // 13. Soru: LISTENING - BUY + SHIRT (Güncellendi 🛠️)
+        createListening(
+            id = 13,
+            qTurkish = "He wants to buy a blue shirt.",
+            res = R.drawable.shirt,
+            ansEnglish = "O, mavi bir gömlek satın almak istiyor.",
+            opts = listOf("O, mavi bir gömlek satın almak istiyor.", "O, mavi pantolonunu katlıyor.", "O, kirli botunu yıkıyor.")
+        ),
+
+        // 14. Soru: LISTENING - FIND + TROUSERS
+        createListening(
+            id = 14,
+            qTurkish = "Find your new trousers.",
+            res = R.drawable.trousers,
+            ansEnglish = "Yeni pantolonunu bul.",
+            opts = listOf("Yeni pantolonunu bul.", "Eski şapkanı çıkar.", "Temiz çoraplarını yıka.")
+        ),
+
+        // 15. Soru: LISTENING - DRESS UP + SHOES KOMBO
+        createListening(
+            id = 15,
+            qTurkish = "Put on your shoes and dress up.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Ayakkabılarını tak ve şık giyin.",
+            opts = listOf("Ayakkabılarını tak ve şık giyin.", "Mor pijamanı katla ve uyu.", "Kırmızı elbiseni askıya as.")
+        ),
+
+        // ========================================================
+        // EN SONUNDA BÜYÜK EŞİT MATCHING FİNALİ 🏁
+        // ========================================================
+        createMatching(
+            id = 16,
+            questionText = "Kıyafetler ve Eylemler Ustası 1",
+            image = R.drawable.cat_logo,
+            pairs = "shirt,trousers,shoes,hat,socks,iron",
+            turkishOptions = listOf("gömlek", "pantolon", "ayakkabı", "şapka", "çorap", "ütülemek")
+        )
+    )
+}
+
+    fun getQuiz64(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (12. SORUYA KADAR - 6 GÖRSEL)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - FIND
+        createVisual(
+            id = 1,
+            questionTurkish = "bulmak",
+            imageRes = R.drawable.find,
+            correctAnswer = "find",
+            options = listOf("find", "buy", "iron")
+        ),
+        // 2. Soru: LISTENING (1) - FIND + GLASSES KOMBO
+        createListening(
+            id = 2,
+            qTurkish = "I cannot find my new glasses.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Yeni gözlüğümü bulamıyorum.",
+            opts = listOf("Yeni gömleğimi ütüleyemiyorum.", "Yeni gözlüğümü bulamıyorum.", "Eski şapkamı çıkaramıyorum.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - BUY
+        createVisual(
+            id = 3,
+            questionTurkish = "satın almak",
+            imageRes = R.drawable.buy,
+            correctAnswer = "buy",
+            options = listOf("buy", "find", "take off")
+        ),
+        // 4. Soru: LISTENING (2) - BUY + SHOES KOMBO (Güncellendi 🛠️)
+        createListening(
+            id = 4,
+            qTurkish = "She wants to buy orange shoes.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "O, turuncu ayakkabı satın almak istiyor.",
+            opts = listOf("O, turuncu ayakkabı satın almak istiyor.", "O, mavi pantolonunu katlıyor.", "O, yeni gömleğini ütülüyor.")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - GLASSES
+        createVisual(
+            id = 5,
+            questionTurkish = "gözlük",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "glasses",
+            options = listOf("glasses", "hat", "watch")
+        ),
+        // 6. Soru: LISTENING (3) - TAKE OFF + GLASSES (Güncellendi 🛠️)
+        createListening(
+            id = 6,
+            qTurkish = "Take off your glasses.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Gözlüklerini çıkar.",
+            opts = listOf("Gözlüklerini çıkar.", "Yeni ceketini askıya as.", "Kahverengi saatini bul.")
+        ),
+
+        // 7. Soru: GÖRSEL (4) - SHORTS
+        createVisual(
+            id = 7,
+            questionTurkish = "şort",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "shorts",
+            options = listOf("shorts", "trousers", "pyjamas")
+        ),
+        // 8. Soru: LISTENING (4) - FOLD UP + SHORTS KOMBO
+        createListening(
+            id = 8,
+            qTurkish = "Fold up your new shorts.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Yeni şortumu katla.",
+            opts = listOf("Yeni şortumu katla.", "Kirli çoraplarını yıka.", "Eski şapkanı askıya as.")
+        ),
+
+        // 9. Soru: GÖRSEL (5) - HAT
+        createVisual(
+            id = 9,
+            questionTurkish = "şapka",
+            imageRes = R.drawable.hat,
+            correctAnswer = "hat",
+            options = listOf("hat", "shirt", "shoes")
+        ),
+        // 10. Soru: LISTENING (5) - WEAR + HAT
+        createListening(
+            id = 10,
+            qTurkish = "He wears a beautiful hat.",
+            res = R.drawable.hat,
+            ansEnglish = "O, güzel bir şapka giyer.",
+            opts = listOf("O, güzel bir şapka giyer.", "O, yeni gömleğini ütüler.", "O, mavi pantolonunu katlar.")
+        ),
+
+        // 11. Soru: GÖRSEL (6) - SHIRT
+        createVisual(
+            id = 11,
+            questionTurkish = "gömlek",
+            imageRes = R.drawable.shirt,
+            correctAnswer = "shirt",
+            options = listOf("shirt", "trousers", "socks")
+        ),
+        // 12. Soru: LISTENING (6) - IRON + SHIRT PEKİŞTİREÇ
+        createListening(
+            id = 12,
+            qTurkish = "Iron your blue shirt.",
+            res = R.drawable.shirt,
+            ansEnglish = "Mavi gömleğini ütüle.",
+            opts = listOf("Mavi gömleğini ütüle.", "Kirli ayakkabılarını çıkar.", "Yeni pantolonunu bul.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN 13-15 ARASI SAF LISTENING
+        // ========================================================
+
+        // 13. Soru: LISTENING - BUY + TROUSERS
+        createListening(
+            id = 13,
+            qTurkish = "I want to buy new trousers.",
+            res = R.drawable.trousers,
+            ansEnglish = "Yeni pantolon satın almak istiyorum.",
+            opts = listOf("Yeni pantolon satın almak istiyorum.", "Mor pijamamı ütülüyorum.", "Kirli çoraplarımı yıkıyorum.")
+        ),
+
+        // 14. Soru: LISTENING - FIND + SOCKS
+        createListening(
+            id = 14,
+            qTurkish = "She cannot find her clean socks.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "O, temiz çoraplarını bulamıyor.",
+            opts = listOf("O, temiz çoraplarını bulamıyor.", "O, yeni şapkasını çıkarıyor.", "O, mavi gömleğini katlıyor.")
+        ),
+
+        // 15. Soru: LISTENING - ZIP UP + JACKET
+        createListening(
+            id = 15,
+            qTurkish = "Zip up your jacket and find your keys.",
+            res = R.drawable.jacket,
+            ansEnglish = "Ceketinin fermuarını çek ve anahtarlarını bul.",
+            opts = listOf("Ceketinin fermuarını çek ve anahtarlarını bul.", "Mavi pantolonunu katla ve askıya as.", "Ayakkabılarını çıkar ve içeri gir.")
+        ),
+
+        // ========================================================
+        // EN SONUNDA BÜYÜK EŞİT MATCHING FİNALİ 🏁
+        // ========================================================
+        createMatching(
+            id = 16,
+            questionText = "Kıyafetler ve Eylemler Ustası 2",
+            image = R.drawable.cat_logo,
+            pairs = "find,buy,glasses,shorts,hat,shirt",
+            turkishOptions = listOf("bulmak", "satın almak", "gözlük", "şort", "şapka", "gömlek")
+        )
+    )
+}
+
+    fun getQuiz65(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (12. SORUYA KADAR - 6 GÖRSEL)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - SOCKS
+        createVisual(
+            id = 1,
+            questionTurkish = "çorap",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "socks",
+            options = listOf("socks", "shoes", "trousers")
+        ),
+        // 2. Soru: LISTENING (1) - TAKE OFF + SOCKS
+        createListening(
+            id = 2,
+            qTurkish = "Take off your dirty socks.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kirli çoraplarını çıkar.",
+            opts = listOf("Kirli çoraplarını çıkar.", "Yeni gömleğini ütüle.", "Sarı şapkanı bul.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - TIE
+        createVisual(
+            id = 3,
+            questionTurkish = "kravat",
+            imageRes = R.drawable.tie,
+            correctAnswer = "tie",
+            options = listOf("tie", "jacket", "shirt")
+        ),
+        // 4. Soru: LISTENING (2) - IRON + TIE
+        createListening(
+            id = 4,
+            qTurkish = "Iron your new tie.",
+            res = R.drawable.tie,
+            ansEnglish = "Yeni kravatını ütüle.",
+            opts = listOf("Mavi ceketini askıya as.", "Yeni kravatını ütüle.", "Kemerini cebine koy.")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - HAT
+        createVisual(
+            id = 5,
+            questionTurkish = "şapka",
+            imageRes = R.drawable.hat,
+            correctAnswer = "hat",
+            options = listOf("hat", "glasses", "scarf")
+        ),
+        // 6. Soru: LISTENING (3) - FIND + YELLOW HAT
+        createListening(
+            id = 6,
+            qTurkish = "I cannot find my yellow hat.",
+            res = R.drawable.hat,
+            ansEnglish = "Sarı şapkamı bulamıyorum.",
+            opts = listOf("Sarı şapkamı bulamıyorum.", "Turuncu ayakkabımı giyiyorum.", "Mavi ceketimi ütülüyorum.")
+        ),
+
+        // 7. Soru: GÖRSEL (4) - JACKET
+        createVisual(
+            id = 7,
+            questionTurkish = "ceket",
+            imageRes = R.drawable.jacket,
+            correctAnswer = "jacket",
+            options = listOf("jacket", "coat", "dress")
+        ),
+        // 8. Soru: LISTENING (4) - ZIP UP + BLUE JACKET
+        createListening(
+            id = 8,
+            qTurkish = "Zip up your blue jacket.",
+            res = R.drawable.jacket,
+            ansEnglish = "Mavi ceketinin fermuarını çek.",
+            opts = listOf("Mavi ceketinin fermuarını çek.", "Mor pijamanı katla.", "Kırmızı elbiseni askıya as.")
+        ),
+
+        // 9. Soru: GÖRSEL (5) - SHOES
+        createVisual(
+            id = 9,
+            questionTurkish = "ayakkabı",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "shoes",
+            options = listOf("shoes", "boot", "socks")
+        ),
+        // 10. Soru: LISTENING (5) - BUY + ORANGE SHOES
+        createListening(
+            id = 10,
+            qTurkish = "She wants to buy orange shoes.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "O, turuncu ayakkabı satın almak istiyor.",
+            opts = listOf("O, turuncu ayakkabı satın almak istiyor.", "O, plastik eldiven arıyor.", "O, temiz gömleğini katlıyor.")
+        ),
+
+        // 11. Soru: GÖRSEL (6 - LİMİT DOLDU 🛑) - TROUSERS
+        createVisual(
+            id = 11,
+            questionTurkish = "pantolon",
+            imageRes = R.drawable.trousers,
+            correctAnswer = "trousers",
+            options = listOf("trousers", "shorts", "shirt")
+        ),
+        // 12. Soru: LISTENING (6) - FOLD UP + TROUSERS
+        createListening(
+            id = 12,
+            qTurkish = "Fold up your blue trousers.",
+            res = R.drawable.trousers,
+            ansEnglish = "Mavi pantolonunu katla.",
+            opts = listOf("Yeni gözlüğünü çıkar.", "Mavi pantolonunu katla.", "Kirli çoraplarını yıka.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN 13-15 ARASI SAF LISTENING (ULTRA TEKRAR)
+        // ========================================================
+
+        // 13. Soru: LISTENING - FIND + PLASTIC GLOVE
+        createListening(
+            id = 13,
+            qTurkish = "He finds a plastic glove in his pocket.",
+            res = R.drawable.glove,
+            ansEnglish = "O, cebinde plastik bir eldiven bulur.",
+            opts = listOf("O, cebinde plastik bir eldiven bulur.", "O, sarı şapkasını askıya asar.", "O, yeni gömleğini ütüler.")
+        ),
+
+        // 14. Soru: LISTENING - TAKE OFF + GLASSES
+        createListening(
+            id = 14,
+            qTurkish = "Take off your glasses and look at me.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Gözlüklerini çıkar ve bana bak.",
+            opts = listOf("Gözlüklerini çıkar ve bana bak.", "Mavi ceketini giy ve çık.", "Yeni saatini bul ve tak.")
+        ),
+
+        // 15. Soru: LISTENING - HANG UP + RED DRESS
+        createListening(
+            id = 15,
+            qTurkish = "Hang up your new red dress.",
+            res = R.drawable.dress,
+            ansEnglish = "Yeni kırmızı elbiseni askıya as.",
+            opts = listOf("Yeni kırmızı elbiseni askıya as.", "Turuncu ayakkabılarını temizle.", "Mor pijamanı düzgünce katla.")
+        ),
+
+        // ========================================================
+        // EN SONUNDA BÜYÜK EŞİT MATCHING FİNALİ 🏁
+        // ========================================================
+        createMatching(
+            id = 16,
+            questionText = "Büyük Kıyafet Ünitesi Finalisti",
+            image = R.drawable.cat_logo,
+            pairs = "socks,tie,hat,jacket,shoes,trousers",
+            turkishOptions = listOf("çorap", "kravat", "şapka", "ceket", "ayakkabı", "pantolon")
+        )
+    )
+}
+
+    fun getQuiz66(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (12. SORUYA KADAR - 6 GÖRSEL)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - GLASSES
+        createVisual(
+            id = 1,
+            questionTurkish = "gözlük",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "glasses",
+            options = listOf("glasses", "hat", "watch")
+        ),
+        // 2. Soru: LISTENING (1) - TAKE OFF + GLASSES KOMBO
+        createListening(
+            id = 2,
+            qTurkish = "Take off your glasses.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Gözlüklerini çıkar.",
+            opts = listOf("Gözlüklerini çıkar.", "Sarı şapkanı bul.", "Mavi ceketini askıya as.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - TIE
+        createVisual(
+            id = 3,
+            questionTurkish = "kravat",
+            imageRes = R.drawable.tie,
+            correctAnswer = "tie",
+            options = listOf("tie", "shirt", "jacket")
+        ),
+        // 4. Soru: LISTENING (2) - IRON + TIE PEKİŞTİREÇ
+        createListening(
+            id = 4,
+            qTurkish = "Iron your new tie.",
+            res = R.drawable.tie,
+            ansEnglish = "Yeni kravatını ütüle.",
+            opts = listOf("Yeni kravatını ütüle.", "Kirli çoraplarını yıka.", "Mavi pantolonunu katla.")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - POCKET
+        createVisual(
+            id = 5,
+            questionTurkish = "cep",
+            imageRes = R.drawable.pocket,
+            correctAnswer = "pocket",
+            options = listOf("pocket", "glove", "socks")
+        ),
+        // 6. Soru: LISTENING (3) - FIND + PLASTIC GLOVE + POCKET KOMBO
+        createListening(
+            id = 6,
+            qTurkish = "He finds a plastic glove in his pocket.",
+            res = R.drawable.glove,
+            ansEnglish = "O, cebinde plastik bir eldiven bulur.",
+            opts = listOf("O, cebinde plastik bir eldiven bulur.", "O, mavi gömleğini ütüler.", "O, turuncu ayakkabılarını temizler.")
+        ),
+
+        // 7. Soru: GÖRSEL (4) - SHIRT
+        createVisual(
+            id = 7,
+            questionTurkish = "gömlek",
+            imageRes = R.drawable.shirt,
+            correctAnswer = "shirt",
+            options = listOf("shirt", "trousers", "shorts")
+        ),
+        // 8. Soru: LISTENING (4) - BUY + BLUE SHIRT KOMBO
+        createListening(
+            id = 8,
+            qTurkish = "He wants to buy a blue shirt.",
+            res = R.drawable.shirt,
+            ansEnglish = "O, mavi bir gömlek satın almak istiyor.",
+            opts = listOf("O, mavi bir gömlek satın almak istiyor.", "O, sarı şapkasını arıyor.", "O, yeni ceketini giyiyor.")
+        ),
+
+        // 9. Soru: GÖRSEL (5) - SHOES
+        createVisual(
+            id = 9,
+            questionTurkish = "ayakkabı",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "shoes",
+            options = listOf("shoes", "boot", "socks")
+        ),
+        // 10. Soru: LISTENING (5) - BUY + ORANGE SHOES KOMBO
+        createListening(
+            id = 10,
+            qTurkish = "She wants to buy orange shoes.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "O, turuncu ayakkabı satın almak istiyor.",
+            opts = listOf("O, turuncu ayakkabı satın almak istiyor.", "O, mor pijamasını katlıyor.", "O, temiz çoraplarını yıkıyor.")
+        ),
+
+        // 11. Soru: GÖRSEL (6) - HAT
+        createVisual(
+            id = 11,
+            questionTurkish = "şapka",
+            imageRes = R.drawable.hat,
+            correctAnswer = "hat",
+            options = listOf("hat", "scarf", "tie")
+        ),
+        // 12. Soru: LISTENING (6) - FIND + YELLOW HAT KOMBO
+        createListening(
+            id = 12,
+            qTurkish = "I cannot find my yellow hat.",
+            res = R.drawable.hat,
+            ansEnglish = "Sarı şapkamı bulamıyorum.",
+            opts = listOf("Sarı şapkamı bulamıyorum.", "Mavi ceketimin fermuarını çekiyorum.", "Yeni elbisemi askıya asıyorum.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN 13-19 ARASI SAF LISTENING (KARIŞIK ULTRA FINAL)
+        // ========================================================
+
+        // 13. Soru: LISTENING - ZIP UP + BLUE JACKET
+        createListening(
+            id = 13,
+            qTurkish = "Zip up your blue jacket.",
+            res = R.drawable.jacket,
+            ansEnglish = "Mavi ceketinin fermuarını çek.",
+            opts = listOf("Mavi ceketinin fermuarını çek.", "Kirli şortunu temizle.", "Eski botunu çıkar.")
+        ),
+
+        // 14. Soru: LISTENING - FOLD UP + TROUSERS
+        createListening(
+            id = 14,
+            qTurkish = "Fold up your blue trousers.",
+            res = R.drawable.trousers,
+            ansEnglish = "Mavi pantolonunu katla.",
+            opts = listOf("Mavi pantolonunu katla.", "Yeni gömleğini ütüle.", "Kırmızı elbiseni askıya as.")
+        ),
+
+        // 15. Soru: LISTENING - HANG UP + RED DRESS
+        createListening(
+            id = 15,
+            qTurkish = "Hang up your new red dress.",
+            res = R.drawable.dress,
+            ansEnglish = "Yeni kırmızı elbiseni askıya as.",
+            opts = listOf("Yeni kırmızı elbiseni askıya as.", "Temiz çoraplarını yıka.", "Gözlüklerini cebine koy.")
+        ),
+
+        // 16. Soru: LISTENING - WASH + SOCKS (Yeni Eklenen Soru 1)
+        createListening(
+            id = 16,
+            qTurkish = "Wash your dirty socks.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kirli çoraplarını yıka.",
+            opts = listOf("Kirli çoraplarını yıka.", "Yeni ayakkabılarını satın al.", "Mavi pantolonunu katla.")
+        ),
+
+        // 17. Soru: LISTENING - DRESS UP + SHORTS KOMBO (Yeni Eklenen Soru 2)
+        createListening(
+            id = 17,
+            qTurkish = "Dress up and wear your new shorts.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Şık giyin ve yeni şortunu giy.",
+            opts = listOf("Şık giyin ve yeni şortunu giy.", "Ceketinin fermuarını çek ve bul.", "Gözlüklerini çıkar ve masaya koy.")
+        ),
+
+        // 18. Soru: LISTENING - FIND + BOOT (Yeni Eklenen Soru 3)
+        createListening(
+            id = 18,
+            qTurkish = "I cannot find my old boot.",
+            res = R.drawable.boot,
+            ansEnglish = "Eski botumu bulamıyorum.",
+            opts = listOf("Mavi ceketimi göremiyorum.", "Eski botumu bulamıyorum.", "Temiz çoraplarımı ütülüyorum.")
+        ),
+
+        // 19. Soru: LISTENING - IRON + SHIRT PEKİŞTİREÇ (Yeni Eklenen Soru 4)
+        createListening(
+            id = 19,
+            qTurkish = "Iron your clean shirt.",
+            res = R.drawable.shirt,
+            ansEnglish = "Temiz gömleğini ütüle.",
+            opts = listOf("Temiz gömleğini ütüle.", "Sarı şapkanı askıya as.", "Yeni kravatını cebine koy.")
+        ),
+
+        // ========================================================
+        // 20. SORU: NİHAİ BÜYÜK EŞLEŞTİRME FİNALİ (TEK MATCHING) 🏁
+        // ========================================================
+        createMatching(
+            id = 20,
+            questionText = "Kıyafetler Ünitesi Büyük Şampiyonu",
+            image = R.drawable.cat_logo,
+            pairs = "glasses,tie,pocket,shirt,shoes,hat",
+            turkishOptions = listOf("gözlük", "kravat", "cep", "gömlek", "ayakkabı", "şapka")
+        )
+    )
+}
+
+    fun getQuiz67(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (12. SORUYA KADAR - 6 GÖRSEL)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - RESTAURANT
+        createVisual(
+            id = 1,
+            questionTurkish = "restoran",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "restaurant",
+            options = listOf("restaurant", "kitchen", "school")
+        ),
+        // 2. Soru: LISTENING (1) - RESTAURANT PEKİŞTİREÇ
+        createListening(
+            id = 2,
+            qTurkish = "I am in a big restaurant.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Büyük bir restorandayım.",
+            opts = listOf("Büyük bir restorandayım.", "Mavi ceketimi arıyorum.", "Temiz mutfağa gidiyorum.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - WAITER (Erkek Garson için R.drawable.man)
+        createVisual(
+            id = 3,
+            questionTurkish = "garson (erkek)",
+            imageRes = R.drawable.man,
+            correctAnswer = "waiter",
+            options = listOf("waiter", "teacher", "doctor")
+        ),
+        // 4. Soru: LISTENING (2) - WAITER PEKİŞTİREÇ
+        createListening(
+            id = 4,
+            qTurkish = "The waiter is here.",
+            res = R.drawable.man,
+            ansEnglish = "Garson burada.",
+            opts = listOf("Garson burada.", "Gözlüklerim cebimde.", "Yeni gömlek satın alıyorum.")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - MENU
+        createVisual(
+            id = 5,
+            questionTurkish = "menü",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "menu",
+            options = listOf("menu", "pocket", "shirt")
+        ),
+        // 6. Soru: LISTENING (3) - WANT + MENU KOMBO
+        createListening(
+            id = 6,
+            qTurkish = "I want the menu.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Menüyü istiyorum.",
+            opts = listOf("Menüyü istiyorum.", "Sarı şapkamı buluyorum.", "Kirli çoraplarımı yıkıyorum.")
+        ),
+
+        // 7. Soru: GÖRSEL (4) - WAITER (Kadın Garson varyasyonu için R.drawable.waitress)
+        createVisual(
+            id = 7,
+            questionTurkish = "garson (kadın)",
+            imageRes = R.drawable.waitress,
+            correctAnswer = "waiter",
+            options = listOf("waiter", "student", "hat")
+        ),
+        // 8. Soru: LISTENING (4) - WANT + WAITER KOMBO (R.drawable.cat_logo)
+        createListening(
+            id = 8,
+            qTurkish = "I want a waiter.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bir garson istiyorum.",
+            opts = listOf("Bir garson istiyorum.", "Yeni kravatımı ütülüyorum.", "Mavi pantolonunu katlıyorum.")
+        ),
+
+        // 9. Soru: GÖRSEL (5) - RESTAURANT (Tekrar ve Sabitleme)
+        createVisual(
+            id = 9,
+            questionTurkish = "restoran",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "restaurant",
+            options = listOf("restaurant", "bedroom", "shoes")
+        ),
+        // 10. Soru: LISTENING (5) - WANT + RESTAURANT
+        createListening(
+            id = 10,
+            qTurkish = "I want a clean restaurant.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Temiz bir restoran istiyorum.",
+            opts = listOf("Temiz bir restoran istiyorum.", "Eski botumu çıkarıyorum.", "Mor pijamamı giyiyorum.")
+        ),
+
+        // 11. Soru: GÖRSEL (6 - LİMİT 🛑) - MENU (Tekrar ve Sabitleme)
+        createVisual(
+            id = 11,
+            questionTurkish = "menü",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "menu",
+            options = listOf("menu", "glasses", "tie")
+        ),
+        // 12. Soru: LISTENING (6) - WANT PEKİŞTİREÇ
+        createListening(
+            id = 12,
+            qTurkish = "I want this.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bunu istiyorum.",
+            opts = listOf("Bunu istiyorum.", "Gözlüklerimi çıkarıyorum.", "Yeni ceketimi asıyorum.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN SAF LISTENING ALANI (EYLEM VE KALIPLAR)
+        // ========================================================
+
+        // 13. Soru: LISTENING - SADECE "order" GİRİŞİ
+        createListening(
+            id = 13,
+            qTurkish = "order",
+            res = R.drawable.cat_logo,
+            ansEnglish = "sipariş",
+            opts = listOf("sipariş", "şapka", "gömlek")
+        ),
+
+        // 14. Soru: LISTENING - WANT + ORDER KOMBO (Aynen Korundu)
+        createListening(
+            id = 14,
+            qTurkish = "I want to order.",
+            res = R.drawable.man,
+            ansEnglish = "Sipariş vermek istiyorum.",
+            opts = listOf("Sipariş vermek istiyorum.", "Mavi ceketimi ütülemek istiyorum.", "Gözlüklerimi aramak istiyorum.")
+        ),
+
+        // 15. Soru: LISTENING - GIVE AN ORDER KALIBI
+        createListening(
+            id = 15,
+            qTurkish = "I give an order to the waiter.",
+            res = R.drawable.man,
+            ansEnglish = "Garsona bir sipariş veririm.",
+            opts = listOf("Garsona bir sipariş veririm.", "Garsona menüyü fırlatırım.", "Cebimde plastik eldiven bulurum.")
+        ),
+
+        // 16. Soru: LISTENING - WANT + GIVE AN ORDER BÜYÜK KOMBO
+        createListening(
+            id = 16,
+            qTurkish = "I want to give an order.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bir sipariş vermek istiyorum.",
+            opts = listOf("Bir sipariş vermek istiyorum.", "Kirli çoraplarımı yıkamak istiyorum.", "Yeni elbisemi asmak istiyorum.")
+        )
+    )
+}
+
+    fun getQuiz68(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (12. SORUYA KADAR - 6 GÖRSEL)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - RESTAURANT (Tekrar)
+        createVisual(
+            id = 1,
+            questionTurkish = "restoran",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "restaurant",
+            options = listOf("restaurant", "kitchen", "school")
+        ),
+        // 2. Soru: LISTENING (1) - MENU + WANT PEKİŞTİREÇ
+        createListening(
+            id = 2,
+            qTurkish = "I want the menu.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Menüyü istiyorum.",
+            opts = listOf("Menüyü istiyorum.", "Bir garson istiyorum.", "Sipariş vermek istiyorum.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - WAITER (Erkek Garson - Tekrar)
+        createVisual(
+            id = 3,
+            questionTurkish = "garson (erkek)",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "waiter",
+            options = listOf("waiter", "teacher", "doctor")
+        ),
+        // 4. Soru: LISTENING (2) - HEDEF FİİL GİRİŞİ: WAIT (Beklemek) ⏳
+        createListening(
+            id = 4,
+            qTurkish = "wait",
+            res = R.drawable.cat_logo,
+            ansEnglish = "beklemek",
+            opts = listOf("beklemek", "getirmek", "sipariş etmek")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - MENU (Güncellenmiş Şıklar 🛠️)
+        createVisual(
+            id = 5,
+            questionTurkish = "menü",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "menu",
+            options = listOf("menu", "restaurant", "waiter")
+        ),
+        // 6. Soru: LISTENING (3) - WAIT PEKİŞTİREÇ
+        createListening(
+            id = 6,
+            qTurkish = "I wait here.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Burada beklerim.",
+            opts = listOf("Burada beklerim.", "Sipariş veririm.", "Menüyü getiririm.")
+        ),
+
+        // 7. Soru: GÖRSEL (4) - WAITRESS (Kadın Garson - Güncellenmiş Şıklar 🛠️)
+        createVisual(
+            id = 7,
+            questionTurkish = "garson (kadın)",
+            imageRes = R.drawable.waitress,
+            correctAnswer = "waiter",
+            options = listOf("waiter", "restaurant", "menu")
+        ),
+        // 8. Soru: LISTENING (4) - BÜYÜK HEDEF KOMBO: I AM WAITING FOR MY ORDER 🏁
+        createListening(
+            id = 8,
+            qTurkish = "I am waiting for my order.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Siparişimi bekliyorum.",
+            opts = listOf("Siparişimi bekliyorum.", "Garsonu bekliyorum.", "Menüyü istiyorum.")
+        ),
+
+        // 9. Soru: GÖRSEL (5) - RESTAURANT (Tekrar)
+        createVisual(
+            id = 9,
+            questionTurkish = "restoran",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "restaurant",
+            options = listOf("restaurant", "bedroom", "shoes")
+        ),
+        // 10. Soru: LISTENING (5) - HEDEF FİİL: BRING (Getirmek) 🤲
+        createListening(
+            id = 10,
+            qTurkish = "bring",
+            res = R.drawable.cat_logo,
+            ansEnglish = "getirmek",
+            opts = listOf("getirmek", "beklemek", "sipariş etmek")
+        ),
+
+        // 11. Soru: GÖRSEL (6) - MENU (Tekrar)
+        createVisual(
+            id = 11,
+            questionTurkish = "menü",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "menu",
+            options = listOf("menu", "glasses", "tie")
+        ),
+        // 12. Soru: LISTENING (6) - BRING + WAITER KOMBO
+        createListening(
+            id = 12,
+            qTurkish = "The waiter brings the menu.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Garson menüyü getirir.",
+            opts = listOf("Garson menüyü getirir.", "Garson burada bekler.", "Garson bir sipariş verir.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN SAF LISTENING ALANI 
+        // ========================================================
+
+        // 13. Soru: LISTENING - SADECE "order" TEKRAR
+        createListening(
+            id = 13,
+            qTurkish = "order",
+            res = R.drawable.cat_logo,
+            ansEnglish = "sipariş",
+            opts = listOf("sipariş", "garson", "menü")
+        ),
+
+        // 14. Soru: LISTENING - BRING + ORDER KOMBO
+        createListening(
+            id = 14,
+            qTurkish = "Bring my order.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Siparişimi getir.",
+            opts = listOf("Siparişimi getir.", "Siparişimi bekliyorum.", "Menüyü istiyorum.")
+        ),
+
+        // 15. Soru: LISTENING - WAITER + BRING + ORDER GENİŞ KOMBO
+        createListening(
+            id = 15,
+            qTurkish = "The waiter brings my order.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Garson siparişimi getirir.",
+            opts = listOf("Garson siparişimi getirir.", "Garson siparişimi bekler.", "Garson menüyü ister.")
+        ),
+
+        // 16. Soru: LISTENING - WANT + BRING KOMBO
+        createListening(
+            id = 16,
+            qTurkish = "I want you to bring my order.",
+            res = R.drawable.waitress,
+            ansEnglish = "Siparişimi getirmeni istiyorum.",
+            opts = listOf("Siparişimi getirmeni istiyorum.", "Bir sipariş vermek istiyorum.", "Burada garsonu beklemek istiyorum.")
+        )
+    )
+}
+
+    fun getQuiz69(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (12. SORUYA KADAR - 6 GÖRSEL)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - SOUP 🥣
+        createVisual(
+            id = 1,
+            questionTurkish = "çorba",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "soup",
+            options = listOf("soup", "salad", "menu")
+        ),
+        // 2. Soru: LISTENING (1) - WANT + SOUP KOMBO
+        createListening(
+            id = 2,
+            qTurkish = "I want soup.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Çorba istiyorum.",
+            opts = listOf("Çorba istiyorum.", "Hesap istiyorum.", "Sipariş vermek istiyorum.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - SALAD 🥗
+        createVisual(
+            id = 3,
+            questionTurkish = "salata",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "salad",
+            options = listOf("salad", "soup", "plate")
+        ),
+        // 4. Soru: LISTENING (2) - HEDEF FİİL GİRİŞİ: EAT (Yemek) 🍽️
+        createListening(
+            id = 4,
+            qTurkish = "eat",
+            res = R.drawable.cat_logo,
+            ansEnglish = "yemek yemek",
+            opts = listOf("yemek yemek", "çağırmak", "getirmek")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - GLASS 🥛
+        createVisual(
+            id = 5,
+            questionTurkish = "bardak",
+            imageRes = R.drawable.glass,
+            correctAnswer = "glass",
+            options = listOf("glass", "plate", "restaurant")
+        ),
+        // 6. Soru: LISTENING (3) - EAT + SOUP + SALAD KOMBO
+        createListening(
+            id = 6,
+            qTurkish = "I eat soup and salad.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Çorba ve salata yerim.",
+            opts = listOf("Çorba ve salata yerim.", "Siparişimi bekliyorum.", "Garsonu çağırıyorum.")
+        ),
+
+        // 7. Soru: GÖRSEL (4) - PLATE 🍽️
+        createVisual(
+            id = 7,
+            questionTurkish = "tabak",
+            imageRes = R.drawable.plate,
+            correctAnswer = "plate",
+            options = listOf("plate", "glass", "bill")
+        ),
+        // 8. Soru: LISTENING (4) - BRING + GLASS + PLATE PEKİŞTİREÇ (R.drawable.cat_logo 🛠️)
+        createListening(
+            id = 8,
+            qTurkish = "The waiter brings a glass and a plate.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Garson bir bardak ve bir tabak getirir.",
+            opts = listOf("Garson bir bardak ve bir tabak getirir.", "Garson menüyü ve hesabı getirir.", "Garson siparişimi getirir.")
+        ),
+
+        // 9. Soru: GÖRSEL (5) - BILL 🧾
+        createVisual(
+            id = 9,
+            questionTurkish = "hesap",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "bill",
+            options = listOf("bill", "menu", "order")
+        ),
+        // 10. Soru: LISTENING (5) - HEDEF FİİL GİRİŞİ: CALL (R.drawable.man 🛠️)
+        createListening(
+            id = 10,
+            qTurkish = "call",
+            res = R.drawable.man,
+            ansEnglish = "çağırmak",
+            opts = listOf("çağırmak", "yemek yemek", "beklemek")
+        ),
+
+        // 11. Soru: GÖRSEL (6 - LİMİT 🛑) - SOUP (Tekrar ve Sabitleme)
+        createVisual(
+            id = 11,
+            questionTurkish = "çorba",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "soup",
+            options = listOf("soup", "bill", "waiter")
+        ),
+        // 12. Soru: LISTENING (6) - CALL + WAITER KOMBO
+        createListening(
+            id = 12,
+            qTurkish = "I call the waiter.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Garsonu çağırırım.",
+            opts = listOf("Garsonu çağırırım.", "Hesap isterim.", "Siparişimi beklerim.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN SAF LISTENING ALANI (KARIŞIK KOMBO)
+        // ========================================================
+
+        // 13. Soru: LISTENING - WANT + EAT + SOUP ULTRA KOMBO
+        createListening(
+            id = 13,
+            qTurkish = "I want to eat hot soup.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Sıcak çorba yemek istiyorum.",
+            opts = listOf("Sıcak çorba yemek istiyorum.", "Salata yemek istiyorum.", "Siparişimi vermek istiyorum.")
+        ),
+
+        // 14. Soru: LISTENING - CALL + WAITER + FOR BILL
+        createListening(
+            id = 14,
+            qTurkish = "I call the waiter for the bill.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Hesap için garsonu çağırırım.",
+            opts = listOf("Hesap için garsonu çağırırım.", "Menü için garsonu çağırırım.", "Siparişimi getirmesini isterim.")
+        ),
+
+        // 15. Soru: LISTENING - WANT + BILL PEKİŞTİREÇ
+        createListening(
+            id = 15,
+            qTurkish = "I want the bill.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Hesabı istiyorum.",
+            opts = listOf("Hesabı istiyorum.", "Menüyü istiyorum.", "Bir tabak istiyorum.")
+        ),
+
+        // 16. Soru: LISTENING - BRING + BILL KAPANIŞ
+        createListening(
+            id = 16,
+            qTurkish = "The waitress brings the bill.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kadın garson hesabı getirir.",
+            opts = listOf("Kadın garson hesabı getirir.", "Erkek garson tabağı getirir.", "Kadın garson çorbayı getirir.")
+        )
+    )
+}
+
+    fun getQuiz70(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (12. SORUYA KADAR - 6 GÖRSEL)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - SOUP (Tekrar)
+        createVisual(
+            id = 1,
+            questionTurkish = "çorba",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "soup",
+            options = listOf("soup", "salad", "plate")
+        ),
+        // 2. Soru: LISTENING (1) - ORDER + SOUP KOMBO
+        createListening(
+            id = 2,
+            qTurkish = "I want to order soup.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Çorba sipariş etmek istiyorum.",
+            opts = listOf("Çorba sipariş etmek istiyorum.", "Salata yemek istiyorum.", "Hesap istemek istiyorum.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - SALAD (Tekrar)
+        createVisual(
+            id = 3,
+            questionTurkish = "salata",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "salad",
+            options = listOf("salad", "soup", "menu")
+        ),
+        // 4. Soru: LISTENING (2) - WAITER + BRING + SALAD PEKİŞTİREÇ
+        createListening(
+            id = 4,
+            qTurkish = "The waiter brings my salad.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Garson salatamı getirir.",
+            opts = listOf("Garson salatamı getirir.", "Garson çorbamı içer.", "Garson hesabı getirir.")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - GLASS (Tekrar)
+        createVisual(
+            id = 5,
+            questionTurkish = "bardak",
+            imageRes = R.drawable.glass,
+            correctAnswer = "glass",
+            options = listOf("glass", "plate", "bill")
+        ),
+        // 6. Soru: LISTENING (3) - CALL + WAITER + GLASS KOMBO
+        createListening(
+            id = 6,
+            qTurkish = "I call the waiter for a glass.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bir bardak için garsonu çağırırım.",
+            opts = listOf("Bir bardak için garsonu çağırırım.", "Bir tabak için garsonu çağırırım.", "Hesap için garsonu çağırırım.")
+        ),
+
+        // 7. Soru: GÖRSEL (4) - PLATE (Tekrar)
+        createVisual(
+            id = 7,
+            questionTurkish = "tabak",
+            imageRes = R.drawable.plate,
+            correctAnswer = "plate",
+            options = listOf("plate", "glass", "restaurant")
+        ),
+        // 8. Soru: LISTENING (4) - WAIT + ORDER KOMBO REVIZE
+        createListening(
+            id = 8,
+            qTurkish = "I wait for my plate.",
+            res = R.drawable.plate,
+            ansEnglish = "Tabağım için beklerim.",
+            opts = listOf("Tabağım için beklerim.", "Siparişim için beklerim.", "Çorbamı yemek isterim.")
+        ),
+
+        // 9. Soru: GÖRSEL (5) - BILL (Tekrar)
+        createVisual(
+            id = 9,
+            questionTurkish = "hesap",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "bill",
+            options = listOf("bill", "menu", "waiter")
+        ),
+        // 10. Soru: LISTENING (5) - WAITRESS + BRING + BILL KOMBO
+        createListening(
+            id = 10,
+            qTurkish = "The waitress brings the bill.",
+            res = R.drawable.waitress,
+            ansEnglish = "Kadın garson hesabı getirir.",
+            opts = listOf("Kadın garson hesabı getirir.", "Erkek garson menüyü getirir.", "Kadın garson çorbayı getirir.")
+        ),
+
+        // 11. Soru: GÖRSEL (6 - LİMİT 🛑) - RESTAURANT (Tekrar)
+        createVisual(
+            id = 11,
+            questionTurkish = "restoran",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "restaurant",
+            options = listOf("restaurant", "menu", "plate")
+        ),
+        // 12. Soru: LISTENING (6) - EAT + RESTAURANT GENEL TEKRAR
+        createListening(
+            id = 12,
+            qTurkish = "I eat in a restaurant.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bir restoranda yemek yerim.",
+            opts = listOf("Bir restoranda yemek yerim.", "Mutfakta yemek yerim.", "Burada siparişimi beklerim.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN SAF LISTENING ALANI (KARIŞIK ULTRA KOMBO)
+        // ========================================================
+
+        // 13. Soru: LISTENING - SADECE "waiter" TEKRAR
+        createListening(
+            id = 13,
+            qTurkish = "waiter",
+            res = R.drawable.cat_logo,
+            ansEnglish = "garson",
+            opts = listOf("garson", "menü", "sipariş")
+        ),
+
+        // 14. Soru: LISTENING - BRING + MENU TEKRAR
+        createListening(
+            id = 14,
+            qTurkish = "Bring the menu.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Menüyü getir.",
+            opts = listOf("Menüyü getir.", "Hesabı getir.", "Siparişimi getir.")
+        ),
+
+        // 15. Soru: LISTENING - WANT + EAT + SALAD KOMBO
+        createListening(
+            id = 15,
+            qTurkish = "I want to eat salad.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Salata yemek istiyorum.",
+            opts = listOf("Salata yemek istiyorum.", "Çorba içmek istiyorum.", "Sipariş vermek istiyorum.")
+        ),
+
+        // 16. Soru: LISTENING - CALL + WAITER + FOR BILL (Büyük Kapanış)
+        createListening(
+            id = 16,
+            qTurkish = "I call the waiter for the bill.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Hesap için garsonu çağırırım.",
+            opts = listOf("Hesap için garsonu çağırırım.", "Menü için garsonu çağırırım.", "Çorba için garsonu çağırırım.")
+        )
+    )
+}
+
+    fun getQuiz71(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (12. SORUYA KADAR - 6 GÖRSEL)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - SOUP
+        createVisual(
+            id = 1,
+            questionTurkish = "çorba",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "soup",
+            options = listOf("salad", "plate", "soup", "menu")
+        ),
+        // 2. Soru: LISTENING (1) - ORDER + SOUP KOMBO
+        createListening(
+            id = 2,
+            qTurkish = "I want to order soup.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Çorba sipariş etmek istiyorum.",
+            opts = listOf("Salata yemek istiyorum.", "Hesap istemek istiyorum.", "Çorba sipariş etmek istiyorum.", "Garsonu çağırmak istiyorum.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - SALAD
+        createVisual(
+            id = 3,
+            questionTurkish = "salata",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "salad",
+            options = listOf("salad", "soup", "menu", "bill")
+        ),
+        // 4. Soru: LISTENING (2) - WAITER + BRING + SALAD PEKİŞTİREÇ
+        createListening(
+            id = 4,
+            qTurkish = "The waiter brings my salad.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Garson salatamı getirir.",
+            opts = listOf("Garson salatamı getirir.", "Garson çorbamı içer.", "Garson hesabı getirir.", "Garson burada bekler.")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - GLASS
+        createVisual(
+            id = 5,
+            questionTurkish = "bardak",
+            imageRes = R.drawable.glass,
+            correctAnswer = "glass",
+            options = listOf("plate", "bill", "restaurant", "glass")
+        ),
+        // 6. Soru: LISTENING (3) - CALL + WAITER + GLASS KOMBO
+        createListening(
+            id = 6,
+            qTurkish = "I call the waiter for a glass.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bir bardak için garsonu çağırırım.",
+            opts = listOf("Hesap için garsonu çağırırım.", "Bir tabak için garsonu çağırırım.", "Sipariş için garsonu çağırırım.", "Bir bardak için garsonu çağırırım.")
+        ),
+
+        // 7. Soru: GÖRSEL (4) - PLATE
+        createVisual(
+            id = 7,
+            questionTurkish = "tabak",
+            imageRes = R.drawable.plate,
+            correctAnswer = "plate",
+            options = listOf("glass", "plate", "restaurant", "waiter")
+        ),
+        // 8. Soru: LISTENING (4) - WAIT + PLATE KOMBO
+        createListening(
+            id = 8,
+            qTurkish = "I wait for my plate.",
+            res = R.drawable.plate,
+            ansEnglish = "Tabağım için beklerim.",
+            opts = listOf("Siparişim için beklerim.", "Tabağım için beklerim.", "Çorbamı yemek isterim.", "Menüyü getirmek isterim.")
+        ),
+
+        // 9. Soru: GÖRSEL (5) - BILL
+        createVisual(
+            id = 9,
+            questionTurkish = "hesap",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "bill",
+            options = listOf("menu", "bill", "waiter", "glass")
+        ),
+        // 10. Soru: LISTENING (5) - WAITRESS + BRING + BILL KOMBO
+        createListening(
+            id = 10,
+            qTurkish = "The waitress brings the bill.",
+            res = R.drawable.waitress,
+            ansEnglish = "Kadın garson hesabı getirir.",
+            opts = listOf("Erkek garson menüyü getirir.", "Kadın garson çorbayı getirir.", "Kadın garson hesabı getirir.", "Erkek garson siparişi getirir.")
+        ),
+
+        // 11. Soru: GÖRSEL (6) - RESTAURANT
+        createVisual(
+            id = 11,
+            questionTurkish = "restoran",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "restaurant",
+            options = listOf("restaurant", "menu", "plate", "salad")
+        ),
+        // 12. Soru: LISTENING (6) - EAT + RESTAURANT GENEL TEKRAR
+        createListening(
+            id = 12,
+            qTurkish = "I eat in a restaurant.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bir restoranda yemek yerim.",
+            opts = listOf("Bir restoranda yemek yerim.", "Mutfakta yemek yerim.", "Burada siparişimi beklerim.", "Garsona hesap öderim.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN 13-16 ARASI SAF LISTENING ALANI
+        // ========================================================
+
+        // 13. Soru: LISTENING - SADECE "waiter" TEKRAR
+        createListening(
+            id = 13,
+            qTurkish = "waiter",
+            res = R.drawable.cat_logo,
+            ansEnglish = "garson",
+            opts = listOf("menü", "sipariş", "hesap", "garson")
+        ),
+
+        // 14. Soru: LISTENING - BRING + MENU TEKRAR
+        createListening(
+            id = 14,
+            qTurkish = "Bring the menu.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Menüyü getir.",
+            opts = listOf("Hesabı getir.", "Menüyü getir.", "Siparişimi getir.", "Tabağı getir.")
+        ),
+
+        // 15. Soru: LISTENING - WANT + EAT + SALAD KOMBO
+        createListening(
+            id = 15,
+            qTurkish = "I want to eat salad.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Salata yemek istiyorum.",
+            opts = listOf("Çorba içmek istiyorum.", "Sipariş vermek istiyorum.", "Salata yemek istiyorum.", "Hesap ödemek istiyorum.")
+        ),
+
+        // 16. Soru: LISTENING - CALL + WAITER + FOR BILL (Büyük Kapanış)
+        createListening(
+            id = 16,
+            qTurkish = "I call the waiter for the bill.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Hesap için garsonu çağırırım.",
+            opts = listOf("Hesap için garsonu çağırırım.", "Menü için garsonu çağırırım.", "Çorba için garsonu çağırırım.", "Sipariş için garsonu çağırırım.")
+        )
+    )
+}
+
+    fun getQuiz72(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        // ========================================================
+        // YENİ KELİMELER:
+        // sandwich, pizza, burger, rice, egg
+        // ========================================================
+
+        // 1. GÖRSEL - SANDWICH
+        createVisual(
+            id = 1,
+            questionTurkish = "sandviç",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "sandwich",
+            options = listOf("pizza", "burger", "sandwich", "rice")
+        ),
+
+        // 2. LISTENING - SANDWICH
+        createListening(
+            id = 2,
+            qTurkish = "I want a sandwich.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bir sandviç istiyorum.",
+            opts = listOf(
+                "Bir bardak istiyorum.",
+                "Bir sandviç istiyorum.",
+                "Bir pizza istiyorum."
+            )
+        ),
+
+        // 3. GÖRSEL - PIZZA
+        createVisual(
+            id = 3,
+            questionTurkish = "pizza",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pizza",
+            options = listOf("egg", "burger", "salad", "pizza")
+        ),
+
+        // 4. LISTENING - PIZZA
+        createListening(
+            id = 4,
+            qTurkish = "The waiter brings pizza.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Garson pizza getirir.",
+            opts = listOf(
+                "Garson pizza getirir.",
+                "Garson su içer.",
+                "Garson hesabı getirir."
+            )
+        ),
+
+        // 5. GÖRSEL - BURGER
+        createVisual(
+            id = 5,
+            questionTurkish = "burger",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "burger",
+            options = listOf("plate", "burger", "egg", "rice")
+        ),
+
+        // 6. LISTENING - BURGER
+        createListening(
+            id = 6,
+            qTurkish = "I eat a burger.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bir burger yerim.",
+            opts = listOf(
+                "Bir çorba içerim.",
+                "Bir menü isterim.",
+                "Bir burger yerim."
+            )
+        ),
+
+        // 7. GÖRSEL - RICE
+        createVisual(
+            id = 7,
+            questionTurkish = "pirinç / pilav",
+            imageRes = R.drawable.rice,
+            correctAnswer = "rice",
+            options = listOf("glass", "rice", "sandwich", "pizza")
+        ),
+
+        // 8. LISTENING - RICE
+        createListening(
+            id = 8,
+            qTurkish = "She wants rice.",
+            res = R.drawable.rice,
+            ansEnglish = "O pilav istiyor.",
+            opts = listOf(
+                "O hesabı istiyor.",
+                "O pizza istiyor.",
+                "O pilav istiyor."
+            )
+        ),
+
+        // 9. GÖRSEL - EGG
+        createVisual(
+            id = 9,
+            questionTurkish = "yumurta",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "egg",
+            options = listOf("tea", "burger", "egg", "plate")
+        ),
+
+        // 10. LISTENING - EGG
+        createListening(
+            id = 10,
+            qTurkish = "Bring me an egg.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bana bir yumurta getir.",
+            opts = listOf(
+                "Bana bir bardak getir.",
+                "Bana bir yumurta getir.",
+                "Bana bir menü getir."
+            )
+        ),
+
+        // ========================================================
+        // 11-15 KARMA PEKİŞTİRME
+        // ========================================================
+
+        // 11
+        createListening(
+            id = 11,
+            qTurkish = "I eat rice and salad.",
+            res = R.drawable.rice,
+            ansEnglish = "Pilav ve salata yerim.",
+            opts = listOf(
+                "Garsonu çağırırım.",
+                "Pilav ve salata yerim.",
+                "Çorba ve pizza içerim."
+            )
+        ),
+
+        // 12
+        createListening(
+            id = 12,
+            qTurkish = "The waitress brings a burger and water.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kadın garson burger ve su getirir.",
+            opts = listOf(
+                "Kadın garson menüyü bekler.",
+                "Kadın garson burger ve su getirir.",
+                "Kadın garson hesap getirir."
+            )
+        ),
+
+        // 13
+        createListening(
+            id = 13,
+            qTurkish = "I want pizza and tea.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Pizza ve çay istiyorum.",
+            opts = listOf(
+                "Burger ve su istiyorum.",
+                "Pizza ve çay istiyorum.",
+                "Sandviç ve çorba istiyorum."
+            )
+        ),
+
+        // 14
+        createListening(
+            id = 14,
+            qTurkish = "Call the waiter for a sandwich.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Sandviç için garsonu çağır.",
+            opts = listOf(
+                "Su için garsonu çağır.",
+                "Hesap için garsonu çağır.",
+                "Sandviç için garsonu çağır."
+            )
+        ),
+
+        // 15
+        createListening(
+            id = 15,
+            qTurkish = "I eat eggs in the restaurant.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Restoranda yumurta yerim.",
+            opts = listOf(
+                "Restoranda pizza yerim.",
+                "Restoranda yumurta yerim.",
+                "Restoranda çay içerim."
+            )
+        ),
+
+        // ========================================================
+        // MATCHING FİNALİ
+        // ========================================================
+
+        createMatching(
+            id = 16,
+            questionText = "Yemekler ve Restoran Finali",
+            image = R.drawable.cat_logo,
+            pairs = "sandwich,pizza,burger,rice,egg",
+            turkishOptions = listOf(
+                "sandviç",
+                "pizza",
+                "burger",
+                "pilav",
+                "yumurta"
+            )
+        )
+    )
+}
+
+    fun getQuiz73(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        // ========================================================
+        // YENİ FİİLLER:
+        // serve, cook, taste
+        // ESKİ YEMEK KELİMELERİYLE PEKİŞTİRME
+        // ========================================================
+
+        // 1. GÖRSEL - SERVE
+        createVisual(
+            id = 1,
+            questionTurkish = "servis etmek",
+            imageRes = R.drawable.serve,
+            correctAnswer = "serve",
+            options = listOf("cook", "pay", "serve", "taste")
+        ),
+
+        // 2. LISTENING - SERVE + SOUP
+        createListening(
+            id = 2,
+            qTurkish = "The waiter serves soup.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Garson çorba servis eder.",
+            opts = listOf(
+                "Garson hesabı öder.",
+                "Garson çorba servis eder.",
+                "Garson menüyü bekler."
+            )
+        ),
+
+        // 3. GÖRSEL - COOK
+        createVisual(
+            id = 3,
+            questionTurkish = "pişirmek",
+            imageRes = R.drawable.cook,
+            correctAnswer = "cook",
+            options = listOf("taste", "cook", "order", "serve")
+        ),
+
+        // 4. LISTENING - COOK + RICE
+        createListening(
+            id = 4,
+            qTurkish = "I cook rice.",
+            res = R.drawable.rice,
+            ansEnglish = "Pilav pişiririm.",
+            opts = listOf(
+                "Pizza sipariş ederim.",
+                "Pilav pişiririm.",
+                "Garsonu çağırırım."
+            )
+        ),
+
+        // 5. GÖRSEL - TASTE
+        createVisual(
+            id = 5,
+            questionTurkish = "tadına bakmak",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "taste",
+            options = listOf("serve", "cook", "taste", "drink")
+        ),
+
+        // 6. LISTENING - TASTE + SOUP
+        createListening(
+            id = 6,
+            qTurkish = "Taste the soup.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Çorbanın tadına bak.",
+            opts = listOf(
+                "Çorbayı servis et.",
+                "Çorbanın tadına bak.",
+                "Çorbayı sipariş et."
+            )
+        ),
+
+        // 7. GÖRSEL - PIZZA
+        createVisual(
+            id = 7,
+            questionTurkish = "pizza",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pizza",
+            options = listOf("burger", "pizza", "sandwich", "egg")
+        ),
+
+        // 8. LISTENING - COOK + PIZZA
+        createListening(
+            id = 8,
+            qTurkish = "They cook pizza.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Pizza pişirirler.",
+            opts = listOf(
+                "Pizza pişirirler.",
+                "Burger servis ederler.",
+                "Çay içerler."
+            )
+        ),
+
+        // 9. GÖRSEL - BURGER
+        createVisual(
+            id = 9,
+            questionTurkish = "burger",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "burger",
+            options = listOf("burger", "rice", "plate", "glass")
+        ),
+
+        // 10. LISTENING - SERVE + BURGER
+        createListening(
+            id = 10,
+            qTurkish = "The waitress serves burgers.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kadın garson burger servis eder.",
+            opts = listOf(
+                "Kadın garson su getirir.",
+                "Kadın garson hesabı ister.",
+                "Kadın garson burger servis eder."
+            )
+        ),
+
+        // ========================================================
+        // 11-15 KARMA PEKİŞTİRME
+        // ========================================================
+
+        // 11
+        createListening(
+            id = 11,
+            qTurkish = "I order pizza and tea.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Pizza ve çay sipariş ederim.",
+            opts = listOf(
+                "Pizza ve çay sipariş ederim.",
+                "Burger ve su pişiririm.",
+                "Garsonu beklerim."
+            )
+        ),
+
+        // 12
+        createListening(
+            id = 12,
+            qTurkish = "Taste the sandwich.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Sandviçin tadına bak.",
+            opts = listOf(
+                "Sandviçi servis et.",
+                "Sandviçi pişir.",
+                "Sandviçin tadına bak."
+            )
+        ),
+
+        // 13
+        createListening(
+            id = 13,
+            qTurkish = "The waiter serves rice and soup.",
+            res = R.drawable.rice,
+            ansEnglish = "Garson pilav ve çorba servis eder.",
+            opts = listOf(
+                "Garson pilav ve çorba servis eder.",
+                "Garson hesabı öder.",
+                "Garson çayı içer."
+            )
+        ),
+
+        // 14
+        createListening(
+            id = 14,
+            qTurkish = "I cook eggs in the kitchen.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Mutfakta yumurta pişiririm.",
+            opts = listOf(
+                "Restoranda pizza yerim.",
+                "Mutfakta yumurta pişiririm.",
+                "Garsonu çağırırım."
+            )
+        ),
+
+        // 15
+        createListening(
+            id = 15,
+            qTurkish = "Taste the burger and the soup.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Burgerin ve çorbanın tadına bak.",
+            opts = listOf(
+                "Burgeri ve çayı servis et.",
+                "Burgerin ve çorbanın tadına bak.",
+                "Burger ve pilav sipariş et."
+            )
+        ),
+
+        // ========================================================
+        // MATCHING FİNALİ
+        // ========================================================
+
+        createMatching(
+            id = 16,
+            questionText = "Restaurant Actions Finali",
+            image = R.drawable.cat_logo,
+            pairs = "serve,cook,taste,pizza,burger",
+            turkishOptions = listOf(
+                "servis etmek",
+                "pişirmek",
+                "tadına bakmak",
+                "pizza",
+                "burger"
+            )
+        )
+    )
+}
+
+    fun getQuiz74(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        // ========================================================
+        // YENİ KELİMELER:
+        // chef, cola, soda
+        // ESKİ KELİMELERLE PEKİŞTİRME
+        // ========================================================
+
+        // 1. GÖRSEL - CHEF
+        createVisual(
+            id = 1,
+            questionTurkish = "şef / aşçı",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "chef",
+            options = listOf("waiter", "chef", "customer", "teacher")
+        ),
+
+        // 2. LISTENING - CHEF + COOK
+        createListening(
+            id = 2,
+            qTurkish = "The chef cooks rice.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Şef pilav pişirir.",
+            opts = listOf(
+                "Garson çorba servis eder.",
+                "Şef pilav pişirir.",
+                "Kadın garson hesabı getirir."
+            )
+        ),
+
+        // 3. GÖRSEL - COLA
+        createVisual(
+            id = 3,
+            questionTurkish = "kola",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "cola",
+            options = listOf("water", "tea", "cola", "juice")
+        ),
+
+        // 4. LISTENING - COLA
+        createListening(
+            id = 4,
+            qTurkish = "I drink cola.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kola içerim.",
+            opts = listOf(
+                "Çorba yerim.",
+                "Kola içerim.",
+                "Garsonu çağırırım."
+            )
+        ),
+
+        // 5. GÖRSEL - SODA
+        createVisual(
+            id = 5,
+            questionTurkish = "soda",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "soda",
+            options = listOf("milk", "soda", "tea", "coffee")
+        ),
+
+        // 6. LISTENING - SODA
+        createListening(
+            id = 6,
+            qTurkish = "Bring me some soda.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bana biraz soda getir.",
+            opts = listOf(
+                "Bana biraz soda getir.",
+                "Bana hesabı getir.",
+                "Bana menüyü getir."
+            )
+        ),
+
+        // 7. GÖRSEL - PIZZA
+        createVisual(
+            id = 7,
+            questionTurkish = "pizza",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pizza",
+            options = listOf("burger", "sandwich", "pizza", "egg")
+        ),
+
+        // 8. LISTENING - CHEF + PIZZA
+        createListening(
+            id = 8,
+            qTurkish = "The chef cooks pizza.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Şef pizza pişirir.",
+            opts = listOf(
+                "Şef pizza pişirir.",
+                "Garson pizza taşır.",
+                "Müşteri çorba içer."
+            )
+        ),
+
+        // 9. GÖRSEL - BURGER
+        createVisual(
+            id = 9,
+            questionTurkish = "burger",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "burger",
+            options = listOf("burger", "rice", "glass", "plate")
+        ),
+
+        // 10. LISTENING - BURGER + COLA
+        createListening(
+            id = 10,
+            qTurkish = "I eat a burger and drink cola.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Burger yerim ve kola içerim.",
+            opts = listOf(
+                "Pizza yerim ve çay içerim.",
+                "Burger yerim ve kola içerim.",
+                "Garsonu çağırır ve beklerim."
+            )
+        ),
+
+        // ========================================================
+        // 11-15 KARMA PEKİŞTİRME
+        // ========================================================
+
+        // 11
+        createListening(
+            id = 11,
+            qTurkish = "The waiter serves soda.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Garson soda servis eder.",
+            opts = listOf(
+                "Garson soda servis eder.",
+                "Şef pizza pişirir.",
+                "Müşteri hesabı öder."
+            )
+        ),
+
+        // 12
+        createListening(
+            id = 12,
+            qTurkish = "Taste the cola.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kolanın tadına bak.",
+            opts = listOf(
+                "Kolanın tadına bak.",
+                "Kolayı servis et.",
+                "Kolayı sipariş et."
+            )
+        ),
+
+        // 13
+        createListening(
+            id = 13,
+            qTurkish = "The chef serves soup.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Şef çorba servis eder.",
+            opts = listOf(
+                "Garson hesabı getirir.",
+                "Şef çorba servis eder.",
+                "Müşteri soda içer."
+            )
+        ),
+
+        // 14
+        createListening(
+            id = 14,
+            qTurkish = "I want pizza and soda.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Pizza ve soda istiyorum.",
+            opts = listOf(
+                "Burger ve çay istiyorum.",
+                "Pizza ve soda istiyorum.",
+                "Pilav ve su istiyorum."
+            )
+        ),
+
+        // 15
+        createListening(
+            id = 15,
+            qTurkish = "The chef cooks eggs and rice.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Şef yumurta ve pilav pişirir.",
+            opts = listOf(
+                "Garson çorba ve salata getirir.",
+                "Şef yumurta ve pilav pişirir.",
+                "Müşteri burger ve pizza yer."
+            )
+        ),
+
+        // ========================================================
+        // MATCHING FİNALİ
+        // ========================================================
+
+        createMatching(
+            id = 16,
+            questionText = "Restaurant Drinks & Chef Finali",
+            image = R.drawable.cat_logo,
+            pairs = "chef,cola,soda,pizza,burger",
+            turkishOptions = listOf(
+                "şef",
+                "kola",
+                "soda",
+                "pizza",
+                "burger"
+            )
+        )
+    )
+}
+
+    fun getQuiz75(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (12. SORUYA KADAR - 6 GÖRSEL)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - SERVE (Doğru Cevap: 4. Şık 🎲)
+        createVisual(
+            id = 1,
+            questionTurkish = "servis etmek",
+            imageRes = R.drawable.serve,
+            correctAnswer = "serve",
+            options = listOf("cook", "taste", "call", "serve")
+        ),
+        // 2. Soru: LISTENING (1) - CHEF + SERVE KOMBO (Doğru Cevap: 2. Şık 🎲)
+        createListening(
+            id = 2,
+            qTurkish = "The chef serves chicken and rice.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Şef tavuk ve pilav servis eder.",
+            opts = listOf("Garson çorba ve salata getirir.", "Şef tavuk ve pilav servis eder.", "Kadın garson pizza pişirir.", "Şef mutfakta hesabı bekler.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - COOK (Doğru Cevap: 1. Şık 🎲)
+        createVisual(
+            id = 3,
+            questionTurkish = "pişirmek",
+            imageRes = R.drawable.cook,
+            correctAnswer = "cook",
+            options = listOf("cook", "serve", "drink", "wait")
+        ),
+        // 4. Soru: LISTENING (2) - COOK + BURGER KOMBO (Doğru Cevap: 3. Şık 🎲)
+        createListening(
+            id = 4,
+            qTurkish = "They cook burgers in the kitchen.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Mutfakta burger pişirirler.",
+            opts = listOf("Restoranda pizza yerler.", "Mutfakta yumurta kaynatırlar.", "Mutfakta burger pişirirler.", "Garsona sipariş verirler.")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - TASTE (Doğru Cevap: 3. Şık 🎲)
+        createVisual(
+            id = 5,
+            questionTurkish = "tadına bakmak",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "taste",
+            options = listOf("bring", "order", "taste", "eat")
+        ),
+        // 6. Soru: LISTENING (3) - TASTE + SOUP PEKİŞTİREÇ (Doğru Cevap: 1. Şık 🎲)
+        createListening(
+            id = 6,
+            qTurkish = "The customer tastes the soup.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Müşteri çorbanın tadına bakar.",
+            opts = listOf("Müşteri çorbanın tadına bakar.", "Garson çorbayı servis eder.", "Şef çorbayı mutfakta pişirir.", "Müşteri çorba sipariş etmek ister.")
+        ),
+
+        // 7. Soru: GÖRSEL (4) - CHEF (Doğru Cevap: 2. Şık 🎲)
+        createVisual(
+            id = 7,
+            questionTurkish = "şef / aşçı",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "chef",
+            options = listOf("waiter", "chef", "waitress", "customer")
+        ),
+        // 8. Soru: LISTENING (4) - CHEF + PIZZA KOMBO (Doğru Cevap: 4. Şık 🎲)
+        createListening(
+            id = 8,
+            qTurkish = "The chef cooks pizza.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Şef pizza pişirir.",
+            opts = listOf("Garson pizza servis eder.", "Müşteri pizza sipariş eder.", "Şef salata hazırlar.", "Şef pizza pişirir.")
+        ),
+
+        // 9. Soru: GÖRSEL (5) - COLA (Doğru Cevap: 3. Şık 🎲)
+        createVisual(
+            id = 9,
+            questionTurkish = "kola",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "cola",
+            options = listOf("water", "soda", "cola", "glass")
+        ),
+        // 10. Soru: LISTENING (5) - EAT + DRINK ULTRA KOMBO (Doğru Cevap: 2. Şık 🎲)
+        createListening(
+            id = 10,
+            qTurkish = "I eat a burger and drink cola.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Burger yerim ve kola içerim.",
+            opts = listOf("Pizza yerim ve soda içerim.", "Burger yerim ve kola içerim.", "Sandviç yerim ve su içerim.", "Pilav yerim ve çay içerim.")
+        ),
+
+        // 11. Soru: GÖRSEL (6 - LİMİT 🛑) - SODA (Doğru Cevap: 1. Şık 🎲)
+        createVisual(
+            id = 11,
+            questionTurkish = "soda",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "soda",
+            options = listOf("soda", "cola", "water", "soup")
+        ),
+        // 12. Soru: LISTENING (6) - WAITRESS + SERVE + SODA (Doğru Cevap: 4. Şık 🎲)
+        createListening(
+            id = 12,
+            qTurkish = "The waitress serves soda.",
+            res = R.drawable.waitress,
+            ansEnglish = "Kadın garson soda servis eder.",
+            opts = listOf("Erkek garson su getirir.", "Şef mutfakta soda içer.", "Kadın garson hesabı getirir.", "Kadın garson soda servis eder.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN 13-15 ARASI SAF LISTENING ALANI
+        // ========================================================
+
+        // 13. Soru: LISTENING - ORDER + MEAT AND RICE (Doğru Cevap: 2. Şık 🎲)
+        createListening(
+            id = 13,
+            qTurkish = "I want to order meat and rice.",
+            res = R.drawable.meat,
+            ansEnglish = "Et ve pilav sipariş etmek istiyorum.",
+            opts = listOf("Tavuk ve salata yemek istiyorum.", "Et ve pilav sipariş etmek istiyorum.", "Çorba ve ekmek getirmek istiyorum.", "Hesap ödemek ve gitmek istiyorum.")
+        ),
+
+        // 14. Soru: LISTENING - CALL + WAITER + BILL (Doğru Cevap: 3. Şık 🎲)
+        createListening(
+            id = 14,
+            qTurkish = "Call the waiter for the bill.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Hesap için garsonu çağır.",
+            opts = listOf("Menü için garsonu bekle.", "Sipariş için şefi çağır.", "Hesap için garsonu çağ.", "Bir bardak su için garsonu çağır.")
+        ),
+
+        // 15. Soru: LISTENING - TASTE + SALT + PEKİŞTİREÇ (Doğru Cevap: 1. Şık 🎲)
+        createListening(
+            id = 15,
+            qTurkish = "Taste the salt in the soup.",
+            res = R.drawable.salt,
+            ansEnglish = "Çorbadaki tuzun tadına bak.",
+            opts = listOf("Çorbadaki tuzun tadına bak.", "Salataya biraz tuz at.", "Masaya tuzu ve tabağı getir.", "Çorbayı ve pilavı pişir.")
+        ),
+
+        // ========================================================
+        // 16. Soru: MATCHING FİNALİ (ÜNİTE KAPANIŞI)
+        // ========================================================
+        createMatching(
+            id = 16,
+            questionText = "Restoran ve Mutfak Devasa Kapanış Finali",
+            image = R.drawable.cat_logo,
+            pairs = "serve,cook,taste,chef,soda",
+            turkishOptions = listOf(
+                "servis etmek",
+                "pişirmek",
+                "tadına bakmak",
+                "şef",
+                "soda"
+            )
+        )
+    )
+}
+
+    fun getQuiz76(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+        // ========================================================
+        // 1 GÖRSEL 1 LISTENING ARDIŞIK AKIŞI (12. SORUYA KADAR)
+        // ========================================================
+
+        // 1. Soru: GÖRSEL (1) - SALT (Doğru Cevap: 3. Şık 🎲)
+        createVisual(
+            id = 1,
+            questionTurkish = "tuz",
+            imageRes = R.drawable.salt,
+            correctAnswer = "salt",
+            options = listOf("soup", "salad", "salt", "plate")
+        ),
+        // 2. Soru: LISTENING (1) - BRING + SALT KOMBO (Doğru Cevap: 1. Şık 🎲)
+        createListening(
+            id = 2,
+            qTurkish = "The waiter brings salt.",
+            res = R.drawable.salt,
+            ansEnglish = "Garson tuz getirir.",
+            opts = listOf("Garson tuz getirir.", "Garson menüyü getirir.", "Kadın garson hesabı getirir.", "Garson bir bardak getirir.")
+        ),
+
+        // 3. Soru: GÖRSEL (2) - BREAD (Doğru Cevap: 4. Şık 🎲)
+        createVisual(
+            id = 3,
+            questionTurkish = "ekmek",
+            imageRes = R.drawable.bread,
+            correctAnswer = "bread",
+            options = listOf("menu", "bill", "glass", "bread")
+        ),
+        // 4. Soru: LISTENING (2) - EAT + BREAD + SOUP KOMBO (Doğru Cevap: 2. Şık 🎲)
+        createListening(
+            id = 4,
+            qTurkish = "I eat bread and soup.",
+            res = R.drawable.bread,
+            ansEnglish = "Ekmek ve çorba yerim.",
+            opts = listOf("Salata ve et yerim.", "Ekmek ve çorba yerim.", "Garsonu çağırırım ve beklerim.", "Sıcak bir çorba isterim.")
+        ),
+
+        // 5. Soru: GÖRSEL (3) - CHICKEN (Doğru Cevap: 2. Şık 🎲)
+        createVisual(
+            id = 5,
+            questionTurkish = "tavuk",
+            imageRes = R.drawable.chicken,
+            correctAnswer = "chicken",
+            options = listOf("salad", "chicken", "soup", "restaurant")
+        ),
+        // 6. Soru: LISTENING (3) - WANT + ORDER + CHICKEN (Doğru Cevap: 4. Şık 🎲)
+        createListening(
+            id = 6,
+            qTurkish = "I want to order chicken.",
+            res = R.drawable.chicken,
+            ansEnglish = "Tavuk sipariş etmek istiyorum.",
+            opts = listOf("Sıcak çorba yemek istiyorum.", "Hesap ödemek istiyorum.", "Temiz bir tabak istiyorum.", "Tavuk sipariş etmek istiyorum.")
+        ),
+
+        // 7. Soru: GÖRSEL (4) - PAY (Doğru Cevap: 1. Şık 🎲)
+        createVisual(
+            id = 7,
+            questionTurkish = "ödemek",
+            imageRes = R.drawable.pay,
+            correctAnswer = "pay",
+            options = listOf("pay", "wait", "bring", "call")
+        ),
+        // 8. Soru: LISTENING (4) - PAY + BILL EN KRİTİK REEL KALIP (Doğru Cevap: 3. Şık 🎲)
+        createListening(
+            id = 8,
+            qTurkish = "I pay the bill.",
+            res = R.drawable.pay,
+            ansEnglish = "Hesabı öderim.",
+            opts = listOf("Menüyü isterim.", "Siparişimi beklerim.", "Hesabı öderim.", "Garsonu çağırırım.")
+        ),
+
+        // 9. Soru: GÖRSEL (5) - SALT (Tekrar) (Doğru Cevap: 2. Şık 🎲)
+        createVisual(
+            id = 9,
+            questionTurkish = "tuz",
+            imageRes = R.drawable.salt,
+            correctAnswer = "salt",
+            options = listOf("bread", "salt", "chicken", "glass")
+        ),
+        // 10. Soru: LISTENING (5) - WANT + SALT SARMAL (Doğru Cevap: 4. Şık 🎲)
+        createListening(
+            id = 10,
+            qTurkish = "I want some salt for my soup.",
+            res = R.drawable.salt,
+            ansEnglish = "Çorbam için biraz tuz istiyorum.",
+            opts = listOf("Salatam için tabak istiyorum.", "Hesap getirmesini istiyorum.", "Ekmek satın almak istiyorum.", "Çorbam için biraz tuz istiyorum.")
+        ),
+
+        // 11. Soru: GÖRSEL (6 - LİMİT 🛑) - BREAD (Tekrar) (Doğru Cevap: 1. Şık 🎲)
+        createVisual(
+            id = 11,
+            questionTurkish = "ekmek",
+            imageRes = R.drawable.bread,
+            correctAnswer = "bread",
+            options = listOf("bread", "chicken", "bill", "menu")
+        ),
+        // 12. Soru: LISTENING (6) - CUSTOMER + PAY PEKİŞTİREÇ (Doğru Cevap: 3. Şık 🎲)
+        createListening(
+            id = 12,
+            qTurkish = "The customer pays the bill.",
+            res = R.drawable.pay,
+            ansEnglish = "Müşteri hesabı öder.",
+            opts = listOf("Müşteri çorba ve salata yer.", "Garson hesabı getirir.", "Müşteri hesabı öder.", "Müşteri garsonu çağırır.")
+        ),
+
+        // ========================================================
+        // GÖRSEL LİMİTİ BİTTİĞİ İÇİN 13-15 ARASI SAF LISTENING ALANI
+        // ========================================================
+
+        // 13. Soru: LISTENING - EAT + CHICKEN AND BREAD ULTRA KOMBO (Doğru Cevap: 2. Şık 🎲)
+        createListening(
+            id = 13,
+            qTurkish = "They eat chicken and bread.",
+            res = R.drawable.chicken,
+            ansEnglish = "Tavuk ve ekmek yerler.",
+            opts = listOf("Çorba ve salata isterler.", "Tavuk ve ekmek yerler.", "Hesap ödeyip giderler.", "Garsonu burada beklerler.")
+        ),
+
+        // 14. Soru: LISTENING - WANT + PAY + BILL (Doğru Cevap: 4. Şık 🎲)
+        createListening(
+            id = 14,
+            qTurkish = "I want to pay the bill.",
+            res = R.drawable.pay,
+            ansEnglish = "Hesabı ödemek istiyorum.",
+            opts = listOf("Sipariş vermek istiyorum.", "Menüyü görmek istiyorum.", "Garsonu çağırmak istiyorum.", "Hesabı ödemek istiyorum.")
+        ),
+
+        // 15. Soru: LISTENING - BRING + BREAD PEKİŞTİREÇ (Doğru Cevap: 1. Şık 🎲)
+        createListening(
+            id = 15,
+            qTurkish = "Bring some bread, please.",
+            res = R.drawable.bread,
+            ansEnglish = "Lütfen biraz ekmek getir.",
+            opts = listOf("Lütfen biraz ekmek getir.", "Lütfen hesabı getir.", "Lütfen tuzu masaya koy.", "Lütfen menüyü bana ver.")
+        ),
+
+        // ========================================================
+        // 16. Soru: MATCHING FİNALİ
+        // ========================================================
+        createMatching(
+            id = 16,
+            questionText = "Salt, Bread & Chicken Finali",
+            image = R.drawable.cat_logo,
+            pairs = "salt,bread,chicken,pay,bill",
+            turkishOptions = listOf(
+                "tuz",
+                "ekmek",
+                "tavuk",
+                "ödemek",
+                "hesap"
+            )
+        )
+    )
+}
+
+    fun getQuiz77(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "tuz",
+            imageRes = R.drawable.salt,
+            correctAnswer = "salt",
+            options = listOf("chicken", "salt", "pay", "bread")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Add some salt.",
+            res = R.drawable.salt,
+            ansEnglish = "Biraz tuz ekle.",
+            opts = listOf(
+                "Tavuk ye.",
+                "Biraz tuz ekle.",
+                "Ekmek al.",
+                "Ödeme yap."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "ekmek",
+            imageRes = R.drawable.bread,
+            correctAnswer = "bread",
+            options = listOf("pay", "bread", "chicken", "salt")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I want bread.",
+            res = R.drawable.bread,
+            ansEnglish = "Ekmek istiyorum.",
+            opts = listOf(
+                "Tuz ekliyorum.",
+                "Tavuk istiyorum.",
+                "Ekmek istiyorum.",
+                "Ödeme yapıyorum."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "tavuk",
+            imageRes = R.drawable.chicken,
+            correctAnswer = "chicken",
+            options = listOf("bread", "pay", "chicken", "salt")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "This is chicken.",
+            res = R.drawable.chicken,
+            ansEnglish = "Bu tavuk.",
+            opts = listOf(
+                "Bu ekmek.",
+                "Bu tavuk.",
+                "Bu tuz.",
+                "Bu ödeme."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "ödemek",
+            imageRes = R.drawable.pay,
+            correctAnswer = "pay",
+            options = listOf("salt", "chicken", "bread", "pay")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Please pay now.",
+            res = R.drawable.pay,
+            ansEnglish = "Lütfen şimdi öde.",
+            opts = listOf(
+                "Lütfen tavuk ye.",
+                "Lütfen ekmek al.",
+                "Lütfen tuz ekle.",
+                "Lütfen şimdi öde."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "ekmek",
+            imageRes = R.drawable.bread,
+            correctAnswer = "bread",
+            options = listOf("chicken", "salt", "bread", "pay")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Bread is on the table.",
+            res = R.drawable.bread,
+            ansEnglish = "Ekmek masanın üzerinde.",
+            opts = listOf(
+                "Ekmek masanın üzerinde.",
+                "Tavuk masanın üzerinde.",
+                "Tuz masanın üzerinde.",
+                "Ödeme masanın üzerinde."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "tuz",
+            imageRes = R.drawable.salt,
+            correctAnswer = "salt",
+            options = listOf("pay", "bread", "salt", "chicken")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Put salt on bread.",
+            res = R.drawable.salt,
+            ansEnglish = "Ekmeğe tuz koy.",
+            opts = listOf(
+                "Tavuğa ekmek koy.",
+                "Ödeme yap.",
+                "Ekmeğe tuz koy.",
+                "Tuz ye."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I like chicken.",
+            res = R.drawable.chicken,
+            ansEnglish = "Tavuğu severim.",
+            opts = listOf(
+                "Ekmek isterim.",
+                "Tuzu severim.",
+                "Ödeme yaparım.",
+                "Tavuğu severim."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Pay for bread.",
+            res = R.drawable.pay,
+            ansEnglish = "Ekmek için ödeme yap.",
+            opts = listOf(
+                "Ekmek için ödeme yap.",
+                "Tavuğa tuz ekle.",
+                "Ekmek ye.",
+                "Tavuk al."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Add salt to chicken.",
+            res = R.drawable.chicken,
+            ansEnglish = "Tavuğa tuz ekle.",
+            opts = listOf(
+                "Ekmeğe tuz koy.",
+                "Tavuğa tuz ekle.",
+                "Ekmek için ödeme yap.",
+                "Tavuk ve ekmek ye."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Yemek Temelleri Finali",
+            image = R.drawable.cat_logo,
+            pairs = "salt,bread,chicken,pay",
+            turkishOptions = listOf("tuz", "ekmek", "tavuk", "ödemek")
+        )
+    )
+}
+
+    fun getQuiz78(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "tavuk",
+            imageRes = R.drawable.chicken,
+            correctAnswer = "chicken",
+            options = listOf("pay", "chicken", "salt", "bread")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Chicken is hot.",
+            res = R.drawable.chicken,
+            ansEnglish = "Tavuk sıcak.",
+            opts = listOf(
+                "Ekmek sıcak.",
+                "Tavuk sıcak.",
+                "Tuz sıcak.",
+                "Ödeme sıcak."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "ödemek",
+            imageRes = R.drawable.pay,
+            correctAnswer = "pay",
+            options = listOf("bread", "salt", "pay", "chicken")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I pay for chicken.",
+            res = R.drawable.pay,
+            ansEnglish = "Tavuk için ödeme yaparım.",
+            opts = listOf(
+                "Tavuk için ödeme yaparım.",
+                "Ekmeğe tuz eklerim.",
+                "Tavuk yerim.",
+                "Ekmek isterim."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "ekmek",
+            imageRes = R.drawable.bread,
+            correctAnswer = "bread",
+            options = listOf("salt", "bread", "chicken", "pay")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Take the bread.",
+            res = R.drawable.bread,
+            ansEnglish = "Ekmeği al.",
+            opts = listOf(
+                "Tuzu al.",
+                "Ödeme yap.",
+                "Ekmeği al.",
+                "Tavuğu al."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "tuz",
+            imageRes = R.drawable.salt,
+            correctAnswer = "salt",
+            options = listOf("chicken", "pay", "bread", "salt")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Salt is on the bread.",
+            res = R.drawable.salt,
+            ansEnglish = "Tuz ekmeğin üzerinde.",
+            opts = listOf(
+                "Tavuk ekmeğin üzerinde.",
+                "Tuz ekmeğin üzerinde.",
+                "Ödeme ekmeğin üzerinde.",
+                "Ekmek tavuğun üzerinde."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "tavuk",
+            imageRes = R.drawable.chicken,
+            correctAnswer = "chicken",
+            options = listOf("bread", "salt", "pay", "chicken")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I want chicken and bread.",
+            res = R.drawable.chicken,
+            ansEnglish = "Tavuk ve ekmek istiyorum.",
+            opts = listOf(
+                "Tuz ve ekmek istiyorum.",
+                "Ödeme yapmak istiyorum.",
+                "Tavuk ve ekmek istiyorum.",
+                "Ekmek ve tuz istiyorum."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "ödemek",
+            imageRes = R.drawable.pay,
+            correctAnswer = "pay",
+            options = listOf("pay", "chicken", "bread", "salt")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Please pay for bread.",
+            res = R.drawable.pay,
+            ansEnglish = "Lütfen ekmek için ödeme yap.",
+            opts = listOf(
+                "Lütfen tavuk ye.",
+                "Lütfen tuz ekle.",
+                "Lütfen ekmek için ödeme yap.",
+                "Lütfen ekmek al."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The bread is good.",
+            res = R.drawable.bread,
+            ansEnglish = "Ekmek iyi.",
+            opts = listOf(
+                "Tavuk iyi.",
+                "Ekmek iyi.",
+                "Tuz iyi.",
+                "Ödeme iyi."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "I put salt on chicken.",
+            res = R.drawable.salt,
+            ansEnglish = "Tavuğa tuz koyarım.",
+            opts = listOf(
+                "Ekmeğe tuz koyarım.",
+                "Tavuk için ödeme yaparım.",
+                "Ekmek alırım.",
+                "Tavuğa tuz koyarım."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Pay and take the bread.",
+            res = R.drawable.pay,
+            ansEnglish = "Öde ve ekmeği al.",
+            opts = listOf(
+                "Tavuk ye ve tuz ekle.",
+                "Öde ve ekmeği al.",
+                "Ekmeği al ve tavuk ye.",
+                "Tuzu al ve ödeme yap."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Yemek Temelleri Tekrar Finali",
+            image = R.drawable.cat_logo,
+            pairs = "chicken,pay,bread,salt",
+            turkishOptions = listOf("tavuk", "ödemek", "ekmek", "tuz")
+        )
+    )
+}
+
+    fun getQuiz79(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "sipariş vermek",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "order",
+            options = listOf("serve", "order", "cook", "eat")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I order chicken.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Tavuk sipariş ederim.",
+            opts = listOf(
+                "Ekmek yerim.",
+                "Tavuk sipariş ederim.",
+                "Tuz eklerim.",
+                "Ödeme yaparım."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "servis etmek",
+            imageRes = R.drawable.serve,
+            correctAnswer = "serve",
+            options = listOf("eat", "cook", "serve", "order")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I serve bread.",
+            res = R.drawable.serve,
+            ansEnglish = "Ekmek servis ederim.",
+            opts = listOf(
+                "Tavuk pişiririm.",
+                "Ekmek sipariş ederim.",
+                "Ekmek servis ederim.",
+                "Tuz koyarım."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "pişirmek",
+            imageRes = R.drawable.cook,
+            correctAnswer = "cook",
+            options = listOf("cook", "order", "eat", "serve")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "I cook chicken.",
+            res = R.drawable.cook,
+            ansEnglish = "Tavuk pişiririm.",
+            opts = listOf(
+                "Tavuk pişiririm.",
+                "Ekmek yerim.",
+                "Ödeme yaparım.",
+                "Tuz eklerim."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "yemek",
+            imageRes = R.drawable.eat,
+            correctAnswer = "eat",
+            options = listOf("order", "serve", "cook", "eat")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "I eat bread.",
+            res = R.drawable.eat,
+            ansEnglish = "Ekmek yerim.",
+            opts = listOf(
+                "Tavuk pişiririm.",
+                "Tuz eklerim.",
+                "Ekmek servis ederim.",
+                "Ekmek yerim."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "sipariş vermek",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "order",
+            options = listOf("cook", "eat", "order", "serve")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Please order bread.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Lütfen ekmek sipariş et.",
+            opts = listOf(
+                "Lütfen ekmek ye.",
+                "Lütfen tavuk pişir.",
+                "Lütfen ekmek sipariş et.",
+                "Lütfen tuz ekle."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "servis etmek",
+            imageRes = R.drawable.serve,
+            correctAnswer = "serve",
+            options = listOf("serve", "order", "eat", "cook")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Serve the chicken.",
+            res = R.drawable.serve,
+            ansEnglish = "Tavuğu servis et.",
+            opts = listOf(
+                "Tavuğu servis et.",
+                "Ekmeği ye.",
+                "Tuzu ekle.",
+                "Ödeme yap."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I order chicken and bread.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Tavuk ve ekmek sipariş ederim.",
+            opts = listOf(
+                "Tavuk ve ekmek yerim.",
+                "Tavuk ve ekmek sipariş ederim.",
+                "Tavuğa tuz eklerim.",
+                "Ekmek için ödeme yaparım."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Cook chicken with salt.",
+            res = R.drawable.cook,
+            ansEnglish = "Tavuğu tuzla pişir.",
+            opts = listOf(
+                "Ekmeği servis et.",
+                "Tavuk sipariş et.",
+                "Tavuğu tuzla pişir.",
+                "Ekmek için ödeme yap."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Eat bread and pay.",
+            res = R.drawable.eat,
+            ansEnglish = "Ekmek ye ve ödeme yap.",
+            opts = listOf(
+                "Tavuk pişir ve tuz ekle.",
+                "Ekmek ye ve ödeme yap.",
+                "Tavuk sipariş et.",
+                "Ekmeği servis et."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Restoran Fiilleri Finali",
+            image = R.drawable.cat_logo,
+            pairs = "order,serve,cook,eat",
+            turkishOptions = listOf("sipariş vermek", "servis etmek", "pişirmek", "yemek")
+        )
+    )
+}
+
+    fun getQuiz80(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "pişirmek",
+            imageRes = R.drawable.cook,
+            correctAnswer = "cook",
+            options = listOf("eat", "cook", "serve", "order")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The chicken is cooking.",
+            res = R.drawable.cook,
+            ansEnglish = "Tavuk pişiyor.",
+            opts = listOf(
+                "Ekmek servis ediliyor.",
+                "Tavuk pişiyor.",
+                "Tuz ekleniyor.",
+                "Ödeme yapılıyor."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "yemek",
+            imageRes = R.drawable.eat,
+            correctAnswer = "eat",
+            options = listOf("serve", "order", "eat", "cook")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I eat chicken.",
+            res = R.drawable.eat,
+            ansEnglish = "Tavuk yerim.",
+            opts = listOf(
+                "Tavuk sipariş ederim.",
+                "Ekmek servis ederim.",
+                "Tavuk yerim.",
+                "Tuz eklerim."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "sipariş vermek",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "order",
+            options = listOf("order", "cook", "serve", "eat")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Order chicken, please.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Lütfen tavuk sipariş et.",
+            opts = listOf(
+                "Lütfen tavuk sipariş et.",
+                "Lütfen ekmek ye.",
+                "Lütfen tuz ekle.",
+                "Lütfen ödeme yap."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "servis etmek",
+            imageRes = R.drawable.serve,
+            correctAnswer = "serve",
+            options = listOf("cook", "eat", "order", "serve")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Serve bread with chicken.",
+            res = R.drawable.serve,
+            ansEnglish = "Tavukla ekmek servis et.",
+            opts = listOf(
+                "Tavukla ekmek ye.",
+                "Tavuğa tuz ekle.",
+                "Tavukla ekmek servis et.",
+                "Ekmek için ödeme yap."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "yemek",
+            imageRes = R.drawable.eat,
+            correctAnswer = "eat",
+            options = listOf("order", "serve", "cook", "eat")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Eat the bread.",
+            res = R.drawable.eat,
+            ansEnglish = "Ekmeği ye.",
+            opts = listOf(
+                "Ekmeği sipariş et.",
+                "Ekmeği servis et.",
+                "Ekmeği pişir.",
+                "Ekmeği ye."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "pişirmek",
+            imageRes = R.drawable.cook,
+            correctAnswer = "cook",
+            options = listOf("serve", "cook", "order", "eat")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Cook chicken and add salt.",
+            res = R.drawable.cook,
+            ansEnglish = "Tavuk pişir ve tuz ekle.",
+            opts = listOf(
+                "Ekmek ye ve ödeme yap.",
+                "Tavuk pişir ve tuz ekle.",
+                "Tavuk sipariş et.",
+                "Ekmeği servis et."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I order bread and pay.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Ekmek sipariş ederim ve ödeme yaparım.",
+            opts = listOf(
+                "Tavuk pişiririm ve tuz eklerim.",
+                "Ekmek sipariş ederim ve ödeme yaparım.",
+                "Tavuk yerim ve ekmek servis ederim.",
+                "Tuz eklerim ve ekmek yerim."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Serve chicken and eat bread.",
+            res = R.drawable.serve,
+            ansEnglish = "Tavuk servis et ve ekmek ye.",
+            opts = listOf(
+                "Tavuk sipariş et ve ödeme yap.",
+                "Tavuğa tuz ekle ve pişir.",
+                "Tavuk servis et ve ekmek ye.",
+                "Ekmek pişir ve tavuk ye."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Pay, eat, and order bread.",
+            res = R.drawable.pay,
+            ansEnglish = "Öde, ye ve ekmek sipariş et.",
+            opts = listOf(
+                "Pişir, servis et ve tuz ekle.",
+                "Öde, ye ve ekmek sipariş et.",
+                "Tavuk ye ve tuz ekle.",
+                "Ekmek servis et ve tavuk pişir."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Restoran Fiilleri Tekrar Finali",
+            image = R.drawable.cat_logo,
+            pairs = "cook,eat,order,serve",
+            turkishOptions = listOf("pişirmek", "yemek", "sipariş vermek", "servis etmek")
+        )
+    )
+}
+
+    fun getQuiz81(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "tavuk",
+            imageRes = R.drawable.chicken,
+            correctAnswer = "chicken",
+            options = listOf("bread", "chicken", "salt", "pay")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I cook chicken.",
+            res = R.drawable.cook,
+            ansEnglish = "Tavuk pişiririm.",
+            opts = listOf(
+                "Ekmek yerim.",
+                "Tavuk pişiririm.",
+                "Tuz eklerim.",
+                "Ödeme yaparım."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "sipariş vermek",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "order",
+            options = listOf("serve", "eat", "order", "cook")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I order bread.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Ekmek sipariş ederim.",
+            opts = listOf(
+                "Ekmek servis ederim.",
+                "Tavuk pişiririm.",
+                "Ekmek sipariş ederim.",
+                "Tuz eklerim."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "ekmek",
+            imageRes = R.drawable.bread,
+            correctAnswer = "bread",
+            options = listOf("pay", "salt", "bread", "chicken")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Put salt on bread.",
+            res = R.drawable.salt,
+            ansEnglish = "Ekmeğe tuz koy.",
+            opts = listOf(
+                "Tavuk sipariş et.",
+                "Ekmeğe tuz koy.",
+                "Ekmek servis et.",
+                "Ödeme yap."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "servis etmek",
+            imageRes = R.drawable.serve,
+            correctAnswer = "serve",
+            options = listOf("cook", "serve", "order", "eat")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Serve the bread.",
+            res = R.drawable.serve,
+            ansEnglish = "Ekmeği servis et.",
+            opts = listOf(
+                "Ekmeği ye.",
+                "Tavuğu pişir.",
+                "Ekmeği servis et.",
+                "Tuz ekle."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "ödemek",
+            imageRes = R.drawable.pay,
+            correctAnswer = "pay",
+            options = listOf("salt", "chicken", "pay", "bread")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Pay for chicken.",
+            res = R.drawable.pay,
+            ansEnglish = "Tavuk için ödeme yap.",
+            opts = listOf(
+                "Tavuk için ödeme yap.",
+                "Ekmeğe tuz koy.",
+                "Tavuk pişir.",
+                "Ekmek sipariş et."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "pişirmek",
+            imageRes = R.drawable.cook,
+            correctAnswer = "cook",
+            options = listOf("eat", "order", "cook", "serve")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Cook chicken and eat bread.",
+            res = R.drawable.cook,
+            ansEnglish = "Tavuk pişir ve ekmek ye.",
+            opts = listOf(
+                "Ekmek servis et ve ödeme yap.",
+                "Tavuk sipariş et ve tuz ekle.",
+                "Tavuk pişir ve ekmek ye.",
+                "Ekmek ye ve servis et."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I order chicken and pay.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Tavuk sipariş ederim ve ödeme yaparım.",
+            opts = listOf(
+                "Tavuk servis ederim ve ekmek yerim.",
+                "Tavuk sipariş ederim ve ödeme yaparım.",
+                "Ekmek pişiririm ve tuz eklerim.",
+                "Tuz koyarım ve ekmek yerim."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Eat bread with chicken.",
+            res = R.drawable.eat,
+            ansEnglish = "Ekmeği tavukla ye.",
+            opts = listOf(
+                "Tavuğa tuz ekle.",
+                "Ekmek sipariş et.",
+                "Ödeme yap.",
+                "Ekmeği tavukla ye."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Serve chicken and bread.",
+            res = R.drawable.serve,
+            ansEnglish = "Tavuk ve ekmek servis et.",
+            opts = listOf(
+                "Tavuk ve ekmek servis et.",
+                "Tavuk pişir ve tuz ekle.",
+                "Ekmek ye ve ödeme yap.",
+                "Tavuk sipariş et."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Yemek ve Restoran Tekrar Finali",
+            image = R.drawable.cat_logo,
+            pairs = "chicken,bread,salt,pay,order",
+            turkishOptions = listOf("tavuk", "ekmek", "tuz", "ödemek", "sipariş vermek")
+        )
+    )
+}
+
+    fun getQuiz82(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "yemek",
+            imageRes = R.drawable.eat,
+            correctAnswer = "eat",
+            options = listOf("order", "eat", "serve", "cook")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I eat chicken.",
+            res = R.drawable.eat,
+            ansEnglish = "Tavuk yerim.",
+            opts = listOf(
+                "Ekmek sipariş ederim.",
+                "Tavuk yerim.",
+                "Tuz eklerim.",
+                "Ödeme yaparım."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "tuz",
+            imageRes = R.drawable.salt,
+            correctAnswer = "salt",
+            options = listOf("bread", "pay", "chicken", "salt")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Add salt to chicken.",
+            res = R.drawable.salt,
+            ansEnglish = "Tavuğa tuz ekle.",
+            opts = listOf(
+                "Ekmeği servis et.",
+                "Tavuğa tuz ekle.",
+                "Ekmek sipariş et.",
+                "Ödeme yap."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "pişirmek",
+            imageRes = R.drawable.cook,
+            correctAnswer = "cook",
+            options = listOf("serve", "cook", "eat", "order")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Cook bread.",
+            res = R.drawable.cook,
+            ansEnglish = "Ekmek pişir.",
+            opts = listOf(
+                "Ekmek ye.",
+                "Tavuk servis et.",
+                "Ekmek pişir.",
+                "Tuz ekle."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "ekmek",
+            imageRes = R.drawable.bread,
+            correctAnswer = "bread",
+            options = listOf("salt", "bread", "pay", "chicken")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "I want bread.",
+            res = R.drawable.bread,
+            ansEnglish = "Ekmek istiyorum.",
+            opts = listOf(
+                "Tavuk istiyorum.",
+                "Ekmek istiyorum.",
+                "Tuz ekliyorum.",
+                "Ödeme yapıyorum."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "servis etmek",
+            imageRes = R.drawable.serve,
+            correctAnswer = "serve",
+            options = listOf("cook", "order", "serve", "eat")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Serve chicken with bread.",
+            res = R.drawable.serve,
+            ansEnglish = "Tavuğu ekmekle servis et.",
+            opts = listOf(
+                "Tavuğu ekmekle servis et.",
+                "Ekmeğe tuz koy.",
+                "Tavuk sipariş et.",
+                "Ekmek için ödeme yap."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "sipariş vermek",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "order",
+            options = listOf("eat", "serve", "cook", "order")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Order bread and chicken.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Ekmek ve tavuk sipariş et.",
+            opts = listOf(
+                "Ekmek ve tavuk ye.",
+                "Tuz ve ekmek ekle.",
+                "Ekmek ve tavuk sipariş et.",
+                "Tavuk için ödeme yap."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Pay, order, and eat.",
+            res = R.drawable.pay,
+            ansEnglish = "Öde, sipariş ver ve ye.",
+            opts = listOf(
+                "Pişir, servis et ve tuz ekle.",
+                "Öde, sipariş ver ve ye.",
+                "Ekmek ye ve tavuk pişir.",
+                "Tuz ekle ve ödeme yap."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Cook chicken with salt.",
+            res = R.drawable.cook,
+            ansEnglish = "Tavuğu tuzla pişir.",
+            opts = listOf(
+                "Ekmeği tuzla ye.",
+                "Tavuğu servis et.",
+                "Ekmek sipariş et.",
+                "Tavuğu tuzla pişir."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Order bread and pay.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Ekmek sipariş et ve ödeme yap.",
+            opts = listOf(
+                "Ekmek servis et ve tavuk ye.",
+                "Tavuk pişir ve tuz ekle.",
+                "Ekmek sipariş et ve ödeme yap.",
+                "Tuz koy ve ekmek ye."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Restoran Karma Tekrar Finali",
+            image = R.drawable.cat_logo,
+            pairs = "eat,salt,cook,bread,serve",
+            turkishOptions = listOf("yemek", "tuz", "pişirmek", "ekmek", "servis etmek")
+        )
+    )
+}
+
+    fun getQuiz83(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "salata",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "salad",
+            options = listOf("rice", "salad", "bread", "chicken")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I eat salad.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Salata yerim.",
+            opts = listOf(
+                "Pilav yerim.",
+                "Salata yerim.",
+                "Tavuk pişiririm.",
+                "Ekmek sipariş ederim."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "pilav",
+            imageRes = R.drawable.rice,
+            correctAnswer = "rice",
+            options = listOf("salt", "chicken", "rice", "salad")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Rice is hot.",
+            res = R.drawable.rice,
+            ansEnglish = "Pilav sıcak.",
+            opts = listOf(
+                "Tavuk sıcak.",
+                "Tuz sıcak.",
+                "Pilav sıcak.",
+                "Salata sıcak."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "sipariş vermek",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "order",
+            options = listOf("cook", "order", "eat", "serve")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "I order rice.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Pilav sipariş ederim.",
+            opts = listOf(
+                "Salata yerim.",
+                "Pilav sipariş ederim.",
+                "Tuz eklerim.",
+                "Ekmek servis ederim."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "pişirmek",
+            imageRes = R.drawable.cook,
+            correctAnswer = "cook",
+            options = listOf("serve", "eat", "cook", "order")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Cook rice.",
+            res = R.drawable.cook,
+            ansEnglish = "Pilav pişir.",
+            opts = listOf(
+                "Salata ye.",
+                "Tavuk sipariş et.",
+                "Pilav pişir.",
+                "Ekmek servis et."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "ekmek",
+            imageRes = R.drawable.bread,
+            correctAnswer = "bread",
+            options = listOf("salad", "bread", "rice", "chicken")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Serve bread and salad.",
+            res = R.drawable.serve,
+            ansEnglish = "Ekmek ve salata servis et.",
+            opts = listOf(
+                "Pilav ve tavuk pişir.",
+                "Ekmek ve salata servis et.",
+                "Tuz ekle ve ödeme yap.",
+                "Salata ve pilav ye."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "ödemek",
+            imageRes = R.drawable.pay,
+            correctAnswer = "pay",
+            options = listOf("pay", "salt", "rice", "salad")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Pay for rice.",
+            res = R.drawable.pay,
+            ansEnglish = "Pilav için ödeme yap.",
+            opts = listOf(
+                "Pilav için ödeme yap.",
+                "Salata ye.",
+                "Tavuğa tuz ekle.",
+                "Ekmek sipariş et."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I eat chicken and rice.",
+            res = R.drawable.rice,
+            ansEnglish = "Tavuk ve pilav yerim.",
+            opts = listOf(
+                "Salata ve ekmek yerim.",
+                "Tavuk ve pilav yerim.",
+                "Pilav sipariş ederim.",
+                "Tuz eklerim."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Add salt to salad.",
+            res = R.drawable.salt,
+            ansEnglish = "Salataya tuz ekle.",
+            opts = listOf(
+                "Pilav pişir.",
+                "Tavuk servis et.",
+                "Salataya tuz ekle.",
+                "Ekmek için ödeme yap."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Order salad and pay.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Salata sipariş et ve ödeme yap.",
+            opts = listOf(
+                "Pilav pişir ve ye.",
+                "Salata sipariş et ve ödeme yap.",
+                "Tavuk servis et.",
+                "Ekmeğe tuz ekle."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Yemek Tekrar Finali",
+            image = R.drawable.cat_logo,
+            pairs = "salad,rice,order,cook,pay",
+            turkishOptions = listOf("salata", "pilav", "sipariş vermek", "pişirmek", "ödemek")
+        )
+    )
+}
+
+    fun getQuiz84(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "pilav",
+            imageRes = R.drawable.rice,
+            correctAnswer = "rice",
+            options = listOf("bread", "rice", "salad", "chicken")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I want rice.",
+            res = R.drawable.rice,
+            ansEnglish = "Pilav istiyorum.",
+            opts = listOf(
+                "Salata istiyorum.",
+                "Pilav istiyorum.",
+                "Tavuk pişiriyorum.",
+                "Ödeme yapıyorum."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "salata",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "salad",
+            options = listOf("salt", "chicken", "salad", "rice")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The salad is good.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Salata iyi.",
+            opts = listOf(
+                "Pilav iyi.",
+                "Tavuk iyi.",
+                "Salata iyi.",
+                "Ekmek iyi."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "yemek",
+            imageRes = R.drawable.eat,
+            correctAnswer = "eat",
+            options = listOf("serve", "eat", "order", "cook")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Eat rice with chicken.",
+            res = R.drawable.eat,
+            ansEnglish = "Pilavı tavukla ye.",
+            opts = listOf(
+                "Salataya tuz ekle.",
+                "Pilavı tavukla ye.",
+                "Ekmek sipariş et.",
+                "Tavuk pişir."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "servis etmek",
+            imageRes = R.drawable.serve,
+            correctAnswer = "serve",
+            options = listOf("cook", "serve", "eat", "order")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Serve rice and salad.",
+            res = R.drawable.serve,
+            ansEnglish = "Pilav ve salata servis et.",
+            opts = listOf(
+                "Pilav ve salata servis et.",
+                "Tavuk ve ekmek ye.",
+                "Tuz ekle ve ödeme yap.",
+                "Pilav sipariş et."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "tuz",
+            imageRes = R.drawable.salt,
+            correctAnswer = "salt",
+            options = listOf("salad", "salt", "rice", "bread")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Put salt on rice.",
+            res = R.drawable.salt,
+            ansEnglish = "Pilava tuz koy.",
+            opts = listOf(
+                "Salata sipariş et.",
+                "Pilava tuz koy.",
+                "Ekmek servis et.",
+                "Tavuk ye."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "tavuk",
+            imageRes = R.drawable.chicken,
+            correctAnswer = "chicken",
+            options = listOf("rice", "pay", "chicken", "salad")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Cook chicken and rice.",
+            res = R.drawable.cook,
+            ansEnglish = "Tavuk ve pilav pişir.",
+            opts = listOf(
+                "Salata ve ekmek servis et.",
+                "Pilava tuz koy.",
+                "Tavuk ve pilav pişir.",
+                "Ekmek için ödeme yap."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Order chicken, rice and salad.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Tavuk, pilav ve salata sipariş et.",
+            opts = listOf(
+                "Tavuk, pilav ve salata sipariş et.",
+                "Ekmek ye ve ödeme yap.",
+                "Pilav pişir ve tuz ekle.",
+                "Salata servis et."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Pay for chicken and rice.",
+            res = R.drawable.pay,
+            ansEnglish = "Tavuk ve pilav için ödeme yap.",
+            opts = listOf(
+                "Salata ve ekmek ye.",
+                "Tavuk ve pilav için ödeme yap.",
+                "Pilava tuz ekle.",
+                "Tavuk servis et."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Eat salad and bread.",
+            res = R.drawable.eat,
+            ansEnglish = "Salata ve ekmek ye.",
+            opts = listOf(
+                "Pilav ve tavuk pişir.",
+                "Tuz ekle ve ödeme yap.",
+                "Salata ve ekmek ye.",
+                "Tavuk sipariş et."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Yemek Karma Finali",
+            image = R.drawable.cat_logo,
+            pairs = "rice,salad,eat,serve,chicken",
+            turkishOptions = listOf("pilav", "salata", "yemek", "servis etmek", "tavuk")
+        )
+    )
+}
+
+    fun getQuiz85(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "kola",
+            imageRes = R.drawable.coke,
+            correctAnswer = "coke",
+            options = listOf("coke", "meat", "rice", "salad")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I drink coke.",
+            res = R.drawable.coke,
+            ansEnglish = "Kola içerim.",
+            opts = listOf(
+                "Et yerim.",
+                "Kola içerim.",
+                "Pilav pişiririm.",
+                "Salata sipariş ederim."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "et",
+            imageRes = R.drawable.meat,
+            correctAnswer = "meat",
+            options = listOf("bread", "meat", "chicken", "coke")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I eat meat.",
+            res = R.drawable.meat,
+            ansEnglish = "Et yerim.",
+            opts = listOf(
+                "Kola içerim.",
+                "Et yerim.",
+                "Ekmek sipariş ederim.",
+                "Tuz eklerim."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "kola",
+            imageRes = R.drawable.coke,
+            correctAnswer = "coke",
+            options = listOf("salad", "rice", "coke", "meat")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Order a coke.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bir kola sipariş et.",
+            opts = listOf(
+                "Bir et pişir.",
+                "Bir salata ye.",
+                "Bir kola sipariş et.",
+                "Bir pilav servis et."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "et",
+            imageRes = R.drawable.meat,
+            correctAnswer = "meat",
+            options = listOf("coke", "meat", "rice", "bread")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Cook the meat.",
+            res = R.drawable.cook,
+            ansEnglish = "Eti pişir.",
+            opts = listOf(
+                "Pilavı servis et.",
+                "Kolayı iç.",
+                "Eti pişir.",
+                "Salata sipariş et."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "sipariş vermek",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "order",
+            options = listOf("order", "serve", "cook", "eat")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I order meat and rice.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Et ve pilav sipariş ederim.",
+            opts = listOf(
+                "Et ve pilav sipariş ederim.",
+                "Et ve pilav yerim.",
+                "Salata servis ederim.",
+                "Kola içerim."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "yemek",
+            imageRes = R.drawable.eat,
+            correctAnswer = "eat",
+            options = listOf("serve", "eat", "order", "cook")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Eat meat with rice.",
+            res = R.drawable.eat,
+            ansEnglish = "Eti pilavla ye.",
+            opts = listOf(
+                "Pilava tuz koy.",
+                "Eti pilavla ye.",
+                "Kolayı sipariş et.",
+                "Salata servis et."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I drink coke and eat meat.",
+            res = R.drawable.coke,
+            ansEnglish = "Kola içerim ve et yerim.",
+            opts = listOf(
+                "Pilav yerim ve ödeme yaparım.",
+                "Kola içerim ve et yerim.",
+                "Salata sipariş ederim ve ekmek yerim.",
+                "Tavuk pişiririm ve kola içerim."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Serve meat and salad.",
+            res = R.drawable.serve,
+            ansEnglish = "Et ve salata servis et.",
+            opts = listOf(
+                "Et ve salata servis et.",
+                "Pilav pişir ve ye.",
+                "Kola sipariş et.",
+                "Ekmek için ödeme yap."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Pay for the coke.",
+            res = R.drawable.pay,
+            ansEnglish = "Kola için ödeme yap.",
+            opts = listOf(
+                "Eti pişir.",
+                "Salata sipariş et.",
+                "Kola için ödeme yap.",
+                "Pilav ye."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Et ve İçecek Finali",
+            image = R.drawable.cat_logo,
+            pairs = "coke,meat,order,eat,pay",
+            turkishOptions = listOf(
+                "kola",
+                "et",
+                "sipariş vermek",
+                "yemek",
+                "ödemek"
+            )
+        )
+    )
+}
+
+    fun getQuiz86(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "et",
+            imageRes = R.drawable.meat,
+            correctAnswer = "meat",
+            options = listOf("rice", "meat", "coke", "salad")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The meat is hot.",
+            res = R.drawable.meat,
+            ansEnglish = "Et sıcak.",
+            opts = listOf(
+                "Pilav sıcak.",
+                "Et sıcak.",
+                "Kola soğuk.",
+                "Salata iyi."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "kola",
+            imageRes = R.drawable.coke,
+            correctAnswer = "coke",
+            options = listOf("bread", "coke", "meat", "rice")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I want coke.",
+            res = R.drawable.coke,
+            ansEnglish = "Kola istiyorum.",
+            opts = listOf(
+                "Et istiyorum.",
+                "Pilav istiyorum.",
+                "Kola istiyorum.",
+                "Ekmek istiyorum."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "pişirmek",
+            imageRes = R.drawable.cook,
+            correctAnswer = "cook",
+            options = listOf("serve", "eat", "cook", "order")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Cook meat with salt.",
+            res = R.drawable.cook,
+            ansEnglish = "Eti tuzla pişir.",
+            opts = listOf(
+                "Pilavı servis et.",
+                "Eti tuzla pişir.",
+                "Kola sipariş et.",
+                "Salata ye."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "servis etmek",
+            imageRes = R.drawable.serve,
+            correctAnswer = "serve",
+            options = listOf("order", "serve", "cook", "eat")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Serve coke and meat.",
+            res = R.drawable.serve,
+            ansEnglish = "Kola ve et servis et.",
+            opts = listOf(
+                "Et ve pilav pişir.",
+                "Kola ve et servis et.",
+                "Ekmek sipariş et.",
+                "Salataya tuz ekle."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "kola",
+            imageRes = R.drawable.coke,
+            correctAnswer = "coke",
+            options = listOf("salad", "rice", "coke", "meat")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Order meat and coke.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Et ve kola sipariş et.",
+            opts = listOf(
+                "Et ve kola sipariş et.",
+                "Pilav ve salata ye.",
+                "Eti tuzla pişir.",
+                "Ekmek için ödeme yap."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "et",
+            imageRes = R.drawable.meat,
+            correctAnswer = "meat",
+            options = listOf("coke", "bread", "meat", "chicken")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Eat meat with bread.",
+            res = R.drawable.eat,
+            ansEnglish = "Eti ekmekle ye.",
+            opts = listOf(
+                "Kola iç.",
+                "Pilav sipariş et.",
+                "Eti ekmekle ye.",
+                "Tavuğu servis et."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Pay for meat and coke.",
+            res = R.drawable.pay,
+            ansEnglish = "Et ve kola için ödeme yap.",
+            opts = listOf(
+                "Salata ve pilav ye.",
+                "Et ve kola için ödeme yap.",
+                "Tavuk pişir ve tuz ekle.",
+                "Ekmek sipariş et."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "I eat rice with meat.",
+            res = R.drawable.rice,
+            ansEnglish = "Pilavı etle yerim.",
+            opts = listOf(
+                "Kolayı ekmekle içerim.",
+                "Eti tuzla pişiririm.",
+                "Pilavı etle yerim.",
+                "Salata sipariş ederim."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Drink coke and eat salad.",
+            res = R.drawable.coke,
+            ansEnglish = "Kola iç ve salata ye.",
+            opts = listOf(
+                "Et pişir ve ödeme yap.",
+                "Kola iç ve salata ye.",
+                "Pilav sipariş et.",
+                "Ekmek servis et."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Et ve Kola Tekrar Finali",
+            image = R.drawable.cat_logo,
+            pairs = "meat,coke,cook,serve,rice",
+            turkishOptions = listOf(
+                "et",
+                "kola",
+                "pişirmek",
+                "servis etmek",
+                "pilav"
+            )
+        )
+    )
+}
+
+    fun getQuiz87(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "kola",
+            imageRes = R.drawable.coke,
+            correctAnswer = "coke",
+            options = listOf("rice", "coke", "meat", "salad")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I drink coke.",
+            res = R.drawable.coke,
+            ansEnglish = "Kola içerim.",
+            opts = listOf(
+                "Et yerim.",
+                "Kola içerim.",
+                "Pilav pişiririm.",
+                "Salata sipariş ederim."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "et",
+            imageRes = R.drawable.meat,
+            correctAnswer = "meat",
+            options = listOf("salad", "rice", "meat", "coke")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Cook the meat.",
+            res = R.drawable.cook,
+            ansEnglish = "Eti pişir.",
+            opts = listOf(
+                "Kola iç.",
+                "Salata ye.",
+                "Eti pişir.",
+                "Pilav sipariş et."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "pilav",
+            imageRes = R.drawable.rice,
+            correctAnswer = "rice",
+            options = listOf("meat", "rice", "coke", "salad")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Eat rice with meat.",
+            res = R.drawable.rice,
+            ansEnglish = "Pilavı etle ye.",
+            opts = listOf(
+                "Kola iç.",
+                "Pilavı etle ye.",
+                "Salata servis et.",
+                "Ekmeğe tuz koy."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "salata",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "salad",
+            options = listOf("bread", "salad", "chicken", "salt")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Order salad and coke.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Salata ve kola sipariş et.",
+            opts = listOf(
+                "Et ve pilav pişir.",
+                "Salata ve kola sipariş et.",
+                "Tavuğa tuz ekle.",
+                "Ekmek için ödeme yap."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "müşteri",
+            imageRes = R.drawable.customer,
+            correctAnswer = "customer",
+            options = listOf("waitress", "customer", "cook", "serve")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The customer orders meat.",
+            res = R.drawable.customer,
+            ansEnglish = "Müşteri et sipariş eder.",
+            opts = listOf(
+                "Garson kız kola servis eder.",
+                "Müşteri et sipariş eder.",
+                "Şef tavuk pişirir.",
+                "Müşteri salata yer."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "garson kız",
+            imageRes = R.drawable.waitress,
+            correctAnswer = "waitress",
+            options = listOf("customer", "order", "waitress", "pay")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The waitress serves coke.",
+            res = R.drawable.waitress,
+            ansEnglish = "Garson kız kola servis eder.",
+            opts = listOf(
+                "Müşteri kola içer.",
+                "Garson kız kola servis eder.",
+                "Şef et pişirir.",
+                "Müşteri ödeme yapar."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Pay for meat and rice.",
+            res = R.drawable.pay,
+            ansEnglish = "Et ve pilav için ödeme yap.",
+            opts = listOf(
+                "Salata ve kola sipariş et.",
+                "Et ve pilav için ödeme yap.",
+                "Tavuk ve ekmek ye.",
+                "Pilava tuz koy."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Serve chicken, bread and salad.",
+            res = R.drawable.serve,
+            ansEnglish = "Tavuk, ekmek ve salata servis et.",
+            opts = listOf(
+                "Kola iç ve ödeme yap.",
+                "Et ve pilav pişir.",
+                "Tavuk, ekmek ve salata servis et.",
+                "Salata sipariş et."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The customer eats meat and drinks coke.",
+            res = R.drawable.customer,
+            ansEnglish = "Müşteri et yer ve kola içer.",
+            opts = listOf(
+                "Garson kız pilav servis eder.",
+                "Müşteri et yer ve kola içer.",
+                "Şef salata sipariş eder.",
+                "Müşteri ekmek pişirir."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Restoran Konusu Tekrar Finali",
+            image = R.drawable.cat_logo,
+            pairs = "coke,meat,rice,salad,customer",
+            turkishOptions = listOf("kola", "et", "pilav", "salata", "müşteri")
+        )
+    )
+}
+
+    fun getQuiz88(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "müşteri",
+            imageRes = R.drawable.customer,
+            correctAnswer = "customer",
+            options = listOf("waitress", "customer", "order", "serve")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The customer wants rice.",
+            res = R.drawable.customer,
+            ansEnglish = "Müşteri pilav istiyor.",
+            opts = listOf(
+                "Garson kız kola servis ediyor.",
+                "Müşteri pilav istiyor.",
+                "Şef et pişiriyor.",
+                "Müşteri tuz ekliyor."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "garson kız",
+            imageRes = R.drawable.waitress,
+            correctAnswer = "waitress",
+            options = listOf("customer", "pay", "waitress", "cook")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The waitress serves meat.",
+            res = R.drawable.waitress,
+            ansEnglish = "Garson kız et servis eder.",
+            opts = listOf(
+                "Müşteri et sipariş eder.",
+                "Şef pilav pişirir.",
+                "Garson kız et servis eder.",
+                "Müşteri kola içer."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "kola",
+            imageRes = R.drawable.coke,
+            correctAnswer = "coke",
+            options = listOf("meat", "salad", "coke", "rice")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Order coke and salad.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kola ve salata sipariş et.",
+            opts = listOf(
+                "Et ve pilav pişir.",
+                "Kola ve salata sipariş et.",
+                "Tavuk ve ekmek ye.",
+                "Tuz ekle ve ödeme yap."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "et",
+            imageRes = R.drawable.meat,
+            correctAnswer = "meat",
+            options = listOf("rice", "meat", "bread", "chicken")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Cook meat with salt.",
+            res = R.drawable.cook,
+            ansEnglish = "Eti tuzla pişir.",
+            opts = listOf(
+                "Ekmeği servis et.",
+                "Eti tuzla pişir.",
+                "Kola iç.",
+                "Salata sipariş et."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "servis etmek",
+            imageRes = R.drawable.serve,
+            correctAnswer = "serve",
+            options = listOf("order", "serve", "eat", "cook")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Serve rice and chicken.",
+            res = R.drawable.serve,
+            ansEnglish = "Pilav ve tavuk servis et.",
+            opts = listOf(
+                "Et ve kola sipariş et.",
+                "Pilav ve tavuk servis et.",
+                "Ekmek ye ve ödeme yap.",
+                "Salataya tuz ekle."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "ödemek",
+            imageRes = R.drawable.pay,
+            correctAnswer = "pay",
+            options = listOf("salt", "pay", "bread", "chicken")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The customer pays for coke.",
+            res = R.drawable.pay,
+            ansEnglish = "Müşteri kola için ödeme yapar.",
+            opts = listOf(
+                "Garson kız kola servis eder.",
+                "Müşteri kola için ödeme yapar.",
+                "Şef et pişirir.",
+                "Müşteri pilav yer."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Eat meat, rice and salad.",
+            res = R.drawable.eat,
+            ansEnglish = "Et, pilav ve salata ye.",
+            opts = listOf(
+                "Kola iç ve ödeme yap.",
+                "Et, pilav ve salata ye.",
+                "Tavuk pişir ve tuz ekle.",
+                "Ekmek sipariş et."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The waitress serves bread and coke.",
+            res = R.drawable.waitress,
+            ansEnglish = "Garson kız ekmek ve kola servis eder.",
+            opts = listOf(
+                "Müşteri et ve pilav yer.",
+                "Şef tavuk pişirir.",
+                "Garson kız ekmek ve kola servis eder.",
+                "Müşteri salata sipariş eder."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Order chicken, rice and coke.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Tavuk, pilav ve kola sipariş et.",
+            opts = listOf(
+                "Et, salata ve ekmek ye.",
+                "Tavuk, pilav ve kola sipariş et.",
+                "Kola için ödeme yap.",
+                "Pilava tuz koy."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Restoran Kapanış Finali",
+            image = R.drawable.cat_logo,
+            pairs = "waitress,customer,coke,meat,pay",
+            turkishOptions = listOf("garson kız", "müşteri", "kola", "et", "ödemek")
+        )
+    )
+}
+
+    fun getQuiz89(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        // ========================================================
+        // YENİ KELİMELER
+        // book, pen, teacher, student
+        // ========================================================
+
+        createVisual(
+            id = 1,
+            questionTurkish = "kitap",
+            imageRes = R.drawable.book,
+            correctAnswer = "book",
+            options = listOf("teacher", "pen", "book", "student")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I read a book.",
+            res = R.drawable.read,
+            ansEnglish = "Bir kitap okurum.",
+            opts = listOf(
+                "Bir kalem yazarım.",
+                "Bir kitap okurum.",
+                "Bir öğretmen dinlerim."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "kalem",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pen",
+            options = listOf("student", "book", "teacher", "pen")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I write with a pen.",
+            res = R.drawable.write,
+            ansEnglish = "Kalemle yazarım.",
+            opts = listOf(
+                "Kalemle yazarım.",
+                "Kitap okurum.",
+                "Öğretmeni dinlerim."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "öğretmen",
+            imageRes = R.drawable.teacher,
+            correctAnswer = "teacher",
+            options = listOf("student", "teacher", "book", "pen")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The teacher reads a book.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen kitap okur.",
+            opts = listOf(
+                "Öğrenci kitap okur.",
+                "Öğretmen kitap okur.",
+                "Kalem kitap yazar."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "öğrenci",
+            imageRes = R.drawable.student,
+            correctAnswer = "student",
+            options = listOf("teacher", "book", "student", "pen")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The student writes.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenci yazar.",
+            opts = listOf(
+                "Öğretmen dinler.",
+                "Öğrenci yazar.",
+                "Kitap konuşur."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "kitap",
+            imageRes = R.drawable.book,
+            correctAnswer = "book",
+            options = listOf("pen", "student", "book", "teacher")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The student reads a book.",
+            res = R.drawable.book,
+            ansEnglish = "Öğrenci kitap okur.",
+            opts = listOf(
+                "Öğretmen kalem kullanır.",
+                "Öğrenci kitap okur.",
+                "Öğrenci konuşur."
+            )
+        ),
+
+        // ========================================================
+        // KARMA PEKİŞTİRME
+        // ========================================================
+
+        createListening(
+            id = 11,
+            qTurkish = "The teacher writes with a pen.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen kalemle yazar.",
+            opts = listOf(
+                "Öğretmen kalemle yazar.",
+                "Öğrenci kitap okur.",
+                "Kalem öğretmeni dinler."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Read the book.",
+            res = R.drawable.book,
+            ansEnglish = "Kitabı oku.",
+            opts = listOf(
+                "Kalemi ver.",
+                "Kitabı oku.",
+                "Öğretmeni çağır."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The student has a pen.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Öğrencinin bir kalemi var.",
+            opts = listOf(
+                "Öğretmenin kitabı var.",
+                "Öğrencinin bir kalemi var.",
+                "Kalem öğrenciyi okur."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The teacher and the student read.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen ve öğrenci okur.",
+            opts = listOf(
+                "Öğretmen ve öğrenci okur.",
+                "Öğretmen ve öğrenci yazar.",
+                "Öğretmen ve öğrenci konuşur."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Write with the pen and read the book.",
+            res = R.drawable.write,
+            ansEnglish = "Kalemle yaz ve kitabı oku.",
+            opts = listOf(
+                "Öğretmeni dinle ve yaz.",
+                "Kalemle yaz ve kitabı oku.",
+                "Öğrenciyi çağır ve konuş."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Okul Konusu Başlangıç Finali",
+            image = R.drawable.cat_logo,
+            pairs = "book,pen,teacher,student,read",
+            turkishOptions = listOf(
+                "kitap",
+                "kalem",
+                "öğretmen",
+                "öğrenci",
+                "okumak"
+            )
+        )
+    )
+}
+
+    fun getQuiz90(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "defter",
+            imageRes = R.drawable.notebook,
+            correctAnswer = "notebook",
+            options = listOf("book", "student", "notebook", "pen")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The student writes in a notebook.",
+            res = R.drawable.notebook,
+            ansEnglish = "Öğrenci deftere yazar.",
+            opts = listOf(
+                "Öğretmen kitap okur.",
+                "Öğrenci deftere yazar.",
+                "Kalem masada durur."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "sıra / çalışma masası",
+            imageRes = R.drawable.desk,
+            correctAnswer = "desk",
+            options = listOf("teacher", "desk", "book", "notebook")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The book is on the desk.",
+            res = R.drawable.desk,
+            ansEnglish = "Kitap sıranın üstünde.",
+            opts = listOf(
+                "Defter çantanın içinde.",
+                "Kalem öğretmende.",
+                "Kitap sıranın üstünde."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "kitap",
+            imageRes = R.drawable.book,
+            correctAnswer = "book",
+            options = listOf("pen", "book", "desk", "student")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Read the book.",
+            res = R.drawable.book,
+            ansEnglish = "Kitabı oku.",
+            opts = listOf(
+                "Kitabı oku.",
+                "Deftere yaz.",
+                "Öğretmeni dinle."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "kalem",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pen",
+            options = listOf("notebook", "teacher", "pen", "book")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Write with a pen.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kalemle yaz.",
+            opts = listOf(
+                "Kitap oku.",
+                "Kalemle yaz.",
+                "Sıraya otur."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "öğretmen",
+            imageRes = R.drawable.teacher,
+            correctAnswer = "teacher",
+            options = listOf("student", "desk", "book", "teacher")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Listen to the teacher.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmeni dinle.",
+            opts = listOf(
+                "Deftere yaz.",
+                "Kitabı oku.",
+                "Öğretmeni dinle."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "öğrenci",
+            imageRes = R.drawable.student,
+            correctAnswer = "student",
+            options = listOf("student", "pen", "teacher", "notebook")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The student reads a book.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenci kitap okur.",
+            opts = listOf(
+                "Öğretmen kalemle yazar.",
+                "Öğrenci kitap okur.",
+                "Kitap sıranın üstünde."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The pen is on the desk.",
+            res = R.drawable.desk,
+            ansEnglish = "Kalem sıranın üstünde.",
+            opts = listOf(
+                "Kalem sıranın üstünde.",
+                "Defter öğrencide.",
+                "Öğretmen kitap okur."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Open the notebook and write.",
+            res = R.drawable.notebook,
+            ansEnglish = "Defteri aç ve yaz.",
+            opts = listOf(
+                "Kitabı oku ve dinle.",
+                "Defteri aç ve yaz.",
+                "Kalemi al ve otur."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The teacher reads, and the student writes.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen okur ve öğrenci yazar.",
+            opts = listOf(
+                "Öğretmen dinler ve öğrenci konuşur.",
+                "Kitap masada ve kalem defterde.",
+                "Öğretmen okur ve öğrenci yazar."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Okul Tekrar Finali",
+            image = R.drawable.cat_logo,
+            pairs = "notebook,desk,book,pen,teacher",
+            turkishOptions = listOf(
+                "defter",
+                "sıra",
+                "kitap",
+                "kalem",
+                "öğretmen"
+            )
+        )
+    )
+}
+
+    fun getQuiz91(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "öğretmen",
+            imageRes = R.drawable.teacher,
+            correctAnswer = "teacher",
+            options = listOf("student", "book", "teacher", "desk")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The teacher reads a book.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen kitap okur.",
+            opts = listOf(
+                "Öğrenci deftere yazar.",
+                "Öğretmen kitap okur.",
+                "Kalem sıranın üstünde."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "defter",
+            imageRes = R.drawable.notebook,
+            correctAnswer = "notebook",
+            options = listOf("book", "notebook", "pen", "student")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Write in the notebook.",
+            res = R.drawable.notebook,
+            ansEnglish = "Deftere yaz.",
+            opts = listOf(
+                "Kitabı oku.",
+                "Deftere yaz.",
+                "Öğretmeni dinle."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "öğrenci",
+            imageRes = R.drawable.student,
+            correctAnswer = "student",
+            options = listOf("teacher", "student", "desk", "pen")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The student has a book.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrencinin bir kitabı var.",
+            opts = listOf(
+                "Öğretmenin bir kalemi var.",
+                "Öğrencinin bir kitabı var.",
+                "Defter sıranın üstünde."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "sıra",
+            imageRes = R.drawable.desk,
+            correctAnswer = "desk",
+            options = listOf("notebook", "teacher", "desk", "book")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The notebook is on the desk.",
+            res = R.drawable.desk,
+            ansEnglish = "Defter sıranın üstünde.",
+            opts = listOf(
+                "Kitap öğrencide.",
+                "Defter sıranın üstünde.",
+                "Öğretmen yazıyor."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "kalem",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pen",
+            options = listOf("desk", "student", "pen", "teacher")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Write with the pen.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kalemle yaz.",
+            opts = listOf(
+                "Kalemle yaz.",
+                "Kitabı oku.",
+                "Sıraya otur."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "kitap",
+            imageRes = R.drawable.book,
+            correctAnswer = "book",
+            options = listOf("teacher", "book", "notebook", "student")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Read the book.",
+            res = R.drawable.book,
+            ansEnglish = "Kitabı oku.",
+            opts = listOf(
+                "Defteri aç.",
+                "Öğretmeni dinle.",
+                "Kitabı oku."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The teacher writes in the notebook.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen deftere yazar.",
+            opts = listOf(
+                "Öğretmen deftere yazar.",
+                "Öğrenci kitabı okur.",
+                "Kalem sıranın üstündedir."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Put the pen on the desk.",
+            res = R.drawable.desk,
+            ansEnglish = "Kalemi sıranın üstüne koy.",
+            opts = listOf(
+                "Kalemi sıranın üstüne koy.",
+                "Defteri aç ve yaz.",
+                "Kitabı öğretmene ver."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The teacher and the student read a book.",
+            res = R.drawable.book,
+            ansEnglish = "Öğretmen ve öğrenci kitap okur.",
+            opts = listOf(
+                "Öğretmen ve öğrenci kitap okur.",
+                "Öğretmen ve öğrenci yazar.",
+                "Öğretmen ve öğrenci konuşur."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Okul Konusu Tekrar Finali",
+            image = R.drawable.cat_logo,
+            pairs = "teacher,student,book,pen,notebook,desk",
+            turkishOptions = listOf(
+                "öğretmen",
+                "öğrenci",
+                "kitap",
+                "kalem",
+                "defter",
+                "sıra"
+            )
+        )
+    )
+}
+
+    fun getQuiz92(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "okumak",
+            imageRes = R.drawable.read,
+            correctAnswer = "read",
+            options = listOf("write", "read", "listen", "speak")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Read the book.",
+            res = R.drawable.read,
+            ansEnglish = "Kitabı oku.",
+            opts = listOf(
+                "Kalemle yaz.",
+                "Kitabı oku.",
+                "Öğretmeni dinle.",
+                "Öğrenciyle konuş."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "yazmak",
+            imageRes = R.drawable.write,
+            correctAnswer = "write",
+            options = listOf("listen", "speak", "write", "read")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Write in the notebook.",
+            res = R.drawable.write,
+            ansEnglish = "Deftere yaz.",
+            opts = listOf(
+                "Kitabı oku.",
+                "Öğretmeni dinle.",
+                "Deftere yaz.",
+                "Sıraya otur."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "dinlemek",
+            imageRes = R.drawable.listen,
+            correctAnswer = "listen",
+            options = listOf("speak", "listen", "read", "write")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Listen to the teacher.",
+            res = R.drawable.listen,
+            ansEnglish = "Öğretmeni dinle.",
+            opts = listOf(
+                "Öğretmeni dinle.",
+                "Kitabı oku.",
+                "Kalemle yaz.",
+                "Öğrenciyle konuş."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "konuşmak",
+            imageRes = R.drawable.speak,
+            correctAnswer = "speak",
+            options = listOf("read", "write", "listen", "speak")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Speak with the student.",
+            res = R.drawable.speak,
+            ansEnglish = "Öğrenciyle konuş.",
+            opts = listOf(
+                "Öğretmeni dinle.",
+                "Öğrenciyle konuş.",
+                "Deftere yaz.",
+                "Kitabı oku."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "kitap",
+            imageRes = R.drawable.book,
+            correctAnswer = "book",
+            options = listOf("pen", "teacher", "book", "desk")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The student reads a book.",
+            res = R.drawable.book,
+            ansEnglish = "Öğrenci kitap okur.",
+            opts = listOf(
+                "Öğretmen deftere yazar.",
+                "Öğrenci kitap okur.",
+                "Kalem sıranın üstünde.",
+                "Öğrenci konuşur."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "defter",
+            imageRes = R.drawable.notebook,
+            correctAnswer = "notebook",
+            options = listOf("student", "notebook", "book", "teacher")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The teacher writes in the notebook.",
+            res = R.drawable.notebook,
+            ansEnglish = "Öğretmen deftere yazar.",
+            opts = listOf(
+                "Öğrenci kitabı okur.",
+                "Öğretmen deftere yazar.",
+                "Öğretmeni dinle.",
+                "Kalemi sıraya koy."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Read and write.",
+            res = R.drawable.read,
+            ansEnglish = "Oku ve yaz.",
+            opts = listOf(
+                "Dinle ve konuş.",
+                "Oku ve yaz.",
+                "Otur ve bekle.",
+                "Aç ve kapat."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Listen and speak.",
+            res = R.drawable.listen,
+            ansEnglish = "Dinle ve konuş.",
+            opts = listOf(
+                "Oku ve yaz.",
+                "Kalemle yaz.",
+                "Dinle ve konuş.",
+                "Kitabı oku."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The teacher speaks and the student listens.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen konuşur ve öğrenci dinler.",
+            opts = listOf(
+                "Öğrenci yazar ve öğretmen okur.",
+                "Öğretmen konuşur ve öğrenci dinler.",
+                "Öğretmen defteri açar.",
+                "Öğrenci kalemi sıraya koyar."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Okul Fiilleri Finali",
+            image = R.drawable.cat_logo,
+            pairs = "read,write,listen,speak,book",
+            turkishOptions = listOf(
+                "okumak",
+                "yazmak",
+                "dinlemek",
+                "konuşmak",
+                "kitap"
+            )
+        )
+    )
+}
+
+    fun getQuiz93(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "konuşmak",
+            imageRes = R.drawable.speak,
+            correctAnswer = "speak",
+            options = listOf("listen", "read", "speak", "write")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Speak with the teacher.",
+            res = R.drawable.speak,
+            ansEnglish = "Öğretmenle konuş.",
+            opts = listOf(
+                "Deftere yaz.",
+                "Öğretmenle konuş.",
+                "Kitabı oku.",
+                "Kalemi al."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "dinlemek",
+            imageRes = R.drawable.listen,
+            correctAnswer = "listen",
+            options = listOf("write", "listen", "speak", "read")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Listen to the student.",
+            res = R.drawable.listen,
+            ansEnglish = "Öğrenciyi dinle.",
+            opts = listOf(
+                "Öğretmeni dinle.",
+                "Defteri aç.",
+                "Öğrenciyi dinle.",
+                "Kitabı oku."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "yazmak",
+            imageRes = R.drawable.write,
+            correctAnswer = "write",
+            options = listOf("read", "write", "listen", "speak")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Write with a pen.",
+            res = R.drawable.write,
+            ansEnglish = "Kalemle yaz.",
+            opts = listOf(
+                "Kitap oku.",
+                "Öğretmeni dinle.",
+                "Kalemle yaz.",
+                "Öğrenciyle konuş."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "okumak",
+            imageRes = R.drawable.read,
+            correctAnswer = "read",
+            options = listOf("speak", "listen", "write", "read")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Read the notebook.",
+            res = R.drawable.read,
+            ansEnglish = "Defteri oku.",
+            opts = listOf(
+                "Defteri oku.",
+                "Kitaba yaz.",
+                "Öğretmeni dinle.",
+                "Sıraya otur."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "kalem",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pen",
+            options = listOf("desk", "teacher", "pen", "book")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The pen is on the desk.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kalem sıranın üstünde.",
+            opts = listOf(
+                "Kitap öğretmenin elinde.",
+                "Kalem sıranın üstünde.",
+                "Öğrenci deftere yazar.",
+                "Öğretmen konuşur."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "öğretmen",
+            imageRes = R.drawable.teacher,
+            correctAnswer = "teacher",
+            options = listOf("student", "notebook", "teacher", "desk")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The teacher listens and speaks.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen dinler ve konuşur.",
+            opts = listOf(
+                "Öğrenci okur ve yazar.",
+                "Öğretmen dinler ve konuşur.",
+                "Kalem sıranın üstünde.",
+                "Defter kitapla birlikte."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The student reads and writes.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenci okur ve yazar.",
+            opts = listOf(
+                "Öğrenci okur ve yazar.",
+                "Öğretmen dinler ve konuşur.",
+                "Kalemle konuş.",
+                "Kitabı sıraya koy."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Listen, speak, read and write.",
+            res = R.drawable.listen,
+            ansEnglish = "Dinle, konuş, oku ve yaz.",
+            opts = listOf(
+                "Oku, yaz, otur ve bekle.",
+                "Dinle, konuş, oku ve yaz.",
+                "Kalemi al ve defteri aç.",
+                "Öğretmeni çağır ve konuş."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The student writes in the notebook, and the teacher reads.",
+            res = R.drawable.notebook,
+            ansEnglish = "Öğrenci deftere yazar ve öğretmen okur.",
+            opts = listOf(
+                "Öğretmen deftere yazar ve öğrenci okur.",
+                "Öğrenci kitap okur ve öğretmen dinler.",
+                "Öğrenci deftere yazar ve öğretmen okur.",
+                "Kalem sıranın üstünde ve kitap defterde."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Okul Fiilleri Tekrar Finali",
+            image = R.drawable.cat_logo,
+            pairs = "speak,listen,write,read,pen",
+            turkishOptions = listOf(
+                "konuşmak",
+                "dinlemek",
+                "yazmak",
+                "okumak",
+                "kalem"
+            )
+        )
+    )
+}
+
+    fun getQuiz94(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "sınıf",
+            imageRes = R.drawable.classroom,
+            correctAnswer = "classroom",
+            options = listOf("desk", "classroom", "school bag", "lesson")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The student is in the classroom.",
+            res = R.drawable.classroom,
+            ansEnglish = "Öğrenci sınıfta.",
+            opts = listOf(
+                "Öğretmen deftere yazar.",
+                "Öğrenci sınıfta.",
+                "Kalem sıranın üstünde.",
+                "Kitap çantada."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "okul çantası",
+            imageRes = R.drawable.schoolbag,
+            correctAnswer = "school bag",
+            options = listOf("book", "school bag", "teacher", "question")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The book is in the school bag.",
+            res = R.drawable.schoolbag,
+            ansEnglish = "Kitap okul çantasında.",
+            opts = listOf(
+                "Kalem sıranın üstünde.",
+                "Kitap okul çantasında.",
+                "Öğretmen konuşur.",
+                "Öğrenci dinler."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "ders",
+            imageRes = R.drawable.lesson,
+            correctAnswer = "lesson",
+            options = listOf("lesson", "question", "notebook", "pen")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Listen to the lesson.",
+            res = R.drawable.lesson,
+            ansEnglish = "Dersi dinle.",
+            opts = listOf(
+                "Soruyu oku.",
+                "Deftere yaz.",
+                "Dersi dinle.",
+                "Kalemi al."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "soru",
+            imageRes = R.drawable.question,
+            correctAnswer = "question",
+            options = listOf("student", "lesson", "question", "classroom")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Read the question.",
+            res = R.drawable.question,
+            ansEnglish = "Soruyu oku.",
+            opts = listOf(
+                "Dersi dinle.",
+                "Soruyu oku.",
+                "Çantayı aç.",
+                "Öğretmenle konuş."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "sınıf",
+            imageRes = R.drawable.classroom,
+            correctAnswer = "classroom",
+            options = listOf("teacher", "desk", "classroom", "book")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The teacher speaks in the classroom.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen sınıfta konuşur.",
+            opts = listOf(
+                "Öğretmen deftere yazar.",
+                "Öğrenci kitap okur.",
+                "Öğretmen sınıfta konuşur.",
+                "Kalem çantada."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "okul çantası",
+            imageRes = R.drawable.schoolbag,
+            correctAnswer = "school bag",
+            options = listOf("school bag", "notebook", "lesson", "desk")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Open the school bag.",
+            res = R.drawable.schoolbag,
+            ansEnglish = "Okul çantasını aç.",
+            opts = listOf(
+                "Okul çantasını aç.",
+                "Kitabı oku.",
+                "Dersi dinle.",
+                "Kalemle yaz."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The student reads the question.",
+            res = R.drawable.question,
+            ansEnglish = "Öğrenci soruyu okur.",
+            opts = listOf(
+                "Öğretmen dersi dinler.",
+                "Öğrenci soruyu okur.",
+                "Kalem sıranın üstünde.",
+                "Defter çantada."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Write the question in the notebook.",
+            res = R.drawable.notebook,
+            ansEnglish = "Soruyu deftere yaz.",
+            opts = listOf(
+                "Dersi sınıfta dinle.",
+                "Kitabı çantaya koy.",
+                "Soruyu deftere yaz.",
+                "Öğretmenle konuş."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The teacher gives a lesson.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen ders verir.",
+            opts = listOf(
+                "Öğrenci soru okur.",
+                "Öğretmen ders verir.",
+                "Kalem çantada.",
+                "Defter sıranın üstünde."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Okul Yeni Kelimeler Finali",
+            image = R.drawable.cat_logo,
+            pairs = "classroom,school bag,lesson,question,teacher",
+            turkishOptions = listOf(
+                "sınıf",
+                "okul çantası",
+                "ders",
+                "soru",
+                "öğretmen"
+            )
+        )
+    )
+}
+
+    fun getQuiz95(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "soru",
+            imageRes = R.drawable.question,
+            correctAnswer = "question",
+            options = listOf("lesson", "classroom", "question", "book")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Read the question.",
+            res = R.drawable.question,
+            ansEnglish = "Soruyu oku.",
+            opts = listOf(
+                "Soruyu oku.",
+                "Dersi dinle.",
+                "Kalemle yaz.",
+                "Çantayı aç."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "öğrenci",
+            imageRes = R.drawable.student,
+            correctAnswer = "student",
+            options = listOf("teacher", "student", "lesson", "desk")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The student writes in the notebook.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenci deftere yazar.",
+            opts = listOf(
+                "Öğrenci deftere yazar.",
+                "Öğretmen kitabı okur.",
+                "Kalem sıranın üstünde.",
+                "Ders sınıfta."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "okul çantası",
+            imageRes = R.drawable.schoolbag,
+            correctAnswer = "school bag",
+            options = listOf("question", "school bag", "notebook", "teacher")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The book is in the school bag.",
+            res = R.drawable.schoolbag,
+            ansEnglish = "Kitap okul çantasında.",
+            opts = listOf(
+                "Kitap okul çantasında.",
+                "Kalem masada.",
+                "Öğretmen konuşur.",
+                "Öğrenci dinler."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "ders",
+            imageRes = R.drawable.lesson,
+            correctAnswer = "lesson",
+            options = listOf("book", "lesson", "pen", "classroom")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Listen to the lesson.",
+            res = R.drawable.lesson,
+            ansEnglish = "Dersi dinle.",
+            opts = listOf(
+                "Kitabı oku.",
+                "Dersi dinle.",
+                "Soruyu yaz.",
+                "Öğretmenle konuş."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "sınıf",
+            imageRes = R.drawable.classroom,
+            correctAnswer = "classroom",
+            options = listOf("desk", "classroom", "student", "book")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The teacher speaks in the classroom.",
+            res = R.drawable.classroom,
+            ansEnglish = "Öğretmen sınıfta konuşur.",
+            opts = listOf(
+                "Öğrenci sınıfta yazar.",
+                "Öğretmen sınıfta konuşur.",
+                "Kalem çantada.",
+                "Kitap sırada."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "Open the school bag and read the book.",
+            res = R.drawable.schoolbag,
+            ansEnglish = "Okul çantasını aç ve kitabı oku.",
+            opts = listOf(
+                "Defteri aç ve yaz.",
+                "Okul çantasını aç ve kitabı oku.",
+                "Dersi dinle ve konuş.",
+                "Kalemi sıraya koy."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Write the question in the notebook.",
+            res = R.drawable.notebook,
+            ansEnglish = "Soruyu deftere yaz.",
+            opts = listOf(
+                "Soruyu deftere yaz.",
+                "Kitabı çantaya koy.",
+                "Dersi oku.",
+                "Öğretmeni dinle."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The teacher gives a lesson.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen ders verir.",
+            opts = listOf(
+                "Öğrenci soru sorar.",
+                "Öğretmen ders verir.",
+                "Kalem masadadır.",
+                "Kitap çantadadır."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The student reads the question and writes.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenci soruyu okur ve yazar.",
+            opts = listOf(
+                "Öğretmen konuşur ve dinler.",
+                "Öğrenci soruyu okur ve yazar.",
+                "Kalem masadadır.",
+                "Ders başlar."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The classroom has a teacher and students.",
+            res = R.drawable.classroom,
+            ansEnglish = "Sınıfta bir öğretmen ve öğrenciler vardır.",
+            opts = listOf(
+                "Sınıfta bir öğretmen ve öğrenciler vardır.",
+                "Çantada bir kitap vardır.",
+                "Defter masadadır.",
+                "Kalem öğretmendedir."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Okul Ünitesi Pekiştirme",
+            image = R.drawable.cat_logo,
+            pairs = "classroom,school bag,lesson,question,student",
+            turkishOptions = listOf(
+                "sınıf",
+                "okul çantası",
+                "ders",
+                "soru",
+                "öğrenci"
+            )
+        )
+    )
+}
+
+    fun getQuiz96(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "kitap",
+            imageRes = R.drawable.book,
+            correctAnswer = "book",
+            options = listOf("lesson", "book", "question", "desk")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Read the book in the classroom.",
+            res = R.drawable.book,
+            ansEnglish = "Kitabı sınıfta oku.",
+            opts = listOf(
+                "Kitabı sınıfta oku.",
+                "Kalemle yaz.",
+                "Öğretmeni dinle.",
+                "Çantayı aç."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "ders",
+            imageRes = R.drawable.lesson,
+            correctAnswer = "lesson",
+            options = listOf("lesson", "teacher", "notebook", "school bag")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The lesson starts.",
+            res = R.drawable.lesson,
+            ansEnglish = "Ders başlar.",
+            opts = listOf(
+                "Öğretmen konuşur.",
+                "Ders başlar.",
+                "Kalem düşer.",
+                "Öğrenci gelir."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "öğretmen",
+            imageRes = R.drawable.teacher,
+            correctAnswer = "teacher",
+            options = listOf("teacher", "student", "book", "question")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Listen to the teacher.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmeni dinle.",
+            opts = listOf(
+                "Soruyu oku.",
+                "Deftere yaz.",
+                "Öğretmeni dinle.",
+                "Çantayı aç."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "soru",
+            imageRes = R.drawable.question,
+            correctAnswer = "question",
+            options = listOf("classroom", "question", "lesson", "pen")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Answer the question.",
+            res = R.drawable.question,
+            ansEnglish = "Soruyu cevapla.",
+            opts = listOf(
+                "Kitabı oku.",
+                "Kalemle yaz.",
+                "Soruyu cevapla.",
+                "Öğretmeni dinle."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "defter",
+            imageRes = R.drawable.notebook,
+            correctAnswer = "notebook",
+            options = listOf("school bag", "desk", "notebook", "book")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Write in the notebook.",
+            res = R.drawable.notebook,
+            ansEnglish = "Deftere yaz.",
+            opts = listOf(
+                "Deftere yaz.",
+                "Kitabı oku.",
+                "Dersi dinle.",
+                "Çantayı aç."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The student has a book and a notebook.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrencinin bir kitabı ve defteri var.",
+            opts = listOf(
+                "Öğrencinin bir kitabı ve defteri var.",
+                "Öğretmenin bir kalemi var.",
+                "Ders sınıfta.",
+                "Kalem çantada."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The teacher asks a question.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen bir soru sorar.",
+            opts = listOf(
+                "Öğretmen bir soru sorar.",
+                "Öğrenci kitap okur.",
+                "Kalem masadadır.",
+                "Çanta açıktır."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Read the lesson and answer the question.",
+            res = R.drawable.lesson,
+            ansEnglish = "Dersi oku ve soruyu cevapla.",
+            opts = listOf(
+                "Dersi oku ve soruyu cevapla.",
+                "Deftere yaz ve dinle.",
+                "Kitabı kapat ve konuş.",
+                "Çantayı aç ve bekle."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The classroom has desks and students.",
+            res = R.drawable.classroom,
+            ansEnglish = "Sınıfta sıralar ve öğrenciler vardır.",
+            opts = listOf(
+                "Sınıfta sıralar ve öğrenciler vardır.",
+                "Çantada kitap ve kalem vardır.",
+                "Öğretmen soru okur.",
+                "Ders çantadadır."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The teacher speaks, and the students listen.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen konuşur ve öğrenciler dinler.",
+            opts = listOf(
+                "Öğretmen konuşur ve öğrenciler dinler.",
+                "Öğrenciler konuşur ve öğretmen dinler.",
+                "Kalem masadadır.",
+                "Kitap çantadadır."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Okul Ünitesi Büyük Tekrar",
+            image = R.drawable.cat_logo,
+            pairs = "teacher,student,classroom,lesson,question",
+            turkishOptions = listOf(
+                "öğretmen",
+                "öğrenci",
+                "sınıf",
+                "ders",
+                "soru"
+            )
+        )
+    )
+}
+
+    fun getQuiz97(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "cevap",
+            imageRes = R.drawable.answer,
+            correctAnswer = "answer",
+            options = listOf("test", "question", "answer", "lesson")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Answer the question.",
+            res = R.drawable.answer,
+            ansEnglish = "Soruyu cevapla.",
+            opts = listOf(
+                "Dersi dinle.",
+                "Soruyu cevapla.",
+                "Kitabı oku.",
+                "Deftere yaz."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "sınav",
+            imageRes = R.drawable.test,
+            correctAnswer = "test",
+            options = listOf("notebook", "test", "answer", "book")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I have a test.",
+            res = R.drawable.test,
+            ansEnglish = "Bir sınavım var.",
+            opts = listOf(
+                "Bir kitabım var.",
+                "Bir sınavım var.",
+                "Bir öğretmenim var.",
+                "Bir kalemim var."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "soru",
+            imageRes = R.drawable.question,
+            correctAnswer = "question",
+            options = listOf("answer", "question", "lesson", "teacher")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Read the question.",
+            res = R.drawable.question,
+            ansEnglish = "Soruyu oku.",
+            opts = listOf(
+                "Soruyu oku.",
+                "Sınava gir.",
+                "Kalemi al.",
+                "Öğretmeni dinle."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "öğretmen",
+            imageRes = R.drawable.teacher,
+            correctAnswer = "teacher",
+            options = listOf("teacher", "student", "test", "desk")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The teacher gives a test.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen sınav verir.",
+            opts = listOf(
+                "Öğrenci kitap okur.",
+                "Öğretmen sınav verir.",
+                "Kalem masadadır.",
+                "Ders başlar."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "öğrenci",
+            imageRes = R.drawable.student,
+            correctAnswer = "student",
+            options = listOf("lesson", "book", "student", "answer")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The student answers the question.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenci soruyu cevaplar.",
+            opts = listOf(
+                "Öğretmen dersi anlatır.",
+                "Öğrenci soruyu cevaplar.",
+                "Kitap çantadadır.",
+                "Kalem sıradadır."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The test has ten questions.",
+            res = R.drawable.test,
+            ansEnglish = "Sınavda on soru vardır.",
+            opts = listOf(
+                "Sınıfta on öğrenci vardır.",
+                "Sınavda on soru vardır.",
+                "Çantada on kitap vardır.",
+                "Masada on kalem vardır."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Write the answer.",
+            res = R.drawable.answer,
+            ansEnglish = "Cevabı yaz.",
+            opts = listOf(
+                "Kitabı oku.",
+                "Dersi dinle.",
+                "Cevabı yaz.",
+                "Öğretmenle konuş."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Read the question and answer it.",
+            res = R.drawable.question,
+            ansEnglish = "Soruyu oku ve cevapla.",
+            opts = listOf(
+                "Soruyu oku ve cevapla.",
+                "Defteri aç ve yaz.",
+                "Kalemi al ve bekle.",
+                "Öğretmeni dinle ve konuş."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The student studies for the test.",
+            res = R.drawable.test,
+            ansEnglish = "Öğrenci sınava çalışır.",
+            opts = listOf(
+                "Öğrenci kitap taşır.",
+                "Öğrenci sınava çalışır.",
+                "Öğrenci öğretmeni dinler.",
+                "Öğrenci kalem alır."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The teacher asks a question and the student answers.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen soru sorar ve öğrenci cevaplar.",
+            opts = listOf(
+                "Öğretmen konuşur ve öğrenci dinler.",
+                "Öğretmen soru sorar ve öğrenci cevaplar.",
+                "Öğrenci kitap okur ve yazar.",
+                "Kalem masadadır ve kitap çantadadır."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Question & Answer Finali",
+            image = R.drawable.cat_logo,
+            pairs = "question,answer,test,teacher,student",
+            turkishOptions = listOf(
+                "soru",
+                "cevap",
+                "sınav",
+                "öğretmen",
+                "öğrenci"
+            )
+        )
+    )
+}
+
+    fun getQuiz98(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "sınav",
+            imageRes = R.drawable.test,
+            correctAnswer = "test",
+            options = listOf("question", "test", "answer", "lesson")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The test is easy.",
+            res = R.drawable.test,
+            ansEnglish = "Sınav kolaydır.",
+            opts = listOf(
+                "Sınav kolaydır.",
+                "Ders uzundur.",
+                "Kalem yenidir.",
+                "Öğretmen konuşur."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "cevap",
+            imageRes = R.drawable.answer,
+            correctAnswer = "answer",
+            options = listOf("student", "answer", "question", "teacher")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Write the answer in the notebook.",
+            res = R.drawable.answer,
+            ansEnglish = "Cevabı deftere yaz.",
+            opts = listOf(
+                "Kitabı çantaya koy.",
+                "Soruyu oku.",
+                "Cevabı deftere yaz.",
+                "Öğretmeni dinle."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "soru",
+            imageRes = R.drawable.question,
+            correctAnswer = "question",
+            options = listOf("lesson", "question", "test", "book")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The teacher asks a question.",
+            res = R.drawable.question,
+            ansEnglish = "Öğretmen bir soru sorar.",
+            opts = listOf(
+                "Öğretmen bir soru sorar.",
+                "Öğrenci kitap okur.",
+                "Kalem masadadır.",
+                "Ders başlar."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "sınıf",
+            imageRes = R.drawable.classroom,
+            correctAnswer = "classroom",
+            options = listOf("school bag", "lesson", "classroom", "desk")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The students are in the classroom.",
+            res = R.drawable.classroom,
+            ansEnglish = "Öğrenciler sınıftadır.",
+            opts = listOf(
+                "Öğretmen sınıftadır.",
+                "Öğrenciler sınıftadır.",
+                "Kitap çantadadır.",
+                "Kalem masadadır."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "okul çantası",
+            imageRes = R.drawable.schoolbag,
+            correctAnswer = "school bag",
+            options = listOf("notebook", "school bag", "teacher", "question")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The notebook is in the school bag.",
+            res = R.drawable.schoolbag,
+            ansEnglish = "Defter okul çantasındadır.",
+            opts = listOf(
+                "Defter okul çantasındadır.",
+                "Kitap masadadır.",
+                "Öğretmen konuşur.",
+                "Öğrenci dinler."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "Answer the question.",
+            res = R.drawable.answer,
+            ansEnglish = "Soruyu cevapla.",
+            opts = listOf(
+                "Soruyu cevapla.",
+                "Kitabı oku.",
+                "Kalemle yaz.",
+                "Dersi dinle."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The student answers the question.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenci soruyu cevaplar.",
+            opts = listOf(
+                "Öğretmen sınav yapar.",
+                "Öğrenci soruyu cevaplar.",
+                "Kitap sıradadır.",
+                "Kalem çantadadır."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Read the question and write the answer.",
+            res = R.drawable.question,
+            ansEnglish = "Soruyu oku ve cevabı yaz.",
+            opts = listOf(
+                "Soruyu oku ve cevabı yaz.",
+                "Dersi dinle ve konuş.",
+                "Kitabı aç ve bekle.",
+                "Çantayı kapat ve otur."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The teacher gives a test to the students.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen öğrencilere sınav verir.",
+            opts = listOf(
+                "Öğretmen öğrencilere sınav verir.",
+                "Öğrenciler kitap okur.",
+                "Kalem masadadır.",
+                "Ders başlar."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The students read, write, and answer questions.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenciler okur, yazar ve soruları cevaplar.",
+            opts = listOf(
+                "Öğrenciler okur, yazar ve soruları cevaplar.",
+                "Öğretmen konuşur ve dinler.",
+                "Kitap ve kalem masadadır.",
+                "Sınıf sessizdir."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "School Review Final",
+            image = R.drawable.cat_logo,
+            pairs = "question,answer,test,classroom,school bag",
+            turkishOptions = listOf(
+                "soru",
+                "cevap",
+                "sınav",
+                "sınıf",
+                "okul çantası"
+            )
+        )
+    )
+}
+
+    fun getQuiz99(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "ödev",
+            imageRes = R.drawable.homework,
+            correctAnswer = "homework",
+            options = listOf("board", "lesson", "homework", "eraser")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Write the homework.",
+            res = R.drawable.homework,
+            ansEnglish = "Ödevi yaz.",
+            opts = listOf(
+                "Kitabı oku.",
+                "Ödevi yaz.",
+                "Soruyu cevapla.",
+                "Öğretmeni dinle."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "tahta",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "board",
+            options = listOf("question", "board", "teacher", "homework")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Look at the board.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Tahtaya bak.",
+            opts = listOf(
+                "Deftere yaz.",
+                "Tahtaya bak.",
+                "Kitabı aç.",
+                "Çantayı kapat."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "silgi",
+            imageRes = R.drawable.eraser,
+            correctAnswer = "eraser",
+            options = listOf("book", "eraser", "pen", "desk")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Use the eraser.",
+            res = R.drawable.eraser,
+            ansEnglish = "Silgiyi kullan.",
+            opts = listOf(
+                "Kalemi kullan.",
+                "Silgiyi kullan.",
+                "Kitabı oku.",
+                "Soruyu cevapla."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "öğretmen",
+            imageRes = R.drawable.teacher,
+            correctAnswer = "teacher",
+            options = listOf("student", "teacher", "board", "lesson")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The teacher writes on the board.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen tahtaya yazar.",
+            opts = listOf(
+                "Öğrenci kitabı okur.",
+                "Öğretmen tahtaya yazar.",
+                "Kalem masadadır.",
+                "Çanta açıktır."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "ödev",
+            imageRes = R.drawable.homework,
+            correctAnswer = "homework",
+            options = listOf("homework", "question", "test", "notebook")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The student does the homework.",
+            res = R.drawable.homework,
+            ansEnglish = "Öğrenci ödevi yapar.",
+            opts = listOf(
+                "Öğretmen soru sorar.",
+                "Öğrenci ödevi yapar.",
+                "Kalem sıradadır.",
+                "Kitap çantadadır."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The eraser is on the desk.",
+            res = R.drawable.eraser,
+            ansEnglish = "Silgi sıranın üstündedir.",
+            opts = listOf(
+                "Silgi sıranın üstündedir.",
+                "Kitap çantadadır.",
+                "Öğretmen konuşur.",
+                "Öğrenci dinler."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Read the question and write the answer on the board.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Soruyu oku ve cevabı tahtaya yaz.",
+            opts = listOf(
+                "Soruyu oku ve cevabı tahtaya yaz.",
+                "Ödevi deftere yaz.",
+                "Kitabı oku ve bekle.",
+                "Çantayı aç ve kalemi al."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The teacher gives homework.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen ödev verir.",
+            opts = listOf(
+                "Öğretmen ödev verir.",
+                "Öğrenci sınav yapar.",
+                "Kalem tahtadadır.",
+                "Defter çantadadır."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Use the eraser and write again.",
+            res = R.drawable.eraser,
+            ansEnglish = "Silgiyi kullan ve tekrar yaz.",
+            opts = listOf(
+                "Kitabı oku ve dinle.",
+                "Silgiyi kullan ve tekrar yaz.",
+                "Soruyu cevapla ve bekle.",
+                "Çantayı aç ve kapat."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The student reads, writes, and does homework.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenci okur, yazar ve ödev yapar.",
+            opts = listOf(
+                "Öğrenci okur, yazar ve ödev yapar.",
+                "Öğretmen konuşur ve dinler.",
+                "Kitap ve kalem masadadır.",
+                "Sınıf sessizdir."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Homework & Board Final",
+            image = R.drawable.cat_logo,
+            pairs = "homework,board,eraser,teacher,student",
+            turkishOptions = listOf(
+                "ödev",
+                "tahta",
+                "silgi",
+                "öğretmen",
+                "öğrenci"
+            )
+        )
+    )
+}
+
+    fun getQuiz100(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "tahta",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "board",
+            options = listOf("homework", "board", "eraser", "question")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The teacher writes on the board.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Öğretmen tahtaya yazar.",
+            opts = listOf(
+                "Öğrenci ödevi yapar.",
+                "Öğretmen tahtaya yazar.",
+                "Silgi sıradadır.",
+                "Kitap çantadadır."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "ödev",
+            imageRes = R.drawable.homework,
+            correctAnswer = "homework",
+            options = listOf("lesson", "test", "homework", "board")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Do the homework.",
+            res = R.drawable.homework,
+            ansEnglish = "Ödevi yap.",
+            opts = listOf(
+                "Soruyu oku.",
+                "Tahtaya bak.",
+                "Ödevi yap.",
+                "Kalemle yaz."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "silgi",
+            imageRes = R.drawable.eraser,
+            correctAnswer = "eraser",
+            options = listOf("pen", "notebook", "eraser", "desk")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The eraser is on the desk.",
+            res = R.drawable.eraser,
+            ansEnglish = "Silgi sıranın üstündedir.",
+            opts = listOf(
+                "Kalem çantadadır.",
+                "Silgi sıranın üstündedir.",
+                "Öğretmen konuşur.",
+                "Ders başlar."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "soru",
+            imageRes = R.drawable.question,
+            correctAnswer = "question",
+            options = listOf("answer", "question", "homework", "test")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Read the question and write the answer.",
+            res = R.drawable.question,
+            ansEnglish = "Soruyu oku ve cevabı yaz.",
+            opts = listOf(
+                "Ödevi yap ve bekle.",
+                "Soruyu oku ve cevabı yaz.",
+                "Tahtaya bak ve dinle.",
+                "Kitabı çantaya koy."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "öğrenci",
+            imageRes = R.drawable.student,
+            correctAnswer = "student",
+            options = listOf("teacher", "student", "board", "lesson")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The student does homework.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenci ödev yapar.",
+            opts = listOf(
+                "Öğretmen soru sorar.",
+                "Öğrenci ödev yapar.",
+                "Kalem sıradadır.",
+                "Ders sınıftadır."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "öğretmen",
+            imageRes = R.drawable.teacher,
+            correctAnswer = "teacher",
+            options = listOf("homework", "student", "teacher", "eraser")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The teacher gives homework.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen ödev verir.",
+            opts = listOf(
+                "Öğretmen ödev verir.",
+                "Öğrenci sınav çözer.",
+                "Silgi masadadır.",
+                "Kitap çantadadır."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Look at the board and listen.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Tahtaya bak ve dinle.",
+            opts = listOf(
+                "Deftere yaz ve oku.",
+                "Tahtaya bak ve dinle.",
+                "Soruyu cevapla.",
+                "Çantayı aç."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Use the eraser and write the answer.",
+            res = R.drawable.eraser,
+            ansEnglish = "Silgiyi kullan ve cevabı yaz.",
+            opts = listOf(
+                "Kitabı oku ve dersi dinle.",
+                "Ödevi yap ve çantayı aç.",
+                "Silgiyi kullan ve cevabı yaz.",
+                "Öğretmenle konuş."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The student reads the homework question.",
+            res = R.drawable.homework,
+            ansEnglish = "Öğrenci ödev sorusunu okur.",
+            opts = listOf(
+                "Öğretmen tahtaya yazar.",
+                "Öğrenci ödev sorusunu okur.",
+                "Silgi sıranın üstündedir.",
+                "Ders başlar."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Homework Tekrar Finali",
+            image = R.drawable.cat_logo,
+            pairs = "homework,board,eraser,question,answer",
+            turkishOptions = listOf(
+                "ödev",
+                "tahta",
+                "silgi",
+                "soru",
+                "cevap"
+            )
+        )
+    )
+}
+
+    fun getQuiz101(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "sınıf arkadaşı",
+            imageRes = R.drawable.classmate,
+            correctAnswer = "classmate",
+            options = listOf("teacher", "classmate", "student", "classroom")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "My classmate reads a book.",
+            res = R.drawable.classmate,
+            ansEnglish = "Sınıf arkadaşım kitap okur.",
+            opts = listOf(
+                "Öğretmen soru sorar.",
+                "Sınıf arkadaşım kitap okur.",
+                "Öğrenci ödev yapar.",
+                "Kalem sıradadır."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "kütüphane",
+            imageRes = R.drawable.library,
+            correctAnswer = "library",
+            options = listOf("library", "lesson", "school bag", "desk")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I read a book in the library.",
+            res = R.drawable.library,
+            ansEnglish = "Kütüphanede kitap okurum.",
+            opts = listOf(
+                "Sınıfta soru cevaplarım.",
+                "Kütüphanede kitap okurum.",
+                "Ödevi deftere yazarım.",
+                "Tahtaya bakarım."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "sınıf arkadaşı",
+            imageRes = R.drawable.classmate,
+            correctAnswer = "classmate",
+            options = listOf("student", "teacher", "classmate", "question")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "My classmate answers the question.",
+            res = R.drawable.classmate,
+            ansEnglish = "Sınıf arkadaşım soruyu cevaplar.",
+            opts = listOf(
+                "Öğretmen dersi anlatır.",
+                "Öğrenci kitap okur.",
+                "Sınıf arkadaşım soruyu cevaplar.",
+                "Kalem çantadadır."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "kütüphane",
+            imageRes = R.drawable.library,
+            correctAnswer = "library",
+            options = listOf("classroom", "library", "board", "homework")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The library has many books.",
+            res = R.drawable.library,
+            ansEnglish = "Kütüphanede birçok kitap vardır.",
+            opts = listOf(
+                "Sınıfta birçok öğrenci vardır.",
+                "Kütüphanede birçok kitap vardır.",
+                "Çantada birçok kalem vardır.",
+                "Tahtada birçok soru vardır."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "kitap",
+            imageRes = R.drawable.book,
+            correctAnswer = "book",
+            options = listOf("book", "test", "answer", "eraser")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Go to the library.",
+            res = R.drawable.library,
+            ansEnglish = "Kütüphaneye git.",
+            opts = listOf(
+                "Sınıfa gir.",
+                "Kütüphaneye git.",
+                "Ödevi yap.",
+                "Soruyu cevapla."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "soru",
+            imageRes = R.drawable.question,
+            correctAnswer = "question",
+            options = listOf("lesson", "question", "library", "classmate")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Ask your classmate a question.",
+            res = R.drawable.classmate,
+            ansEnglish = "Sınıf arkadaşına bir soru sor.",
+            opts = listOf(
+                "Öğretmene bir cevap ver.",
+                "Sınıf arkadaşına bir soru sor.",
+                "Kitabı kütüphaneye koy.",
+                "Tahtaya bak ve dinle."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The classmate writes the answer.",
+            res = R.drawable.classmate,
+            ansEnglish = "Sınıf arkadaşı cevabı yazar.",
+            opts = listOf(
+                "Öğretmen dersi verir.",
+                "Sınıf arkadaşı cevabı yazar.",
+                "Öğrenci çantayı açar.",
+                "Kalem sıradadır."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Read in the library and write in the notebook.",
+            res = R.drawable.library,
+            ansEnglish = "Kütüphanede oku ve deftere yaz.",
+            opts = listOf(
+                "Sınıfta konuş ve dinle.",
+                "Kütüphanede oku ve deftere yaz.",
+                "Ödevi yap ve bekle.",
+                "Soruyu cevapla ve tahtaya bak."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "My classmate studies in the library.",
+            res = R.drawable.classmate,
+            ansEnglish = "Sınıf arkadaşım kütüphanede çalışır.",
+            opts = listOf(
+                "Öğretmen sınıfta konuşur.",
+                "Sınıf arkadaşım kütüphanede çalışır.",
+                "Öğrenci sınava girer.",
+                "Kalem defterdedir."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Classmate & Library Final",
+            image = R.drawable.cat_logo,
+            pairs = "classmate,library,book,question,answer",
+            turkishOptions = listOf(
+                "sınıf arkadaşı",
+                "kütüphane",
+                "kitap",
+                "soru",
+                "cevap"
+            )
+        )
+    )
+}
+
+    fun getQuiz102(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "kütüphane",
+            imageRes = R.drawable.library,
+            correctAnswer = "library",
+            options = listOf("library", "classroom", "board", "homework")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I read in the library.",
+            res = R.drawable.library,
+            ansEnglish = "Kütüphanede okurum.",
+            opts = listOf(
+                "Sınıfta konuşurum.",
+                "Kütüphanede okurum.",
+                "Ödevi yazarım.",
+                "Soruyu cevaplarım."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "sınıf arkadaşı",
+            imageRes = R.drawable.classmate,
+            correctAnswer = "classmate",
+            options = listOf("teacher", "student", "classmate", "lesson")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "My classmate has a notebook.",
+            res = R.drawable.classmate,
+            ansEnglish = "Sınıf arkadaşımın bir defteri var.",
+            opts = listOf(
+                "Öğretmenimin bir kitabı var.",
+                "Sınıf arkadaşımın bir defteri var.",
+                "Öğrencinin bir çantası var.",
+                "Kütüphanede birçok kitap var."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "ödev",
+            imageRes = R.drawable.homework,
+            correctAnswer = "homework",
+            options = listOf("homework", "answer", "test", "question")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Do the homework and write the answer.",
+            res = R.drawable.homework,
+            ansEnglish = "Ödevi yap ve cevabı yaz.",
+            opts = listOf(
+                "Kitabı oku ve bekle.",
+                "Ödevi yap ve cevabı yaz.",
+                "Tahtaya bak ve konuş.",
+                "Çantayı aç ve kapat."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "tahta",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "board",
+            options = listOf("board", "library", "desk", "book")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The teacher writes on the board.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Öğretmen tahtaya yazar.",
+            opts = listOf(
+                "Öğrenci soru sorar.",
+                "Öğretmen tahtaya yazar.",
+                "Kalem çantadadır.",
+                "Kütüphane sessizdir."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "sınav",
+            imageRes = R.drawable.test,
+            correctAnswer = "test",
+            options = listOf("lesson", "question", "test", "eraser")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The student studies for the test.",
+            res = R.drawable.test,
+            ansEnglish = "Öğrenci sınava çalışır.",
+            opts = listOf(
+                "Öğretmen ders verir.",
+                "Öğrenci sınava çalışır.",
+                "Kalem sıradadır.",
+                "Kitap çantadadır."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "silgi",
+            imageRes = R.drawable.eraser,
+            correctAnswer = "eraser",
+            options = listOf("pen", "eraser", "notebook", "school bag")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Use the eraser and write again.",
+            res = R.drawable.eraser,
+            ansEnglish = "Silgiyi kullan ve tekrar yaz.",
+            opts = listOf(
+                "Kitabı oku ve dinle.",
+                "Soruyu cevapla ve bekle.",
+                "Silgiyi kullan ve tekrar yaz.",
+                "Çantayı aç ve kapat."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "My classmate reads a book in the library.",
+            res = R.drawable.classmate,
+            ansEnglish = "Sınıf arkadaşım kütüphanede kitap okur.",
+            opts = listOf(
+                "Sınıf arkadaşım kütüphanede kitap okur.",
+                "Öğretmen sınıfta konuşur.",
+                "Öğrenci ödev yapar.",
+                "Kalem masadadır."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Answer the question on the test.",
+            res = R.drawable.answer,
+            ansEnglish = "Sınavdaki soruyu cevapla.",
+            opts = listOf(
+                "Deftere yaz.",
+                "Kitabı oku.",
+                "Sınavdaki soruyu cevapla.",
+                "Tahtaya bak."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The teacher, the students, and the classmate are in the classroom.",
+            res = R.drawable.classroom,
+            ansEnglish = "Öğretmen, öğrenciler ve sınıf arkadaşı sınıftadır.",
+            opts = listOf(
+                "Öğretmen, öğrenciler ve sınıf arkadaşı sınıftadır.",
+                "Kitaplar kütüphanededir.",
+                "Kalemler çantadadır.",
+                "Sorular tahtadadır."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "School Mega Review",
+            image = R.drawable.cat_logo,
+            pairs = "classmate,library,homework,board,test",
+            turkishOptions = listOf(
+                "sınıf arkadaşı",
+                "kütüphane",
+                "ödev",
+                "tahta",
+                "sınav"
+            )
+        )
+    )
+}
+
+    fun getQuiz103(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "öğrenmek",
+            imageRes = R.drawable.learn,
+            correctAnswer = "learn",
+            options = listOf("study", "learn", "read", "write")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I learn English.",
+            res = R.drawable.learn,
+            ansEnglish = "İngilizce öğrenirim.",
+            opts = listOf(
+                "İngilizce öğrenirim.",
+                "İngilizce öğretirim.",
+                "Kitap okurum.",
+                "Soruyu cevaplarım."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "çalışmak",
+            imageRes = R.drawable.study,
+            correctAnswer = "study",
+            options = listOf("listen", "speak", "study", "learn")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I study for the test.",
+            res = R.drawable.study,
+            ansEnglish = "Sınava çalışırım.",
+            opts = listOf(
+                "Derse giderim.",
+                "Sınava çalışırım.",
+                "Kitabı taşırım.",
+                "Kalemi kullanırım."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "kütüphane",
+            imageRes = R.drawable.library,
+            correctAnswer = "library",
+            options = listOf("classroom", "library", "board", "lesson")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The students study in the library.",
+            res = R.drawable.library,
+            ansEnglish = "Öğrenciler kütüphanede çalışır.",
+            opts = listOf(
+                "Öğrenciler kütüphanede çalışır.",
+                "Öğretmen tahtaya yazar.",
+                "Kalem sıradadır.",
+                "Ders başlar."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "sınıf arkadaşı",
+            imageRes = R.drawable.classmate,
+            correctAnswer = "classmate",
+            options = listOf("teacher", "student", "classmate", "question")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "My classmate learns fast.",
+            res = R.drawable.classmate,
+            ansEnglish = "Sınıf arkadaşım hızlı öğrenir.",
+            opts = listOf(
+                "Sınıf arkadaşım hızlı öğrenir.",
+                "Öğretmen hızlı konuşur.",
+                "Öğrenci kitap okur.",
+                "Kalem masadadır."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "öğretmen",
+            imageRes = R.drawable.teacher,
+            correctAnswer = "teacher",
+            options = listOf("teacher", "study", "lesson", "student")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The teacher helps students learn.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen öğrencilerin öğrenmesine yardım eder.",
+            opts = listOf(
+                "Öğretmen öğrencilerin öğrenmesine yardım eder.",
+                "Öğrenci öğretmene yardım eder.",
+                "Kalem çantadadır.",
+                "Kütüphane sessizdir."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "Study and answer the question.",
+            res = R.drawable.study,
+            ansEnglish = "Çalış ve soruyu cevapla.",
+            opts = listOf(
+                "Oku ve yaz.",
+                "Çalış ve soruyu cevapla.",
+                "Dinle ve konuş.",
+                "Bekle ve izle."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Learn the lesson.",
+            res = R.drawable.learn,
+            ansEnglish = "Dersi öğren.",
+            opts = listOf(
+                "Dersi öğren.",
+                "Dersi sil.",
+                "Dersi taşı.",
+                "Dersi kapat."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The student studies and learns.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenci çalışır ve öğrenir.",
+            opts = listOf(
+                "Öğretmen konuşur ve dinler.",
+                "Öğrenci çalışır ve öğrenir.",
+                "Kalem masadadır.",
+                "Kitap çantadadır."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "I study in the library and learn English.",
+            res = R.drawable.library,
+            ansEnglish = "Kütüphanede çalışır ve İngilizce öğrenirim.",
+            opts = listOf(
+                "Sınıfta konuşur ve dinlerim.",
+                "Kütüphanede çalışır ve İngilizce öğrenirim.",
+                "Tahtaya yazar ve beklerim.",
+                "Çantayı açar ve kapatırım."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The teacher gives homework and students study.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen ödev verir ve öğrenciler çalışır.",
+            opts = listOf(
+                "Öğretmen ödev verir ve öğrenciler çalışır.",
+                "Öğrenciler ödev verir ve öğretmen çalışır.",
+                "Kalem sıradadır ve kitap çantadadır.",
+                "Kütüphane boştur ve ders bitmiştir."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Learn & Study Final",
+            image = R.drawable.cat_logo,
+            pairs = "learn,study,classmate,library,teacher",
+            turkishOptions = listOf(
+                "öğrenmek",
+                "çalışmak",
+                "sınıf arkadaşı",
+                "kütüphane",
+                "öğretmen"
+            )
+        )
+    )
+}
+
+    fun getQuiz104(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "sormak",
+            imageRes = R.drawable.ask,
+            correctAnswer = "ask",
+            options = listOf("learn", "study", "ask", "answer")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Ask a question.",
+            res = R.drawable.ask,
+            ansEnglish = "Bir soru sor.",
+            opts = listOf(
+                "Bir soru sor.",
+                "Cevabı yaz.",
+                "Kitabı oku.",
+                "Dersi dinle."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "sözlük",
+            imageRes = R.drawable.dictionary,
+            correctAnswer = "dictionary",
+            options = listOf("book", "dictionary", "notebook", "library")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Open the dictionary.",
+            res = R.drawable.dictionary,
+            ansEnglish = "Sözlüğü aç.",
+            opts = listOf(
+                "Defteri aç.",
+                "Çantayı aç.",
+                "Sözlüğü aç.",
+                "Kitabı kapat."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "kütüphane",
+            imageRes = R.drawable.library,
+            correctAnswer = "library",
+            options = listOf("classroom", "lesson", "library", "board")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "I study in the library.",
+            res = R.drawable.library,
+            ansEnglish = "Kütüphanede çalışırım.",
+            opts = listOf(
+                "Kütüphanede çalışırım.",
+                "Sınıfta konuşurum.",
+                "Tahtaya yazarım.",
+                "Ödevi silerim."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "sınıf arkadaşı",
+            imageRes = R.drawable.classmate,
+            correctAnswer = "classmate",
+            options = listOf("teacher", "classmate", "student", "question")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Ask your classmate.",
+            res = R.drawable.classmate,
+            ansEnglish = "Sınıf arkadaşına sor.",
+            opts = listOf(
+                "Öğretmenine sor.",
+                "Sınıf arkadaşına sor.",
+                "Cevabı yaz.",
+                "Kitabı oku."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "sözlük",
+            imageRes = R.drawable.dictionary,
+            correctAnswer = "dictionary",
+            options = listOf("dictionary", "homework", "test", "eraser")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Read the dictionary.",
+            res = R.drawable.dictionary,
+            ansEnglish = "Sözlüğü oku.",
+            opts = listOf(
+                "Sözlüğü oku.",
+                "Soruyu cevapla.",
+                "Ödevi yap.",
+                "Tahtaya bak."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The teacher asks a question.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen bir soru sorar.",
+            opts = listOf(
+                "Öğretmen bir soru sorar.",
+                "Öğrenci cevap verir.",
+                "Kalem masadadır.",
+                "Kütüphane sessizdir."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The student answers the question.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenci soruyu cevaplar.",
+            opts = listOf(
+                "Öğrenci soruyu cevaplar.",
+                "Öğretmen kitabı okur.",
+                "Kalem çantadadır.",
+                "Ders başlar."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Ask and answer.",
+            res = R.drawable.ask,
+            ansEnglish = "Sor ve cevapla.",
+            opts = listOf(
+                "Oku ve yaz.",
+                "Sor ve cevapla.",
+                "Dinle ve konuş.",
+                "Bekle ve izle."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Use the dictionary and learn.",
+            res = R.drawable.dictionary,
+            ansEnglish = "Sözlüğü kullan ve öğren.",
+            opts = listOf(
+                "Sözlüğü kullan ve öğren.",
+                "Ödevi yap ve bekle.",
+                "Tahtaya bak ve konuş.",
+                "Kitabı kapat ve otur."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The students study, learn, ask, and answer.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenciler çalışır, öğrenir, sorar ve cevaplar.",
+            opts = listOf(
+                "Öğrenciler çalışır, öğrenir, sorar ve cevaplar.",
+                "Öğretmenler bekler ve dinler.",
+                "Kalemler masadadır.",
+                "Kitaplar çantadadır."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Ask & Dictionary Final",
+            image = R.drawable.cat_logo,
+            pairs = "ask,dictionary,question,answer,library",
+            turkishOptions = listOf(
+                "sormak",
+                "sözlük",
+                "soru",
+                "cevap",
+                "kütüphane"
+            )
+        )
+    )
+}
+
+    fun getQuiz105(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "sormak",
+            imageRes = R.drawable.ask,
+            correctAnswer = "ask",
+            options = listOf("learn", "ask", "answer", "study")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Ask a question.",
+            res = R.drawable.ask,
+            ansEnglish = "Bir soru sor.",
+            opts = listOf(
+                "Bir soru sor.",
+                "Cevabı yaz.",
+                "Kitabı oku.",
+                "Dersi dinle."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "öğrenmek",
+            imageRes = R.drawable.learn,
+            correctAnswer = "learn",
+            options = listOf("learn", "study", "read", "write")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I learn English in the library.",
+            res = R.drawable.learn,
+            ansEnglish = "Kütüphanede İngilizce öğrenirim.",
+            opts = listOf(
+                "Sınıfta konuşurum.",
+                "Kütüphanede İngilizce öğrenirim.",
+                "Ödevi yazarım.",
+                "Soruyu cevaplarım."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "sözlük",
+            imageRes = R.drawable.dictionary,
+            correctAnswer = "dictionary",
+            options = listOf("book", "dictionary", "library", "notebook")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Open the dictionary and read.",
+            res = R.drawable.dictionary,
+            ansEnglish = "Sözlüğü aç ve oku.",
+            opts = listOf(
+                "Defteri aç ve yaz.",
+                "Sözlüğü aç ve oku.",
+                "Tahtaya bak ve dinle.",
+                "Çantayı kapat."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "çalışmak",
+            imageRes = R.drawable.study,
+            correctAnswer = "study",
+            options = listOf("study", "ask", "learn", "answer")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The students study for the test.",
+            res = R.drawable.study,
+            ansEnglish = "Öğrenciler sınava çalışır.",
+            opts = listOf(
+                "Öğrenciler sınava çalışır.",
+                "Öğretmen soru sorar.",
+                "Kalem masadadır.",
+                "Kitap çantadadır."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "kütüphane",
+            imageRes = R.drawable.library,
+            correctAnswer = "library",
+            options = listOf("library", "classroom", "board", "lesson")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "My classmate studies in the library.",
+            res = R.drawable.library,
+            ansEnglish = "Sınıf arkadaşım kütüphanede çalışır.",
+            opts = listOf(
+                "Öğretmen sınıfta konuşur.",
+                "Sınıf arkadaşım kütüphanede çalışır.",
+                "Öğrenci ödev yapar.",
+                "Kalem sıradadır."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "cevap",
+            imageRes = R.drawable.answer,
+            correctAnswer = "answer",
+            options = listOf("answer", "question", "test", "homework")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Answer the question.",
+            res = R.drawable.answer,
+            ansEnglish = "Soruyu cevapla.",
+            opts = listOf(
+                "Soruyu cevapla.",
+                "Kitabı oku.",
+                "Ödevi yap.",
+                "Tahtaya bak."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The teacher asks a question and the student answers.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen soru sorar ve öğrenci cevaplar.",
+            opts = listOf(
+                "Öğretmen soru sorar ve öğrenci cevaplar.",
+                "Öğrenci soru sorar ve öğretmen cevaplar.",
+                "Kalem masadadır.",
+                "Kütüphane sessizdir."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Use the dictionary and learn new words.",
+            res = R.drawable.dictionary,
+            ansEnglish = "Sözlüğü kullan ve yeni kelimeler öğren.",
+            opts = listOf(
+                "Ödevi yap ve bekle.",
+                "Sözlüğü kullan ve yeni kelimeler öğren.",
+                "Tahtaya bak ve konuş.",
+                "Kitabı kapat ve otur."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The students study, learn, ask questions, and answer them.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenciler çalışır, öğrenir, soru sorar ve cevaplar.",
+            opts = listOf(
+                "Öğrenciler çalışır, öğrenir, soru sorar ve cevaplar.",
+                "Öğretmenler bekler ve dinler.",
+                "Kalemler masadadır.",
+                "Kitaplar çantadadır."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "100. Quiz School Review Final",
+            image = R.drawable.cat_logo,
+            pairs = "ask,answer,study,learn,dictionary",
+            turkishOptions = listOf(
+                "sormak",
+                "cevaplamak",
+                "çalışmak",
+                "öğrenmek",
+                "sözlük"
+            )
+        )
+    )
+}
+
+    fun getQuiz106(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "sormak",
+            imageRes = R.drawable.ask,
+            correctAnswer = "ask",
+            options = listOf("learn", "ask", "study", "answer")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Ask a question.",
+            res = R.drawable.ask,
+            ansEnglish = "Bir soru sor.",
+            opts = listOf(
+                "Bir soru sor.",
+                "Cevabı yaz.",
+                "Kitabı oku.",
+                "Dersi dinle."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "sözlük",
+            imageRes = R.drawable.dictionary,
+            correctAnswer = "dictionary",
+            options = listOf("book", "dictionary", "library", "notebook")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Open the dictionary.",
+            res = R.drawable.dictionary,
+            ansEnglish = "Sözlüğü aç.",
+            opts = listOf(
+                "Defteri aç.",
+                "Çantayı aç.",
+                "Sözlüğü aç.",
+                "Kitabı kapat."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "öğrenmek",
+            imageRes = R.drawable.learn,
+            correctAnswer = "learn",
+            options = listOf("study", "read", "learn", "write")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Learn the lesson.",
+            res = R.drawable.learn,
+            ansEnglish = "Dersi öğren.",
+            opts = listOf(
+                "Dersi öğren.",
+                "Dersi sil.",
+                "Kitabı kapat.",
+                "Çantayı aç."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "çalışmak",
+            imageRes = R.drawable.study,
+            correctAnswer = "study",
+            options = listOf("answer", "learn", "study", "ask")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Study for the test.",
+            res = R.drawable.study,
+            ansEnglish = "Sınava çalış.",
+            opts = listOf(
+                "Sınava çalış.",
+                "Soruyu cevapla.",
+                "Kitabı oku.",
+                "Öğretmeni dinle."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "kütüphane",
+            imageRes = R.drawable.library,
+            correctAnswer = "library",
+            options = listOf("classroom", "board", "library", "lesson")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "My classmate studies in the library.",
+            res = R.drawable.library,
+            ansEnglish = "Sınıf arkadaşım kütüphanede çalışır.",
+            opts = listOf(
+                "Öğretmen sınıfta konuşur.",
+                "Sınıf arkadaşım kütüphanede çalışır.",
+                "Öğrenci ödev yapar.",
+                "Kalem sıradadır."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "sınıf arkadaşı",
+            imageRes = R.drawable.classmate,
+            correctAnswer = "classmate",
+            options = listOf("teacher", "student", "classmate", "question")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Ask your classmate a question.",
+            res = R.drawable.classmate,
+            ansEnglish = "Sınıf arkadaşına bir soru sor.",
+            opts = listOf(
+                "Öğretmene cevap ver.",
+                "Sınıf arkadaşına bir soru sor.",
+                "Kitabı çantaya koy.",
+                "Tahtaya bak."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The teacher asks and the student answers.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen sorar ve öğrenci cevaplar.",
+            opts = listOf(
+                "Öğretmen sorar ve öğrenci cevaplar.",
+                "Öğrenci sorar ve öğretmen cevaplar.",
+                "Kalem masadadır.",
+                "Kütüphane sessizdir."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Use the dictionary and learn new words.",
+            res = R.drawable.dictionary,
+            ansEnglish = "Sözlüğü kullan ve yeni kelimeler öğren.",
+            opts = listOf(
+                "Ödevi yap ve bekle.",
+                "Sözlüğü kullan ve yeni kelimeler öğren.",
+                "Tahtaya bak ve konuş.",
+                "Kitabı kapat ve otur."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The students study, learn, ask questions, and answer them.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenciler çalışır, öğrenir, soru sorar ve cevaplar.",
+            opts = listOf(
+                "Öğrenciler çalışır, öğrenir, soru sorar ve cevaplar.",
+                "Öğretmenler bekler ve dinler.",
+                "Kalemler masadadır.",
+                "Kitaplar çantadadır."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "School Master Review",
+            image = R.drawable.cat_logo,
+            pairs = "ask,dictionary,learn,study,classmate",
+            turkishOptions = listOf(
+                "sormak",
+                "sözlük",
+                "öğrenmek",
+                "çalışmak",
+                "sınıf arkadaşı"
+            )
+        )
+    )
+}
+
+    fun getQuiz107(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        // ========================================================
+        // SON YENİ KELİME
+        // principal = okul müdürü
+        // ========================================================
+
+        createVisual(
+            id = 1,
+            questionTurkish = "okul müdürü",
+            imageRes = R.drawable.principal,
+            correctAnswer = "principal",
+            options = listOf("teacher", "principal", "student", "classmate")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The principal speaks to the students.",
+            res = R.drawable.principal,
+            ansEnglish = "Okul müdürü öğrencilerle konuşur.",
+            opts = listOf(
+                "Öğretmen ders verir.",
+                "Okul müdürü öğrencilerle konuşur.",
+                "Öğrenci kitap okur.",
+                "Kalem sıradadır."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "sormak",
+            imageRes = R.drawable.ask,
+            correctAnswer = "ask",
+            options = listOf("answer", "learn", "ask", "study")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Ask a question.",
+            res = R.drawable.ask,
+            ansEnglish = "Bir soru sor.",
+            opts = listOf(
+                "Bir soru sor.",
+                "Bir cevap yaz.",
+                "Kitabı oku.",
+                "Dersi dinle."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "sözlük",
+            imageRes = R.drawable.dictionary,
+            correctAnswer = "dictionary",
+            options = listOf("book", "dictionary", "library", "notebook")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Open the dictionary.",
+            res = R.drawable.dictionary,
+            ansEnglish = "Sözlüğü aç.",
+            opts = listOf(
+                "Defteri aç.",
+                "Sözlüğü aç.",
+                "Kitabı kapat.",
+                "Çantayı kapat."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "öğrenmek",
+            imageRes = R.drawable.learn,
+            correctAnswer = "learn",
+            options = listOf("study", "read", "learn", "write")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Learn the lesson.",
+            res = R.drawable.learn,
+            ansEnglish = "Dersi öğren.",
+            opts = listOf(
+                "Dersi öğren.",
+                "Kitabı taşı.",
+                "Soruyu sil.",
+                "Çantayı aç."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "çalışmak",
+            imageRes = R.drawable.study,
+            correctAnswer = "study",
+            options = listOf("ask", "answer", "study", "learn")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Study for the test.",
+            res = R.drawable.study,
+            ansEnglish = "Sınava çalış.",
+            opts = listOf(
+                "Sınava çalış.",
+                "Kitabı oku.",
+                "Öğretmeni dinle.",
+                "Soruyu cevapla."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "kütüphane",
+            imageRes = R.drawable.library,
+            correctAnswer = "library",
+            options = listOf("board", "classroom", "library", "lesson")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The students study in the library.",
+            res = R.drawable.library,
+            ansEnglish = "Öğrenciler kütüphanede çalışır.",
+            opts = listOf(
+                "Öğrenciler kütüphanede çalışır.",
+                "Öğretmen tahtaya yazar.",
+                "Kalem masadadır.",
+                "Ders başlar."
+            )
+        ),
+
+        createVisual(
+            id = 13,
+            questionTurkish = "sınıf arkadaşı",
+            imageRes = R.drawable.classmate,
+            correctAnswer = "classmate",
+            options = listOf("teacher", "student", "classmate", "principal")
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "My classmate answers the question.",
+            res = R.drawable.classmate,
+            ansEnglish = "Sınıf arkadaşım soruyu cevaplar.",
+            opts = listOf(
+                "Öğretmen konuşur.",
+                "Sınıf arkadaşım soruyu cevaplar.",
+                "Kalem sıradadır.",
+                "Kitap çantadadır."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The teacher asks and the student answers.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen sorar ve öğrenci cevaplar.",
+            opts = listOf(
+                "Öğretmen sorar ve öğrenci cevaplar.",
+                "Öğrenci sorar ve öğretmen cevaplar.",
+                "Kütüphane sessizdir.",
+                "Kalem masadadır."
+            )
+        ),
+
+        createListening(
+            id = 16,
+            qTurkish = "Read the question and write the answer.",
+            res = R.drawable.question,
+            ansEnglish = "Soruyu oku ve cevabı yaz.",
+            opts = listOf(
+                "Soruyu oku ve cevabı yaz.",
+                "Dersi dinle ve konuş.",
+                "Kitabı kapat ve bekle.",
+                "Çantayı aç ve otur."
+            )
+        ),
+
+        createListening(
+            id = 17,
+            qTurkish = "The principal gives homework.",
+            res = R.drawable.principal,
+            ansEnglish = "Okul müdürü ödev verir.",
+            opts = listOf(
+                "Öğretmen sınav verir.",
+                "Okul müdürü ödev verir.",
+                "Öğrenci kitap okur.",
+                "Kalem çantadadır."
+            )
+        ),
+
+        createListening(
+            id = 18,
+            qTurkish = "Use the dictionary and learn new words.",
+            res = R.drawable.dictionary,
+            ansEnglish = "Sözlüğü kullan ve yeni kelimeler öğren.",
+            opts = listOf(
+                "Sözlüğü kullan ve yeni kelimeler öğren.",
+                "Ödevi yap ve bekle.",
+                "Tahtaya bak ve konuş.",
+                "Kitabı kapat ve otur."
+            )
+        ),
+
+        createListening(
+            id = 19,
+            qTurkish = "The principal, teachers, and students are in the classroom.",
+            res = R.drawable.classroom,
+            ansEnglish = "Okul müdürü, öğretmenler ve öğrenciler sınıftadır.",
+            opts = listOf(
+                "Okul müdürü, öğretmenler ve öğrenciler sınıftadır.",
+                "Kitaplar kütüphanededir.",
+                "Kalemler çantadadır.",
+                "Sorular tahtadadır."
+            )
+        ),
+
+        createMatching(
+            id = 20,
+            questionText = "School Unit Grand Finale",
+            image = R.drawable.cat_logo,
+            pairs = "principal,ask,dictionary,learn,study,classmate,library",
+            turkishOptions = listOf(
+                "okul müdürü",
+                "sormak",
+                "sözlük",
+                "öğrenmek",
+                "çalışmak",
+                "sınıf arkadaşı",
+                "kütüphane"
+            )
+        )
+    )
+}
+
+    fun getQuiz108(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "mutlu",
+            imageRes = R.drawable.happy,
+            correctAnswer = "happy",
+            options = listOf("sad", "happy", "tired", "angry")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I am happy.",
+            res = R.drawable.happy,
+            ansEnglish = "Mutluyum.",
+            opts = listOf(
+                "Mutluyum.",
+                "Üzgünüm.",
+                "Yorgunum.",
+                "Kızgınım."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "üzgün",
+            imageRes = R.drawable.sad,
+            correctAnswer = "sad",
+            options = listOf("happy", "angry", "sad", "tired")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The student is sad.",
+            res = R.drawable.sad,
+            ansEnglish = "Öğrenci üzgün.",
+            opts = listOf(
+                "Öğrenci mutlu.",
+                "Öğrenci kızgın.",
+                "Öğrenci üzgün.",
+                "Öğrenci yorgun."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "yorgun",
+            imageRes = R.drawable.tired,
+            correctAnswer = "tired",
+            options = listOf("angry", "tired", "happy", "sad")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "I am tired.",
+            res = R.drawable.tired,
+            ansEnglish = "Yorgunum.",
+            opts = listOf(
+                "Mutluyum.",
+                "Üzgünüm.",
+                "Yorgunum.",
+                "Kızgınım."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "kızgın",
+            imageRes = R.drawable.angry,
+            correctAnswer = "angry",
+            options = listOf("tired", "sad", "angry", "happy")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The teacher is angry.",
+            res = R.drawable.angry,
+            ansEnglish = "Öğretmen kızgın.",
+            opts = listOf(
+                "Öğretmen mutlu.",
+                "Öğretmen üzgün.",
+                "Öğretmen yorgun.",
+                "Öğretmen kızgın."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "mutlu",
+            imageRes = R.drawable.happy,
+            correctAnswer = "happy",
+            options = listOf("happy", "sad", "tired", "angry")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The classmate is happy.",
+            res = R.drawable.happy,
+            ansEnglish = "Sınıf arkadaşı mutlu.",
+            opts = listOf(
+                "Sınıf arkadaşı mutlu.",
+                "Sınıf arkadaşı üzgün.",
+                "Sınıf arkadaşı yorgun.",
+                "Sınıf arkadaşı kızgın."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The student is tired and sad.",
+            res = R.drawable.tired,
+            ansEnglish = "Öğrenci yorgun ve üzgün.",
+            opts = listOf(
+                "Öğrenci mutlu ve kızgın.",
+                "Öğrenci yorgun ve üzgün.",
+                "Öğrenci mutlu ve yorgun.",
+                "Öğrenci üzgün ve mutlu."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The teacher is happy.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen mutlu.",
+            opts = listOf(
+                "Öğretmen kızgın.",
+                "Öğretmen mutlu.",
+                "Öğretmen üzgün.",
+                "Öğretmen yorgun."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I am not angry. I am happy.",
+            res = R.drawable.happy,
+            ansEnglish = "Kızgın değilim. Mutluyum.",
+            opts = listOf(
+                "Kızgın değilim. Mutluyum.",
+                "Mutlu değilim. Kızgınım.",
+                "Üzgün değilim. Yorgunum.",
+                "Yorgun değilim. Üzgünüm."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The principal is angry.",
+            res = R.drawable.principal,
+            ansEnglish = "Okul müdürü kızgın.",
+            opts = listOf(
+                "Okul müdürü mutlu.",
+                "Okul müdürü üzgün.",
+                "Okul müdürü kızgın.",
+                "Okul müdürü yorgun."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The students are happy and the teacher is happy too.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenciler mutlu ve öğretmen de mutlu.",
+            opts = listOf(
+                "Öğrenciler üzgün ve öğretmen mutlu.",
+                "Öğrenciler mutlu ve öğretmen de mutlu.",
+                "Öğrenciler kızgın ve öğretmen üzgün.",
+                "Öğrenciler yorgun ve öğretmen kızgın."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Feelings Introduction",
+            image = R.drawable.cat_logo,
+            pairs = "happy,sad,tired,angry,teacher",
+            turkishOptions = listOf(
+                "mutlu",
+                "üzgün",
+                "yorgun",
+                "kızgın",
+                "öğretmen"
+            )
+        )
+    )
+}
+
+    fun getQuiz109(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "mutlu",
+            imageRes = R.drawable.happy,
+            correctAnswer = "happy",
+            options = listOf("sad", "angry", "happy", "tired")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I am happy.",
+            res = R.drawable.happy,
+            ansEnglish = "Mutluyum.",
+            opts = listOf(
+                "Mutluyum.",
+                "Üzgünüm.",
+                "Yorgunum.",
+                "Kızgınım."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "kızgın",
+            imageRes = R.drawable.angry,
+            correctAnswer = "angry",
+            options = listOf("happy", "tired", "angry", "sad")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The principal is angry.",
+            res = R.drawable.principal,
+            ansEnglish = "Okul müdürü kızgın.",
+            opts = listOf(
+                "Okul müdürü mutlu.",
+                "Okul müdürü üzgün.",
+                "Okul müdürü kızgın.",
+                "Okul müdürü yorgun."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "üzgün",
+            imageRes = R.drawable.sad,
+            correctAnswer = "sad",
+            options = listOf("tired", "sad", "happy", "angry")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The student is sad.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenci üzgün.",
+            opts = listOf(
+                "Öğrenci mutlu.",
+                "Öğrenci üzgün.",
+                "Öğrenci kızgın.",
+                "Öğrenci yorgun."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "yorgun",
+            imageRes = R.drawable.tired,
+            correctAnswer = "tired",
+            options = listOf("angry", "happy", "tired", "sad")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The teacher is tired.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen yorgun.",
+            opts = listOf(
+                "Öğretmen mutlu.",
+                "Öğretmen kızgın.",
+                "Öğretmen yorgun.",
+                "Öğretmen üzgün."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "öğrenci",
+            imageRes = R.drawable.student,
+            correctAnswer = "student",
+            options = listOf("teacher", "student", "principal", "classmate")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The classmate is happy.",
+            res = R.drawable.classmate,
+            ansEnglish = "Sınıf arkadaşı mutlu.",
+            opts = listOf(
+                "Sınıf arkadaşı mutlu.",
+                "Sınıf arkadaşı üzgün.",
+                "Sınıf arkadaşı yorgun.",
+                "Sınıf arkadaşı kızgın."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The student is tired and sad.",
+            res = R.drawable.tired,
+            ansEnglish = "Öğrenci yorgun ve üzgün.",
+            opts = listOf(
+                "Öğrenci mutlu ve kızgın.",
+                "Öğrenci yorgun ve üzgün.",
+                "Öğrenci mutlu ve yorgun.",
+                "Öğrenci üzgün ve mutlu."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The teacher is happy.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen mutlu.",
+            opts = listOf(
+                "Öğretmen kızgın.",
+                "Öğretmen mutlu.",
+                "Öğretmen üzgün.",
+                "Öğretmen yorgun."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I am not sad. I am happy.",
+            res = R.drawable.happy,
+            ansEnglish = "Üzgün değilim. Mutluyum.",
+            opts = listOf(
+                "Üzgün değilim. Mutluyum.",
+                "Mutlu değilim. Üzgünüm.",
+                "Yorgun değilim. Kızgınım.",
+                "Kızgın değilim. Yorgunum."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The principal is not angry. He is happy.",
+            res = R.drawable.principal,
+            ansEnglish = "Okul müdürü kızgın değil. Mutlu.",
+            opts = listOf(
+                "Okul müdürü üzgün değil. Yorgun.",
+                "Okul müdürü kızgın değil. Mutlu.",
+                "Okul müdürü mutlu değil. Kızgın.",
+                "Okul müdürü yorgun değil. Üzgün."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The students are happy and the teacher is happy too.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenciler mutlu ve öğretmen de mutlu.",
+            opts = listOf(
+                "Öğrenciler üzgün ve öğretmen mutlu.",
+                "Öğrenciler mutlu ve öğretmen de mutlu.",
+                "Öğrenciler kızgın ve öğretmen üzgün.",
+                "Öğrenciler yorgun ve öğretmen kızgın."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Feelings Review",
+            image = R.drawable.cat_logo,
+            pairs = "happy,sad,tired,angry,principal",
+            turkishOptions = listOf(
+                "mutlu",
+                "üzgün",
+                "yorgun",
+                "kızgın",
+                "okul müdürü"
+            )
+        )
+    )
+}
+
+    fun getQuiz110(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "korkmuş",
+            imageRes = R.drawable.scared,
+            correctAnswer = "scared",
+            options = listOf("excited", "scared", "bored", "calm")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I am scared.",
+            res = R.drawable.scared,
+            ansEnglish = "Korkmuşum.",
+            opts = listOf(
+                "Heyecanlıyım.",
+                "Korkmuşum.",
+                "Sıkılmışım.",
+                "Sakinim."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "heyecanlı",
+            imageRes = R.drawable.excited,
+            correctAnswer = "excited",
+            options = listOf("calm", "bored", "excited", "scared")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The student is excited.",
+            res = R.drawable.excited,
+            ansEnglish = "Öğrenci heyecanlı.",
+            opts = listOf(
+                "Öğrenci üzgün.",
+                "Öğrenci sakin.",
+                "Öğrenci heyecanlı.",
+                "Öğrenci yorgun."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "sıkılmış",
+            imageRes = R.drawable.bored,
+            correctAnswer = "bored",
+            options = listOf("happy", "bored", "angry", "excited")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The classmate is bored.",
+            res = R.drawable.bored,
+            ansEnglish = "Sınıf arkadaşı sıkılmış.",
+            opts = listOf(
+                "Sınıf arkadaşı mutlu.",
+                "Sınıf arkadaşı sıkılmış.",
+                "Sınıf arkadaşı kızgın.",
+                "Sınıf arkadaşı heyecanlı."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "sakin",
+            imageRes = R.drawable.calm,
+            correctAnswer = "calm",
+            options = listOf("scared", "tired", "calm", "sad")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The teacher is calm.",
+            res = R.drawable.calm,
+            ansEnglish = "Öğretmen sakin.",
+            opts = listOf(
+                "Öğretmen kızgın.",
+                "Öğretmen yorgun.",
+                "Öğretmen sakin.",
+                "Öğretmen üzgün."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "heyecanlı",
+            imageRes = R.drawable.excited,
+            correctAnswer = "excited",
+            options = listOf("bored", "happy", "scared", "excited")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I am excited for the test.",
+            res = R.drawable.excited,
+            ansEnglish = "Sınav için heyecanlıyım.",
+            opts = listOf(
+                "Sınav için korkmuşum.",
+                "Sınav için yorgunum.",
+                "Sınav için heyecanlıyım.",
+                "Sınav için üzgünüm."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The student is scared and tired.",
+            res = R.drawable.scared,
+            ansEnglish = "Öğrenci korkmuş ve yorgun.",
+            opts = listOf(
+                "Öğrenci mutlu ve sakin.",
+                "Öğrenci korkmuş ve yorgun.",
+                "Öğrenci kızgın ve heyecanlı.",
+                "Öğrenci üzgün ve mutlu."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The principal is calm.",
+            res = R.drawable.principal,
+            ansEnglish = "Okul müdürü sakin.",
+            opts = listOf(
+                "Okul müdürü kızgın.",
+                "Okul müdürü mutlu.",
+                "Okul müdürü sakin.",
+                "Okul müdürü sıkılmış."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I am not bored. I am excited.",
+            res = R.drawable.excited,
+            ansEnglish = "Sıkılmış değilim. Heyecanlıyım.",
+            opts = listOf(
+                "Sıkılmış değilim. Heyecanlıyım.",
+                "Heyecanlı değilim. Sıkılmışım.",
+                "Korkmuş değilim. Sakinim.",
+                "Sakin değilim. Korkmuşum."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The teacher is calm, but the student is scared.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen sakin ama öğrenci korkmuş.",
+            opts = listOf(
+                "Öğretmen mutlu ama öğrenci üzgün.",
+                "Öğretmen sakin ama öğrenci korkmuş.",
+                "Öğretmen kızgın ama öğrenci mutlu.",
+                "Öğretmen yorgun ama öğrenci sakin."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The students are excited and happy.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenciler heyecanlı ve mutlu.",
+            opts = listOf(
+                "Öğrenciler sıkılmış ve yorgun.",
+                "Öğrenciler kızgın ve üzgün.",
+                "Öğrenciler heyecanlı ve mutlu.",
+                "Öğrenciler sakin ve korkmuş."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Feelings New Words Final",
+            image = R.drawable.cat_logo,
+            pairs = "scared,excited,bored,calm,happy",
+            turkishOptions = listOf(
+                "korkmuş",
+                "heyecanlı",
+                "sıkılmış",
+                "sakin",
+                "mutlu"
+            )
+        )
+    )
+}
+
+    fun getQuiz111(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "heyecanlı",
+            imageRes = R.drawable.excited,
+            correctAnswer = "excited",
+            options = listOf("scared", "excited", "bored", "calm")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I am excited.",
+            res = R.drawable.excited,
+            ansEnglish = "Heyecanlıyım.",
+            opts = listOf(
+                "Korkmuşum.",
+                "Heyecanlıyım.",
+                "Sıkılmışım.",
+                "Sakinim."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "sakin",
+            imageRes = R.drawable.calm,
+            correctAnswer = "calm",
+            options = listOf("happy", "bored", "calm", "angry")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The teacher is calm.",
+            res = R.drawable.teacher,
+            ansEnglish = "Öğretmen sakin.",
+            opts = listOf(
+                "Öğretmen kızgın.",
+                "Öğretmen sakin.",
+                "Öğretmen yorgun.",
+                "Öğretmen üzgün."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "korkmuş",
+            imageRes = R.drawable.scared,
+            correctAnswer = "scared",
+            options = listOf("tired", "scared", "sad", "excited")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The student is scared.",
+            res = R.drawable.scared,
+            ansEnglish = "Öğrenci korkmuş.",
+            opts = listOf(
+                "Öğrenci mutlu.",
+                "Öğrenci korkmuş.",
+                "Öğrenci sakin.",
+                "Öğrenci yorgun."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "sıkılmış",
+            imageRes = R.drawable.bored,
+            correctAnswer = "bored",
+            options = listOf("bored", "happy", "angry", "calm")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "My classmate is bored.",
+            res = R.drawable.classmate,
+            ansEnglish = "Sınıf arkadaşım sıkılmış.",
+            opts = listOf(
+                "Sınıf arkadaşım heyecanlı.",
+                "Sınıf arkadaşım sıkılmış.",
+                "Sınıf arkadaşım mutlu.",
+                "Sınıf arkadaşım kızgın."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "mutlu",
+            imageRes = R.drawable.happy,
+            correctAnswer = "happy",
+            options = listOf("sad", "happy", "tired", "scared")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The students are happy and excited.",
+            res = R.drawable.student,
+            ansEnglish = "Öğrenciler mutlu ve heyecanlı.",
+            opts = listOf(
+                "Öğrenciler üzgün ve yorgun.",
+                "Öğrenciler mutlu ve heyecanlı.",
+                "Öğrenciler sakin ve korkmuş.",
+                "Öğrenciler kızgın ve sıkılmış."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "üzgün",
+            imageRes = R.drawable.sad,
+            correctAnswer = "sad",
+            options = listOf("angry", "calm", "sad", "happy")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "I am not sad. I am calm.",
+            res = R.drawable.calm,
+            ansEnglish = "Üzgün değilim. Sakinim.",
+            opts = listOf(
+                "Üzgün değilim. Sakinim.",
+                "Sakin değilim. Üzgünüm.",
+                "Kızgın değilim. Mutluyum.",
+                "Yorgun değilim. Heyecanlıyım."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The principal is calm, but the student is excited.",
+            res = R.drawable.principal,
+            ansEnglish = "Okul müdürü sakin ama öğrenci heyecanlı.",
+            opts = listOf(
+                "Okul müdürü kızgın ama öğrenci mutlu.",
+                "Okul müdürü sakin ama öğrenci heyecanlı.",
+                "Öğretmen üzgün ama öğrenci sakin.",
+                "Sınıf arkadaşı sıkılmış ama öğretmen mutlu."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The classmate is not bored. He is happy.",
+            res = R.drawable.classmate,
+            ansEnglish = "Sınıf arkadaşı sıkılmış değil. Mutlu.",
+            opts = listOf(
+                "Sınıf arkadaşı sıkılmış değil. Mutlu.",
+                "Sınıf arkadaşı mutlu değil. Sıkılmış.",
+                "Sınıf arkadaşı korkmuş değil. Kızgın.",
+                "Sınıf arkadaşı sakin değil. Üzgün."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "I am scared, but I am calm now.",
+            res = R.drawable.scared,
+            ansEnglish = "Korkmuşum ama şimdi sakinim.",
+            opts = listOf(
+                "Heyecanlıyım ama şimdi üzgünüm.",
+                "Korkmuşum ama şimdi sakinim.",
+                "Sıkılmışım ama şimdi mutluyum.",
+                "Kızgınım ama şimdi yorgunum."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Feelings Review Two",
+            image = R.drawable.cat_logo,
+            pairs = "scared,excited,bored,calm,happy",
+            turkishOptions = listOf(
+                "korkmuş",
+                "heyecanlı",
+                "sıkılmış",
+                "sakin",
+                "mutlu"
+            )
+        )
+    )
+}
+
+    fun getQuiz112(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "mutlu",
+            imageRes = R.drawable.happy,
+            correctAnswer = "happy",
+            options = listOf("happy", "sad", "tired", "angry")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "My friend is happy.",
+            res = R.drawable.happy,
+            ansEnglish = "Arkadaşım mutlu.",
+            opts = listOf(
+                "Arkadaşım mutlu.",
+                "Arkadaşım üzgün.",
+                "Arkadaşım kızgın.",
+                "Arkadaşım yorgun."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "heyecanlı",
+            imageRes = R.drawable.excited,
+            correctAnswer = "excited",
+            options = listOf("excited", "scared", "bored", "calm")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The game is exciting.",
+            res = R.drawable.excited,
+            ansEnglish = "Oyun heyecan verici.",
+            opts = listOf(
+                "Oyun sıkıcı.",
+                "Oyun heyecan verici.",
+                "Oyun sakin.",
+                "Oyun üzücü."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "üzgün",
+            imageRes = R.drawable.sad,
+            correctAnswer = "sad",
+            options = listOf("happy", "angry", "sad", "tired")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The dog is sad.",
+            res = R.drawable.sad,
+            ansEnglish = "Köpek üzgün.",
+            opts = listOf(
+                "Köpek mutlu.",
+                "Köpek kızgın.",
+                "Köpek üzgün.",
+                "Köpek heyecanlı."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "sakin",
+            imageRes = R.drawable.calm,
+            correctAnswer = "calm",
+            options = listOf("bored", "calm", "angry", "happy")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The cat is calm.",
+            res = R.drawable.calm,
+            ansEnglish = "Kedi sakin.",
+            opts = listOf(
+                "Kedi kızgın.",
+                "Kedi sakin.",
+                "Kedi korkmuş.",
+                "Kedi üzgün."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "yorgun",
+            imageRes = R.drawable.tired,
+            correctAnswer = "tired",
+            options = listOf("tired", "happy", "excited", "sad")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "My father is tired.",
+            res = R.drawable.tired,
+            ansEnglish = "Babam yorgun.",
+            opts = listOf(
+                "Babam mutlu.",
+                "Babam yorgun.",
+                "Babam kızgın.",
+                "Babam sakin."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "korkmuş",
+            imageRes = R.drawable.scared,
+            correctAnswer = "scared",
+            options = listOf("angry", "scared", "calm", "bored")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The baby is scared.",
+            res = R.drawable.scared,
+            ansEnglish = "Bebek korkmuş.",
+            opts = listOf(
+                "Bebek mutlu.",
+                "Bebek sakin.",
+                "Bebek korkmuş.",
+                "Bebek heyecanlı."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The test makes me nervous and scared.",
+            res = R.drawable.test,
+            ansEnglish = "Sınav beni korkutuyor.",
+            opts = listOf(
+                "Sınav beni mutlu ediyor.",
+                "Sınav beni korkutuyor.",
+                "Sınav beni sakinleştiriyor.",
+                "Sınav beni güldürüyor."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The book is boring.",
+            res = R.drawable.bored,
+            ansEnglish = "Kitap sıkıcı.",
+            opts = listOf(
+                "Kitap heyecanlı.",
+                "Kitap mutlu.",
+                "Kitap sıkıcı.",
+                "Kitap kızgın."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "My mother is happy and calm.",
+            res = R.drawable.happy,
+            ansEnglish = "Annem mutlu ve sakin.",
+            opts = listOf(
+                "Annem üzgün ve yorgun.",
+                "Annem mutlu ve sakin.",
+                "Annem korkmuş ve kızgın.",
+                "Annem sıkılmış ve üzgün."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Feelings Mega Review",
+            image = R.drawable.cat_logo,
+            pairs = "happy,sad,tired,angry,scared,excited,bored,calm",
+            turkishOptions = listOf(
+                "mutlu",
+                "üzgün",
+                "yorgun",
+                "kızgın",
+                "korkmuş",
+                "heyecanlı",
+                "sıkılmış",
+                "sakin"
+            )
+        )
+    )
+}
+
+    fun getQuiz113(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "uykulu",
+            imageRes = R.drawable.sleepy,
+            correctAnswer = "sleepy",
+            options = listOf("worried", "sleepy", "surprised", "proud")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I am sleepy.",
+            res = R.drawable.sleepy,
+            ansEnglish = "Uykuluyum.",
+            opts = listOf(
+                "Endişeliyim.",
+                "Uykuluyum.",
+                "Şaşırmışım.",
+                "Gururluyum."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "endişeli",
+            imageRes = R.drawable.worried,
+            correctAnswer = "worried",
+            options = listOf("proud", "surprised", "worried", "sleepy")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "My mother is worried.",
+            res = R.drawable.worried,
+            ansEnglish = "Annem endişeli.",
+            opts = listOf(
+                "Annem mutlu.",
+                "Annem sakin.",
+                "Annem endişeli.",
+                "Annem yorgun."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "şaşırmış",
+            imageRes = R.drawable.surprised,
+            correctAnswer = "surprised",
+            options = listOf("happy", "surprised", "angry", "bored")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "My friend is surprised.",
+            res = R.drawable.surprised,
+            ansEnglish = "Arkadaşım şaşırmış.",
+            opts = listOf(
+                "Arkadaşım üzgün.",
+                "Arkadaşım şaşırmış.",
+                "Arkadaşım korkmuş.",
+                "Arkadaşım sakin."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "gururlu",
+            imageRes = R.drawable.proud,
+            correctAnswer = "proud",
+            options = listOf("sleepy", "worried", "proud", "sad")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "My father is proud.",
+            res = R.drawable.proud,
+            ansEnglish = "Babam gururlu.",
+            opts = listOf(
+                "Babam kızgın.",
+                "Babam yorgun.",
+                "Babam gururlu.",
+                "Babam üzgün."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "uykulu",
+            imageRes = R.drawable.sleepy,
+            correctAnswer = "sleepy",
+            options = listOf("tired", "happy", "sleepy", "angry")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The cat is sleepy.",
+            res = R.drawable.sleepy,
+            ansEnglish = "Kedi uykulu.",
+            opts = listOf(
+                "Kedi mutlu.",
+                "Kedi korkmuş.",
+                "Kedi uykulu.",
+                "Kedi kızgın."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The test makes me worried.",
+            res = R.drawable.test,
+            ansEnglish = "Sınav beni endişelendiriyor.",
+            opts = listOf(
+                "Sınav beni mutlu ediyor.",
+                "Sınav beni endişelendiriyor.",
+                "Sınav beni sakinleştiriyor.",
+                "Sınav beni şaşırtıyor."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The dog is surprised.",
+            res = R.drawable.surprised,
+            ansEnglish = "Köpek şaşırmış.",
+            opts = listOf(
+                "Köpek üzgün.",
+                "Köpek mutlu.",
+                "Köpek şaşırmış.",
+                "Köpek uykulu."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I am proud and happy.",
+            res = R.drawable.proud,
+            ansEnglish = "Gururluyum ve mutluyum.",
+            opts = listOf(
+                "Endişeliyim ve üzgünüm.",
+                "Gururluyum ve mutluyum.",
+                "Uykuluyum ve yorgunum.",
+                "Şaşırmışım ve korkmuşum."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The baby is sleepy but calm.",
+            res = R.drawable.sleepy,
+            ansEnglish = "Bebek uykulu ama sakin.",
+            opts = listOf(
+                "Bebek kızgın ama mutlu.",
+                "Bebek uykulu ama sakin.",
+                "Bebek üzgün ama heyecanlı.",
+                "Bebek korkmuş ama yorgun."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "My friend is not worried. He is proud.",
+            res = R.drawable.proud,
+            ansEnglish = "Arkadaşım endişeli değil. Gururlu.",
+            opts = listOf(
+                "Arkadaşım endişeli değil. Gururlu.",
+                "Arkadaşım gururlu değil. Endişeli.",
+                "Arkadaşım uykulu değil. Şaşırmış.",
+                "Arkadaşım sakin değil. Korkmuş."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Feelings New Set Final",
+            image = R.drawable.cat_logo,
+            pairs = "sleepy,worried,surprised,proud,happy",
+            turkishOptions = listOf(
+                "uykulu",
+                "endişeli",
+                "şaşırmış",
+                "gururlu",
+                "mutlu"
+            )
+        )
+    )
+}
+
+    fun getQuiz114(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "endişeli",
+            imageRes = R.drawable.worried,
+            correctAnswer = "worried",
+            options = listOf("sleepy", "proud", "worried", "surprised")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "My mother is worried.",
+            res = R.drawable.worried,
+            ansEnglish = "Annem endişeli.",
+            opts = listOf(
+                "Annem mutlu.",
+                "Annem endişeli.",
+                "Annem sakin.",
+                "Annem heyecanlı."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "şaşırmış",
+            imageRes = R.drawable.surprised,
+            correctAnswer = "surprised",
+            options = listOf("surprised", "happy", "angry", "calm")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "My friend is surprised.",
+            res = R.drawable.surprised,
+            ansEnglish = "Arkadaşım şaşırmış.",
+            opts = listOf(
+                "Arkadaşım üzgün.",
+                "Arkadaşım şaşırmış.",
+                "Arkadaşım yorgun.",
+                "Arkadaşım korkmuş."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "gururlu",
+            imageRes = R.drawable.proud,
+            correctAnswer = "proud",
+            options = listOf("proud", "sleepy", "worried", "sad")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "My father is proud.",
+            res = R.drawable.proud,
+            ansEnglish = "Babam gururlu.",
+            opts = listOf(
+                "Babam üzgün.",
+                "Babam kızgın.",
+                "Babam gururlu.",
+                "Babam yorgun."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "uykulu",
+            imageRes = R.drawable.sleepy,
+            correctAnswer = "sleepy",
+            options = listOf("angry", "sleepy", "happy", "excited")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The cat is sleepy.",
+            res = R.drawable.sleepy,
+            ansEnglish = "Kedi uykulu.",
+            opts = listOf(
+                "Kedi mutlu.",
+                "Kedi korkmuş.",
+                "Kedi uykulu.",
+                "Kedi kızgın."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "mutlu",
+            imageRes = R.drawable.happy,
+            correctAnswer = "happy",
+            options = listOf("sad", "happy", "worried", "bored")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I am happy and proud.",
+            res = R.drawable.proud,
+            ansEnglish = "Mutlu ve gururluyum.",
+            opts = listOf(
+                "Üzgün ve yorgunum.",
+                "Mutlu ve gururluyum.",
+                "Kızgın ve korkmuşum.",
+                "Sıkılmış ve sakinim."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "sakin",
+            imageRes = R.drawable.calm,
+            correctAnswer = "calm",
+            options = listOf("excited", "calm", "scared", "angry")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The baby is sleepy but calm.",
+            res = R.drawable.sleepy,
+            ansEnglish = "Bebek uykulu ama sakin.",
+            opts = listOf(
+                "Bebek korkmuş ama mutlu.",
+                "Bebek uykulu ama sakin.",
+                "Bebek kızgın ama üzgün.",
+                "Bebek heyecanlı ama yorgun."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The test makes me worried.",
+            res = R.drawable.test,
+            ansEnglish = "Sınav beni endişelendiriyor.",
+            opts = listOf(
+                "Sınav beni mutlu ediyor.",
+                "Sınav beni endişelendiriyor.",
+                "Sınav beni heyecanlandırıyor.",
+                "Sınav beni sakinleştiriyor."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The dog is surprised and excited.",
+            res = R.drawable.surprised,
+            ansEnglish = "Köpek şaşırmış ve heyecanlı.",
+            opts = listOf(
+                "Köpek üzgün ve yorgun.",
+                "Köpek şaşırmış ve heyecanlı.",
+                "Köpek sakin ve korkmuş.",
+                "Köpek kızgın ve sıkılmış."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "My friend is not worried. He is calm.",
+            res = R.drawable.calm,
+            ansEnglish = "Arkadaşım endişeli değil. Sakin.",
+            opts = listOf(
+                "Arkadaşım endişeli değil. Sakin.",
+                "Arkadaşım sakin değil. Endişeli.",
+                "Arkadaşım mutlu değil. Üzgün.",
+                "Arkadaşım gururlu değil. Kızgın."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Advanced Feelings Review",
+            image = R.drawable.cat_logo,
+            pairs = "sleepy,worried,surprised,proud,calm",
+            turkishOptions = listOf(
+                "uykulu",
+                "endişeli",
+                "şaşırmış",
+                "gururlu",
+                "sakin"
+            )
+        )
+    )
+}
+
+    fun getQuiz115(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "mutlu",
+            imageRes = R.drawable.happy,
+            correctAnswer = "happy",
+            options = listOf("sad", "happy", "angry", "tired")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "My friend is happy.",
+            res = R.drawable.happy,
+            ansEnglish = "Arkadaşım mutlu.",
+            opts = listOf(
+                "Arkadaşım üzgün.",
+                "Arkadaşım mutlu.",
+                "Arkadaşım kızgın.",
+                "Arkadaşım yorgun."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "korkmuş",
+            imageRes = R.drawable.scared,
+            correctAnswer = "scared",
+            options = listOf("excited", "calm", "scared", "bored")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The baby is scared.",
+            res = R.drawable.scared,
+            ansEnglish = "Bebek korkmuş.",
+            opts = listOf(
+                "Bebek mutlu.",
+                "Bebek sakin.",
+                "Bebek korkmuş.",
+                "Bebek heyecanlı."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "gururlu",
+            imageRes = R.drawable.proud,
+            correctAnswer = "proud",
+            options = listOf("worried", "proud", "sleepy", "surprised")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "My father is proud.",
+            res = R.drawable.proud,
+            ansEnglish = "Babam gururlu.",
+            opts = listOf(
+                "Babam kızgın.",
+                "Babam gururlu.",
+                "Babam üzgün.",
+                "Babam yorgun."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "endişeli",
+            imageRes = R.drawable.worried,
+            correctAnswer = "worried",
+            options = listOf("sleepy", "happy", "worried", "tired")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The test makes me worried.",
+            res = R.drawable.test,
+            ansEnglish = "Sınav beni endişelendiriyor.",
+            opts = listOf(
+                "Sınav beni mutlu ediyor.",
+                "Sınav beni sakinleştiriyor.",
+                "Sınav beni endişelendiriyor.",
+                "Sınav beni güldürüyor."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "sıkılmış",
+            imageRes = R.drawable.bored,
+            correctAnswer = "bored",
+            options = listOf("happy", "bored", "scared", "calm")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The book is boring.",
+            res = R.drawable.bored,
+            ansEnglish = "Kitap sıkıcı.",
+            opts = listOf(
+                "Kitap heyecanlı.",
+                "Kitap sıkıcı.",
+                "Kitap mutlu.",
+                "Kitap sakin."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "uykulu",
+            imageRes = R.drawable.sleepy,
+            correctAnswer = "sleepy",
+            options = listOf("angry", "surprised", "sleepy", "happy")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The cat is sleepy.",
+            res = R.drawable.sleepy,
+            ansEnglish = "Kedi uykulu.",
+            opts = listOf(
+                "Kedi mutlu.",
+                "Kedi korkmuş.",
+                "Kedi uykulu.",
+                "Kedi kızgın."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "My friend is surprised.",
+            res = R.drawable.surprised,
+            ansEnglish = "Arkadaşım şaşırmış.",
+            opts = listOf(
+                "Arkadaşım yorgun.",
+                "Arkadaşım şaşırmış.",
+                "Arkadaşım üzgün.",
+                "Arkadaşım sakin."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The teacher is calm.",
+            res = R.drawable.calm,
+            ansEnglish = "Öğretmen sakin.",
+            opts = listOf(
+                "Öğretmen kızgın.",
+                "Öğretmen sakin.",
+                "Öğretmen üzgün.",
+                "Öğretmen heyecanlı."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "I am happy, calm, and proud.",
+            res = R.drawable.proud,
+            ansEnglish = "Mutlu, sakin ve gururluyum.",
+            opts = listOf(
+                "Üzgün, korkmuş ve yorgunum.",
+                "Mutlu, sakin ve gururluyum.",
+                "Kızgın, sıkılmış ve endişeliyim.",
+                "Şaşırmış, üzgün ve yorgunum."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "All Feelings Review",
+            image = R.drawable.cat_logo,
+            pairs = "happy,sad,tired,angry,scared,excited",
+            turkishOptions = listOf(
+                "mutlu",
+                "üzgün",
+                "yorgun",
+                "kızgın",
+                "korkmuş",
+                "heyecanlı"
+            )
+        )
+    )
+}
+
+    fun getQuiz116(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "hasta",
+            imageRes = R.drawable.sick,
+            correctAnswer = "sick",
+            options = listOf("nervous", "sick", "alone", "tired")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I am sick.",
+            res = R.drawable.sick,
+            ansEnglish = "Hastayım.",
+            opts = listOf(
+                "Yorgunum.",
+                "Hastayım.",
+                "Yalnızım.",
+                "Gerginim."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "gergin",
+            imageRes = R.drawable.nervous,
+            correctAnswer = "nervous",
+            options = listOf("alone", "calm", "nervous", "happy")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I am nervous.",
+            res = R.drawable.nervous,
+            ansEnglish = "Gerginim.",
+            opts = listOf(
+                "Mutluyum.",
+                "Sakinim.",
+                "Gerginim.",
+                "Hastayım."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "yalnız",
+            imageRes = R.drawable.alone,
+            correctAnswer = "alone",
+            options = listOf("sad", "alone", "sick", "proud")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "I am alone.",
+            res = R.drawable.alone,
+            ansEnglish = "Yalnızım.",
+            opts = listOf(
+                "Üzgünüm.",
+                "Yalnızım.",
+                "Gururluyum.",
+                "Hastayım."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "hasta",
+            imageRes = R.drawable.sick,
+            correctAnswer = "sick",
+            options = listOf("worried", "sleepy", "sick", "angry")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The cat is sick.",
+            res = R.drawable.sick,
+            ansEnglish = "Kedi hasta.",
+            opts = listOf(
+                "Kedi uykulu.",
+                "Kedi kızgın.",
+                "Kedi hasta.",
+                "Kedi endişeli."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "gergin",
+            imageRes = R.drawable.nervous,
+            correctAnswer = "nervous",
+            options = listOf("nervous", "excited", "bored", "calm")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The test makes me nervous.",
+            res = R.drawable.test,
+            ansEnglish = "Sınav beni gergin yapıyor.",
+            opts = listOf(
+                "Sınav beni mutlu yapıyor.",
+                "Sınav beni sakin yapıyor.",
+                "Sınav beni gergin yapıyor.",
+                "Sınav beni şaşırmış yapıyor."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "yalnız",
+            imageRes = R.drawable.alone,
+            correctAnswer = "alone",
+            options = listOf("happy", "scared", "alone", "tired")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The dog is alone.",
+            res = R.drawable.alone,
+            ansEnglish = "Köpek yalnız.",
+            opts = listOf(
+                "Köpek mutlu.",
+                "Köpek korkmuş.",
+                "Köpek yalnız.",
+                "Köpek yorgun."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I am sick and tired.",
+            res = R.drawable.sick,
+            ansEnglish = "Hasta ve yorgunum.",
+            opts = listOf(
+                "Mutlu ve sakinim.",
+                "Hasta ve yorgunum.",
+                "Gergin ve gururluyum.",
+                "Yalnız ve heyecanlıyım."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "I am not alone. I am happy.",
+            res = R.drawable.happy,
+            ansEnglish = "Yalnız değilim. Mutluyum.",
+            opts = listOf(
+                "Yalnız değilim. Mutluyum.",
+                "Mutlu değilim. Yalnızım.",
+                "Hasta değilim. Gerginim.",
+                "Sakin değilim. Korkmuşum."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "I am nervous, but I am calm now.",
+            res = R.drawable.nervous,
+            ansEnglish = "Gerginim ama şimdi sakinim.",
+            opts = listOf(
+                "Hastayım ama şimdi mutluyum.",
+                "Gerginim ama şimdi sakinim.",
+                "Yalnızım ama şimdi kızgınım.",
+                "Uykuluyum ama şimdi heyecanlıyım."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Sick Nervous Alone Final",
+            image = R.drawable.cat_logo,
+            pairs = "sick,nervous,alone,happy,calm,tired",
+            turkishOptions = listOf(
+                "hasta",
+                "gergin",
+                "yalnız",
+                "mutlu",
+                "sakin",
+                "yorgun"
+            )
+        )
+    )
+}
+
+    fun getQuiz117(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "hasta",
+            imageRes = R.drawable.sick,
+            correctAnswer = "sick",
+            options = listOf("alone", "sick", "nervous", "happy")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The baby is sick.",
+            res = R.drawable.sick,
+            ansEnglish = "Bebek hasta.",
+            opts = listOf(
+                "Bebek hasta.",
+                "Bebek mutlu.",
+                "Bebek sakin.",
+                "Bebek heyecanlı."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "gergin",
+            imageRes = R.drawable.nervous,
+            correctAnswer = "nervous",
+            options = listOf("calm", "nervous", "proud", "sleepy")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I am nervous about the test.",
+            res = R.drawable.nervous,
+            ansEnglish = "Sınav hakkında gerginim.",
+            opts = listOf(
+                "Sınav hakkında mutluyum.",
+                "Sınav hakkında sakinim.",
+                "Sınav hakkında gerginim.",
+                "Sınav hakkında gururluyum."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "yalnız",
+            imageRes = R.drawable.alone,
+            correctAnswer = "alone",
+            options = listOf("scared", "alone", "excited", "bored")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The dog is alone.",
+            res = R.drawable.alone,
+            ansEnglish = "Köpek yalnız.",
+            opts = listOf(
+                "Köpek mutlu.",
+                "Köpek yalnız.",
+                "Köpek korkmuş.",
+                "Köpek heyecanlı."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "şaşırmış",
+            imageRes = R.drawable.surprised,
+            correctAnswer = "surprised",
+            options = listOf("surprised", "worried", "happy", "angry")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "My friend is surprised.",
+            res = R.drawable.surprised,
+            ansEnglish = "Arkadaşım şaşırmış.",
+            opts = listOf(
+                "Arkadaşım şaşırmış.",
+                "Arkadaşım üzgün.",
+                "Arkadaşım kızgın.",
+                "Arkadaşım sakin."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "uykulu",
+            imageRes = R.drawable.sleepy,
+            correctAnswer = "sleepy",
+            options = listOf("sleepy", "proud", "happy", "calm")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The cat is sleepy.",
+            res = R.drawable.sleepy,
+            ansEnglish = "Kedi uykulu.",
+            opts = listOf(
+                "Kedi mutlu.",
+                "Kedi kızgın.",
+                "Kedi uykulu.",
+                "Kedi gururlu."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "gururlu",
+            imageRes = R.drawable.proud,
+            correctAnswer = "proud",
+            options = listOf("proud", "sad", "alone", "tired")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "My father is proud.",
+            res = R.drawable.proud,
+            ansEnglish = "Babam gururlu.",
+            opts = listOf(
+                "Babam üzgün.",
+                "Babam yorgun.",
+                "Babam gururlu.",
+                "Babam korkmuş."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I am not nervous. I am calm.",
+            res = R.drawable.calm,
+            ansEnglish = "Gergin değilim. Sakinim.",
+            opts = listOf(
+                "Gergin değilim. Sakinim.",
+                "Sakin değilim. Gerginim.",
+                "Mutlu değilim. Üzgünüm.",
+                "Korkmuş değilim. Kızgınım."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The student is worried and tired.",
+            res = R.drawable.worried,
+            ansEnglish = "Öğrenci endişeli ve yorgun.",
+            opts = listOf(
+                "Öğrenci mutlu ve sakin.",
+                "Öğrenci endişeli ve yorgun.",
+                "Öğrenci heyecanlı ve gururlu.",
+                "Öğrenci kızgın ve mutlu."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "I am happy, calm, and not alone.",
+            res = R.drawable.happy,
+            ansEnglish = "Mutlu, sakinim ve yalnız değilim.",
+            opts = listOf(
+                "Üzgün, korkmuş ve yalnızım.",
+                "Mutlu, sakinim ve yalnız değilim.",
+                "Gergin, hasta ve yalnızım.",
+                "Kızgın, yorgun ve yalnızım."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Feelings Grand Review",
+            image = R.drawable.cat_logo,
+            pairs = "sick,nervous,alone,surprised,sleepy,proud",
+            turkishOptions = listOf(
+                "hasta",
+                "gergin",
+                "yalnız",
+                "şaşırmış",
+                "uykulu",
+                "gururlu"
+            )
+        )
+    )
+}
+
+    fun getQuiz118(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "mutlu",
+            imageRes = R.drawable.happy,
+            correctAnswer = "happy",
+            options = listOf("happy", "sad", "angry", "tired")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "My friend is happy.",
+            res = R.drawable.happy,
+            ansEnglish = "Arkadaşım mutlu.",
+            opts = listOf(
+                "Arkadaşım mutlu.",
+                "Arkadaşım üzgün.",
+                "Arkadaşım kızgın.",
+                "Arkadaşım yorgun."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "hasta",
+            imageRes = R.drawable.sick,
+            correctAnswer = "sick",
+            options = listOf("alone", "sick", "nervous", "proud")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The baby is sick.",
+            res = R.drawable.sick,
+            ansEnglish = "Bebek hasta.",
+            opts = listOf(
+                "Bebek mutlu.",
+                "Bebek hasta.",
+                "Bebek sakin.",
+                "Bebek heyecanlı."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "korkmuş",
+            imageRes = R.drawable.scared,
+            correctAnswer = "scared",
+            options = listOf("excited", "scared", "bored", "calm")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The dog is scared.",
+            res = R.drawable.scared,
+            ansEnglish = "Köpek korkmuş.",
+            opts = listOf(
+                "Köpek korkmuş.",
+                "Köpek mutlu.",
+                "Köpek sakin.",
+                "Köpek gururlu."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "gergin",
+            imageRes = R.drawable.nervous,
+            correctAnswer = "nervous",
+            options = listOf("happy", "nervous", "sleepy", "sad")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "I am nervous about the test.",
+            res = R.drawable.nervous,
+            ansEnglish = "Sınav hakkında gerginim.",
+            opts = listOf(
+                "Sınav hakkında mutluyum.",
+                "Sınav hakkında gerginim.",
+                "Sınav hakkında gururluyum.",
+                "Sınav hakkında sakinim."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "yalnız",
+            imageRes = R.drawable.alone,
+            correctAnswer = "alone",
+            options = listOf("alone", "happy", "worried", "angry")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The cat is alone.",
+            res = R.drawable.alone,
+            ansEnglish = "Kedi yalnız.",
+            opts = listOf(
+                "Kedi mutlu.",
+                "Kedi yalnız.",
+                "Kedi kızgın.",
+                "Kedi heyecanlı."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "şaşırmış",
+            imageRes = R.drawable.surprised,
+            correctAnswer = "surprised",
+            options = listOf("surprised", "proud", "sleepy", "worried")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "My mother is surprised.",
+            res = R.drawable.surprised,
+            ansEnglish = "Annem şaşırmış.",
+            opts = listOf(
+                "Annem yorgun.",
+                "Annem şaşırmış.",
+                "Annem üzgün.",
+                "Annem kızgın."
+            )
+        ),
+
+        createVisual(
+            id = 13,
+            questionTurkish = "uykulu",
+            imageRes = R.drawable.sleepy,
+            correctAnswer = "sleepy",
+            options = listOf("sleepy", "excited", "happy", "calm")
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The baby is sleepy.",
+            res = R.drawable.sleepy,
+            ansEnglish = "Bebek uykulu.",
+            opts = listOf(
+                "Bebek korkmuş.",
+                "Bebek mutlu.",
+                "Bebek uykulu.",
+                "Bebek kızgın."
+            )
+        ),
+
+        createVisual(
+            id = 15,
+            questionTurkish = "gururlu",
+            imageRes = R.drawable.proud,
+            correctAnswer = "proud",
+            options = listOf("worried", "proud", "sad", "alone")
+        ),
+
+        createListening(
+            id = 16,
+            qTurkish = "My father is proud.",
+            res = R.drawable.proud,
+            ansEnglish = "Babam gururlu.",
+            opts = listOf(
+                "Babam yorgun.",
+                "Babam üzgün.",
+                "Babam gururlu.",
+                "Babam korkmuş."
+            )
+        ),
+
+        createListening(
+            id = 17,
+            qTurkish = "I am happy, calm, and proud.",
+            res = R.drawable.proud,
+            ansEnglish = "Mutlu, sakin ve gururluyum.",
+            opts = listOf(
+                "Mutlu, sakin ve gururluyum.",
+                "Üzgün, korkmuş ve yalnızım.",
+                "Gergin, hasta ve yorgunum.",
+                "Kızgın, sıkılmış ve üzgünüm."
+            )
+        ),
+
+        createListening(
+            id = 18,
+            qTurkish = "The student is worried and tired.",
+            res = R.drawable.worried,
+            ansEnglish = "Öğrenci endişeli ve yorgun.",
+            opts = listOf(
+                "Öğrenci mutlu ve sakin.",
+                "Öğrenci endişeli ve yorgun.",
+                "Öğrenci heyecanlı ve gururlu.",
+                "Öğrenci kızgın ve mutlu."
+            )
+        ),
+
+        createListening(
+            id = 19,
+            qTurkish = "I am not alone. I am happy.",
+            res = R.drawable.happy,
+            ansEnglish = "Yalnız değilim. Mutluyum.",
+            opts = listOf(
+                "Yalnız değilim. Mutluyum.",
+                "Mutlu değilim. Yalnızım.",
+                "Gergin değilim. Hastayım.",
+                "Sakin değilim. Korkmuşum."
+            )
+        ),
+
+        createMatching(
+            id = 20,
+            questionText = "Feelings Unit Final Exam",
+            image = R.drawable.cat_logo,
+            pairs = "happy,scared,nervous,alone,surprised,proud",
+            turkishOptions = listOf(
+                "mutlu",
+                "korkmuş",
+                "gergin",
+                "yalnız",
+                "şaşırmış",
+                "gururlu"
+            )
+        )
+    )
+}
+
+    fun getQuiz119(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "güneşli",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "sunny",
+            options = listOf("rainy", "sunny", "cloudy", "windy")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Today is sunny.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bugün hava güneşli.",
+            opts = listOf(
+                "Bugün hava yağmurlu.",
+                "Bugün hava güneşli.",
+                "Bugün hava bulutlu.",
+                "Bugün hava rüzgarlı."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "yağmurlu",
+            imageRes = R.drawable.rainy,
+            correctAnswer = "rainy",
+            options = listOf("windy", "cloudy", "rainy", "sunny")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "It is rainy today.",
+            res = R.drawable.rainy,
+            ansEnglish = "Bugün hava yağmurlu.",
+            opts = listOf(
+                "Bugün hava güneşli.",
+                "Bugün hava bulutlu.",
+                "Bugün hava yağmurlu.",
+                "Bugün hava rüzgarlı."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "bulutlu",
+            imageRes = R.drawable.cloudy,
+            correctAnswer = "cloudy",
+            options = listOf("sunny", "cloudy", "rainy", "windy")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The weather is cloudy.",
+            res = R.drawable.cloudy,
+            ansEnglish = "Hava bulutlu.",
+            opts = listOf(
+                "Hava güneşli.",
+                "Hava yağmurlu.",
+                "Hava bulutlu.",
+                "Hava rüzgarlı."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "rüzgarlı",
+            imageRes = R.drawable.windy,
+            correctAnswer = "windy",
+            options = listOf("cloudy", "rainy", "sunny", "windy")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Today is windy.",
+            res = R.drawable.windy,
+            ansEnglish = "Bugün hava rüzgarlı.",
+            opts = listOf(
+                "Bugün hava bulutlu.",
+                "Bugün hava yağmurlu.",
+                "Bugün hava güneşli.",
+                "Bugün hava rüzgarlı."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "güneşli",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "sunny",
+            options = listOf("sunny", "rainy", "cloudy", "windy")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Today is sunny. We can go to the park.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bugün hava güneşli. Parka gidebiliriz.",
+            opts = listOf(
+                "Bugün hava yağmurlu. Evde kalabiliriz.",
+                "Bugün hava güneşli. Parka gidebiliriz.",
+                "Bugün hava bulutlu. Kitap okuyabiliriz.",
+                "Bugün hava rüzgarlı. Dışarı çıkmayalım."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "It is rainy today. I am sad.",
+            res = R.drawable.rainy,
+            ansEnglish = "Bugün hava yağmurlu. Üzgünüm.",
+            opts = listOf(
+                "Bugün hava güneşli. Mutluyum.",
+                "Bugün hava yağmurlu. Üzgünüm.",
+                "Bugün hava bulutlu. Sakinim.",
+                "Bugün hava rüzgarlı. Yorgunum."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The weather is windy. The cat is scared.",
+            res = R.drawable.windy,
+            ansEnglish = "Hava rüzgarlı. Kedi korkmuş.",
+            opts = listOf(
+                "Hava güneşli. Kedi mutlu.",
+                "Hava yağmurlu. Kedi uykulu.",
+                "Hava rüzgarlı. Kedi korkmuş.",
+                "Hava bulutlu. Kedi sakin."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "It is cloudy today, but I am happy.",
+            res = R.drawable.cloudy,
+            ansEnglish = "Bugün hava bulutlu ama mutluyum.",
+            opts = listOf(
+                "Bugün hava yağmurlu ama sakinin.",
+                "Bugün hava güneşli ama üzgünüm.",
+                "Bugün hava bulutlu ama mutluyum.",
+                "Bugün hava rüzgarlı ama hastayım."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Today is rainy, but the dog is happy.",
+            res = R.drawable.rainy,
+            ansEnglish = "Bugün hava yağmurlu ama köpek mutlu.",
+            opts = listOf(
+                "Bugün hava yağmurlu ama köpek mutlu.",
+                "Bugün hava güneşli ama kedi üzgün.",
+                "Bugün hava bulutlu ama bebek uykulu.",
+                "Bugün hava rüzgarlı ama arkadaşım sakin."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The weather is sunny. We can have a picnic today.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Hava güneşli. Bugün piknik yapabiliriz.",
+            opts = listOf(
+                "Hava yağmurlu. Bugün evde kalabiliriz.",
+                "Hava bulutlu. Bugün kitap okuyabiliriz.",
+                "Hava güneşli. Bugün piknik yapabiliriz.",
+                "Hava rüzgarlı. Bugün dışarı çıkmayalım."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Weather Introduction",
+            image = R.drawable.cat_logo,
+            pairs = "sunny,rainy,cloudy,windy,today,weather",
+            turkishOptions = listOf(
+                "güneşli",
+                "yağmurlu",
+                "bulutlu",
+                "rüzgarlı",
+                "bugün",
+                "hava"
+            )
+        )
+    )
+}
+
+    fun getQuiz120(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "güneşli",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "sunny",
+            options = listOf("rainy", "windy", "sunny", "cloudy")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The weather is sunny. My father is happy.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Hava güneşli. Babam mutlu.",
+            opts = listOf(
+                "Hava yağmurlu. Babam üzgün.",
+                "Hava güneşli. Babam mutlu.",
+                "Hava bulutlu. Babam yorgun.",
+                "Hava rüzgarlı. Babam kızgın."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "yağmurlu",
+            imageRes = R.drawable.rainy,
+            correctAnswer = "rainy",
+            options = listOf("sunny", "rainy", "cloudy", "windy")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Today is rainy. We stay in the house.",
+            res = R.drawable.house,
+            ansEnglish = "Bugün hava yağmurlu. Evde kalıyoruz.",
+            opts = listOf(
+                "Bugün hava güneşli. Bahçeye gidiyoruz.",
+                "Bugün hava yağmurlu. Evde kalıyoruz.",
+                "Bugün hava rüzgarlı. Piknik yapıyoruz.",
+                "Bugün hava bulutlu. Restorana gidiyoruz."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "bulutlu",
+            imageRes = R.drawable.cloudy,
+            correctAnswer = "cloudy",
+            options = listOf("windy", "cloudy", "sunny", "rainy")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "It is cloudy today. The student reads a book.",
+            res = R.drawable.book,
+            ansEnglish = "Bugün hava bulutlu. Öğrenci kitap okuyor.",
+            opts = listOf(
+                "Bugün hava güneşli. Öğrenci koşuyor.",
+                "Bugün hava bulutlu. Öğrenci kitap okuyor.",
+                "Bugün hava yağmurlu. Öğrenci uyuyor.",
+                "Bugün hava rüzgarlı. Öğrenci yemek yiyor."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "rüzgarlı",
+            imageRes = R.drawable.windy,
+            correctAnswer = "windy",
+            options = listOf("rainy", "sunny", "windy", "cloudy")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The weather is windy. The cat is scared.",
+            res = R.drawable.blackcat,
+            ansEnglish = "Hava rüzgarlı. Kedi korkmuş.",
+            opts = listOf(
+                "Hava güneşli. Kedi mutlu.",
+                "Hava yağmurlu. Kedi uykulu.",
+                "Hava rüzgarlı. Kedi korkmuş.",
+                "Hava bulutlu. Kedi sakin."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "güneşli",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "sunny",
+            options = listOf("sunny", "rainy", "cloudy", "windy")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Today is sunny. We eat lunch in the garden.",
+            res = R.drawable.garden,
+            ansEnglish = "Bugün hava güneşli. Bahçede öğle yemeği yiyoruz.",
+            opts = listOf(
+                "Bugün hava yağmurlu. Evde kalıyoruz.",
+                "Bugün hava güneşli. Bahçede öğle yemeği yiyoruz.",
+                "Bugün hava rüzgarlı. Uyuyoruz.",
+                "Bugün hava bulutlu. Okula gidiyoruz."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "It is rainy today. The customer drinks tea.",
+            res = R.drawable.tea,
+            ansEnglish = "Bugün hava yağmurlu. Müşteri çay içiyor.",
+            opts = listOf(
+                "Bugün hava güneşli. Müşteri kola içiyor.",
+                "Bugün hava yağmurlu. Müşteri çay içiyor.",
+                "Bugün hava bulutlu. Müşteri koşuyor.",
+                "Bugün hava rüzgarlı. Müşteri kitap okuyor."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The weather is cloudy. My sister is calm.",
+            res = R.drawable.cloudy,
+            ansEnglish = "Hava bulutlu. Kız kardeşim sakin.",
+            opts = listOf(
+                "Hava güneşli. Kız kardeşim kızgın.",
+                "Hava yağmurlu. Kız kardeşim üzgün.",
+                "Hava bulutlu. Kız kardeşim sakin.",
+                "Hava rüzgarlı. Kız kardeşim korkmuş."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Today is windy. Wear your jacket.",
+            res = R.drawable.windy,
+            ansEnglish = "Bugün hava rüzgarlı. Ceketini giy.",
+            opts = listOf(
+                "Bugün hava güneşli. Şapkanı çıkar.",
+                "Bugün hava rüzgarlı. Ceketini giy.",
+                "Bugün hava yağmurlu. Kitap oku.",
+                "Bugün hava bulutlu. Uyu."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The weather is sunny. The children are happy.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Hava güneşli. Çocuklar mutlu.",
+            opts = listOf(
+                "Hava yağmurlu. Çocuklar üzgün.",
+                "Hava güneşli. Çocuklar mutlu.",
+                "Hava rüzgarlı. Çocuklar korkmuş.",
+                "Hava bulutlu. Çocuklar yorgun."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "It is sunny today. We can have a picnic.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bugün hava güneşli. Piknik yapabiliriz.",
+            opts = listOf(
+                "Bugün hava yağmurlu. Piknik yapabiliriz.",
+                "Bugün hava güneşli. Piknik yapabiliriz.",
+                "Bugün hava rüzgarlı. Yüzebiliriz.",
+                "Bugün hava bulutlu. Koşabiliriz."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Weather and Daily Life",
+            image = R.drawable.cat_logo,
+            pairs = "sunny,rainy,cloudy,windy,jacket,garden",
+            turkishOptions = listOf(
+                "güneşli",
+                "yağmurlu",
+                "bulutlu",
+                "rüzgarlı",
+                "ceket",
+                "bahçe"
+            )
+        )
+    )
+}
+
+    fun getQuiz121(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "kartopu oynamak",
+            imageRes = R.drawable.play_snowball,
+            correctAnswer = "play snowball",
+            options = listOf("play snowball", "sleep", "read", "eat")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "It is snowy today. We play snowball.",
+            res = R.drawable.play_snowball,
+            ansEnglish = "Bugün hava karlı. Kartopu oynarız.",
+            opts = listOf(
+                "Bugün hava yağmurlu. Evde kalırız.",
+                "Bugün hava karlı. Kartopu oynarız.",
+                "Bugün hava güneşli. Bahçeye gideriz.",
+                "Bugün hava rüzgarlı. Ceket giyeriz."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "karlı",
+            imageRes = R.drawable.snowy,
+            correctAnswer = "snowy",
+            options = listOf("rainy", "snowy", "stormy", "sunny")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Today is snowy. The children play snowball.",
+            res = R.drawable.snowy,
+            ansEnglish = "Bugün hava karlı. Çocuklar kartopu oynar.",
+            opts = listOf(
+                "Bugün hava güneşli. Çocuklar piknik yapar.",
+                "Bugün hava karlı. Çocuklar kartopu oynar.",
+                "Bugün hava yağmurlu. Çocuklar evde kalır.",
+                "Bugün hava fırtınalı. Çocuklar korkar."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "fırtınalı",
+            imageRes = R.drawable.stormy,
+            correctAnswer = "stormy",
+            options = listOf("cloudy", "windy", "stormy", "rainy")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "It is stormy today. We stay at home.",
+            res = R.drawable.stormy,
+            ansEnglish = "Bugün hava fırtınalı. Evde kalırız.",
+            opts = listOf(
+                "Bugün hava güneşli. Parka gideriz.",
+                "Bugün hava fırtınalı. Evde kalırız.",
+                "Bugün hava karlı. Kartopu oynarız.",
+                "Bugün hava bulutlu. Bahçede otururuz."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "yağmurlu",
+            imageRes = R.drawable.rainy,
+            correctAnswer = "rainy",
+            options = listOf("sunny", "rainy", "snowy", "windy")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Today is rainy. We drink tea at home.",
+            res = R.drawable.tea,
+            ansEnglish = "Bugün hava yağmurlu. Evde çay içeriz.",
+            opts = listOf(
+                "Bugün hava güneşli. Bahçede yemek yeriz.",
+                "Bugün hava yağmurlu. Evde çay içeriz.",
+                "Bugün hava karlı. Dışarıda oynarız.",
+                "Bugün hava rüzgarlı. Denize gideriz."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "güneşli",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "sunny",
+            options = listOf("sunny", "stormy", "cloudy", "snowy")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The weather is sunny. We can have a picnic.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Hava güneşli. Piknik yapabiliriz.",
+            opts = listOf(
+                "Hava yağmurlu. Evde kalabiliriz.",
+                "Hava güneşli. Piknik yapabiliriz.",
+                "Hava fırtınalı. Korkabiliriz.",
+                "Hava karlı. Çay içebiliriz."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "It is windy today. Wear your jacket.",
+            res = R.drawable.windy,
+            ansEnglish = "Bugün hava rüzgarlı. Ceketini giy.",
+            opts = listOf(
+                "Bugün hava güneşli. Şapkanı çıkar.",
+                "Bugün hava rüzgarlı. Ceketini giy.",
+                "Bugün hava yağmurlu. Kitap oku.",
+                "Bugün hava karlı. Salata ye."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "It is cloudy today. We stay inside and read.",
+            res = R.drawable.cloudy,
+            ansEnglish = "Bugün hava bulutlu. İçeride kalır ve okuruz.",
+            opts = listOf(
+                "Bugün hava güneşli. Bahçeye gideriz.",
+                "Bugün hava bulutlu. İçeride kalır ve okuruz.",
+                "Bugün hava karlı. Kartopu oynarız.",
+                "Bugün hava fırtınalı. Piknik yaparız."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Today is snowy, but I am not cold.",
+            res = R.drawable.snowy,
+            ansEnglish = "Bugün hava karlı ama üşümüyorum.",
+            opts = listOf(
+                "Bugün hava yağmurlu ama mutluyum.",
+                "Bugün hava karlı ama üşümüyorum.",
+                "Bugün hava güneşli ama yorgunum.",
+                "Bugün hava rüzgarlı ama hastayım."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The weather is stormy. The dog is scared.",
+            res = R.drawable.stormy,
+            ansEnglish = "Hava fırtınalı. Köpek korkmuş.",
+            opts = listOf(
+                "Hava güneşli. Köpek mutlu.",
+                "Hava fırtınalı. Köpek korkmuş.",
+                "Hava bulutlu. Köpek sakin.",
+                "Hava karlı. Köpek uykulu."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "It is snowy today. Put on your coat and play snowball.",
+            res = R.drawable.play_snowball,
+            ansEnglish = "Bugün hava karlı. Montunu giy ve kartopu oyna.",
+            opts = listOf(
+                "Bugün hava yağmurlu. Evde kal ve kitap oku.",
+                "Bugün hava karlı. Montunu giy ve kartopu oyna.",
+                "Bugün hava güneşli. Şapkanı tak ve piknik yap.",
+                "Bugün hava fırtınalı. İçeri gir ve bekle."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Snowy Weather Review",
+            image = R.drawable.cat_logo,
+            pairs = "play snowball,snowy,stormy,rainy,sunny,windy",
+            turkishOptions = listOf(
+                "kartopu oynamak",
+                "karlı",
+                "fırtınalı",
+                "yağmurlu",
+                "güneşli",
+                "rüzgarlı"
+            )
+        )
+    )
+}
+
+    fun getQuiz122(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "parçalı bulutlu",
+            imageRes = R.drawable.partly_cloudy,
+            correctAnswer = "partly cloudy",
+            options = listOf("foggy", "cloudy", "partly cloudy", "sunny")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Today is partly cloudy.",
+            res = R.drawable.partly_cloudy,
+            ansEnglish = "Bugün hava parçalı bulutlu.",
+            opts = listOf(
+                "Bugün hava güneşli.",
+                "Bugün hava sisli.",
+                "Bugün hava parçalı bulutlu.",
+                "Bugün hava yağmurlu."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "sisli",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "foggy",
+            options = listOf("windy", "foggy", "snowy", "stormy")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "It is foggy this morning.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bu sabah hava sisli.",
+            opts = listOf(
+                "Bu sabah hava güneşli.",
+                "Bu sabah hava rüzgarlı.",
+                "Bu sabah hava sisli.",
+                "Bu sabah hava karlı."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "parçalı bulutlu",
+            imageRes = R.drawable.partly_cloudy,
+            correctAnswer = "partly cloudy",
+            options = listOf("partly cloudy", "foggy", "rainy", "windy")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The weather is partly cloudy. We can walk in the garden.",
+            res = R.drawable.garden,
+            ansEnglish = "Hava parçalı bulutlu. Bahçede yürüyebiliriz.",
+            opts = listOf(
+                "Hava fırtınalı. Evde kalabiliriz.",
+                "Hava parçalı bulutlu. Bahçede yürüyebiliriz.",
+                "Hava karlı. Kartopu oynayabiliriz.",
+                "Hava yağmurlu. Koşabiliriz."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "sisli",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "foggy",
+            options = listOf("cloudy", "sunny", "foggy", "rainy")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The weather is foggy. Drive carefully.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Hava sisli. Dikkatli sür.",
+            opts = listOf(
+                "Hava güneşli. Piknik yap.",
+                "Hava karlı. Kartopu oyna.",
+                "Hava sisli. Dikkatli sür.",
+                "Hava yağmurlu. Çay iç."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "güneşli",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "sunny",
+            options = listOf("sunny", "foggy", "partly cloudy", "stormy")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Today is sunny. My family has a picnic.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bugün hava güneşli. Ailem piknik yapıyor.",
+            opts = listOf(
+                "Bugün hava yağmurlu. Ailem evde kalıyor.",
+                "Bugün hava güneşli. Ailem piknik yapıyor.",
+                "Bugün hava sisli. Ailem uyuyor.",
+                "Bugün hava fırtınalı. Ailem korkuyor."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "It is rainy today. The customer drinks hot tea.",
+            res = R.drawable.tea,
+            ansEnglish = "Bugün hava yağmurlu. Müşteri sıcak çay içiyor.",
+            opts = listOf(
+                "Bugün hava güneşli. Müşteri süt içiyor.",
+                "Bugün hava yağmurlu. Müşteri sıcak çay içiyor.",
+                "Bugün hava karlı. Müşteri koşuyor.",
+                "Bugün hava sisli. Müşteri kitap yazıyor."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The weather is snowy. The children play snowball.",
+            res = R.drawable.play_snowball,
+            ansEnglish = "Hava karlı. Çocuklar kartopu oynuyor.",
+            opts = listOf(
+                "Hava güneşli. Çocuklar yüzüyor.",
+                "Hava karlı. Çocuklar kartopu oynuyor.",
+                "Hava yağmurlu. Çocuklar piknik yapıyor.",
+                "Hava sisli. Çocuklar koşuyor."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Today is partly cloudy, but I am happy.",
+            res = R.drawable.partly_cloudy,
+            ansEnglish = "Bugün hava parçalı bulutlu ama mutluyum.",
+            opts = listOf(
+                "Bugün hava yağmurlu ama üzgünüm.",
+                "Bugün hava parçalı bulutlu ama mutluyum.",
+                "Bugün hava karlı ama korkmuşum.",
+                "Bugün hava sisli ama hastayım."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "It is foggy today. My father stays at home.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bugün hava sisli. Babam evde kalıyor.",
+            opts = listOf(
+                "Bugün hava güneşli. Babam bahçede.",
+                "Bugün hava sisli. Babam evde kalıyor.",
+                "Bugün hava karlı. Babam kartopu oynuyor.",
+                "Bugün hava yağmurlu. Babam restoranda çalışıyor."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The weather is partly cloudy. We can go outside.",
+            res = R.drawable.partly_cloudy,
+            ansEnglish = "Hava parçalı bulutlu. Dışarı çıkabiliriz.",
+            opts = listOf(
+                "Hava fırtınalı. Dışarı çıkabiliriz.",
+                "Hava parçalı bulutlu. Dışarı çıkabiliriz.",
+                "Hava sisli. Piknik yapabiliriz.",
+                "Hava yağmurlu. Kartopu oynayabiliriz."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Weather Expansion",
+            image = R.drawable.cat_logo,
+            pairs = "partly cloudy,foggy,sunny,rainy,snowy,stormy",
+            turkishOptions = listOf(
+                "parçalı bulutlu",
+                "sisli",
+                "güneşli",
+                "yağmurlu",
+                "karlı",
+                "fırtınalı"
+            )
+        )
+    )
+}
+
+    fun getQuiz123(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "parçalı bulutlu",
+            imageRes = R.drawable.partly_cloudy,
+            correctAnswer = "partly cloudy",
+            options = listOf("partly cloudy", "foggy", "stormy", "snowy")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Look! It is sunny today.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bak! Bugün hava güneşli.",
+            opts = listOf(
+                "Bak! Bugün hava güneşli.",
+                "Bak! Bugün hava yağmurlu.",
+                "Bak! Bugün hava sisli.",
+                "Bak! Bugün hava karlı."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "sisli",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "foggy",
+            options = listOf("foggy", "rainy", "windy", "cloudy")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "It is foggy this morning. Drive carefully.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bu sabah hava sisli. Dikkatli sür.",
+            opts = listOf(
+                "Bu sabah hava güneşli. Piknik yap.",
+                "Bu sabah hava sisli. Dikkatli sür.",
+                "Bu sabah hava yağmurlu. Koş.",
+                "Bu sabah hava karlı. Yüz."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "karlı",
+            imageRes = R.drawable.snowy,
+            correctAnswer = "snowy",
+            options = listOf("stormy", "sunny", "snowy", "rainy")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Because it is snowy, we play snowball.",
+            res = R.drawable.play_snowball,
+            ansEnglish = "Hava karlı olduğu için kartopu oynarız.",
+            opts = listOf(
+                "Hava güneşli olduğu için uyuruz.",
+                "Hava karlı olduğu için kartopu oynarız.",
+                "Hava yağmurlu olduğu için piknik yaparız.",
+                "Hava sisli olduğu için koşarız."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "fırtınalı",
+            imageRes = R.drawable.stormy,
+            correctAnswer = "stormy",
+            options = listOf("rainy", "stormy", "cloudy", "windy")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The weather is stormy, so we stay at home.",
+            res = R.drawable.house,
+            ansEnglish = "Hava fırtınalı, bu yüzden evde kalırız.",
+            opts = listOf(
+                "Hava güneşli, bu yüzden dışarı çıkarız.",
+                "Hava fırtınalı, bu yüzden evde kalırız.",
+                "Hava bulutlu, bu yüzden yüzmeye gideriz.",
+                "Hava karlı, bu yüzden restorana gideriz."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "rüzgarlı",
+            imageRes = R.drawable.windy,
+            correctAnswer = "windy",
+            options = listOf("windy", "sunny", "foggy", "snowy")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "It is windy today. Wear your jacket.",
+            res = R.drawable.windy,
+            ansEnglish = "Bugün hava rüzgarlı. Ceketini giy.",
+            opts = listOf(
+                "Bugün hava güneşli. Şapkanı çıkar.",
+                "Bugün hava rüzgarlı. Ceketini giy.",
+                "Bugün hava yağmurlu. Kitap oku.",
+                "Bugün hava karlı. Salata ye."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "My favorite weather is sunny because I like picnics.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "En sevdiğim hava güneşli havadır çünkü piknikleri severim.",
+            opts = listOf(
+                "En sevdiğim hava yağmurlu havadır çünkü uyurum.",
+                "En sevdiğim hava güneşli havadır çünkü piknikleri severim.",
+                "En sevdiğim hava sisli havadır çünkü koşarım.",
+                "En sevdiğim hava fırtınalı havadır çünkü yüzerim."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The weather is rainy. The customer drinks hot tea.",
+            res = R.drawable.tea,
+            ansEnglish = "Hava yağmurlu. Müşteri sıcak çay içiyor.",
+            opts = listOf(
+                "Hava güneşli. Müşteri süt içiyor.",
+                "Hava yağmurlu. Müşteri sıcak çay içiyor.",
+                "Hava karlı. Müşteri koşuyor.",
+                "Hava sisli. Müşteri yazıyor."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Today is partly cloudy. It is a good day for a walk.",
+            res = R.drawable.partly_cloudy,
+            ansEnglish = "Bugün hava parçalı bulutlu. Yürüyüş için güzel bir gün.",
+            opts = listOf(
+                "Bugün hava yağmurlu. Evde kalmak için güzel bir gün.",
+                "Bugün hava parçalı bulutlu. Yürüyüş için güzel bir gün.",
+                "Bugün hava karlı. Yüzmek için güzel bir gün.",
+                "Bugün hava fırtınalı. Piknik için güzel bir gün."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The weather is sunny and my family is happy.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Hava güneşli ve ailem mutlu.",
+            opts = listOf(
+                "Hava yağmurlu ve ailem üzgün.",
+                "Hava güneşli ve ailem mutlu.",
+                "Hava karlı ve ailem korkmuş.",
+                "Hava sisli ve ailem hasta."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "I think today is a perfect day for a picnic.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bence bugün piknik için mükemmel bir gün.",
+            opts = listOf(
+                "Bence bugün uyumak için mükemmel bir gün.",
+                "Bence bugün piknik için mükemmel bir gün.",
+                "Bence bugün kartopu oynamak için mükemmel bir gün.",
+                "Bence bugün evde kalmak için mükemmel bir gün."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Weather Mixed Review",
+            image = R.drawable.cat_logo,
+            pairs = "sunny,rainy,snowy,stormy,partly cloudy,foggy",
+            turkishOptions = listOf(
+                "güneşli",
+                "yağmurlu",
+                "karlı",
+                "fırtınalı",
+                "parçalı bulutlu",
+                "sisli"
+            )
+        )
+    )
+}
+
+    fun getQuiz124(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "ılık",
+            imageRes = R.drawable.warm,
+            correctAnswer = "warm",
+            options = listOf("hot", "warm", "cool", "cold")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The weather is warm today.",
+            res = R.drawable.warm,
+            ansEnglish = "Bugün hava ılık.",
+            opts = listOf(
+                "Bugün hava serin.",
+                "Bugün hava sıcak.",
+                "Bugün hava ılık.",
+                "Bugün hava soğuk."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "serin",
+            imageRes = R.drawable.cool,
+            correctAnswer = "cool",
+            options = listOf("warm", "hot", "cool", "cold")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "It feels cool this morning.",
+            res = R.drawable.cool,
+            ansEnglish = "Bu sabah hava serin.",
+            opts = listOf(
+                "Bu sabah hava sıcak.",
+                "Bu sabah hava serin.",
+                "Bu sabah hava yağmurlu.",
+                "Bu sabah hava karlı."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "sıcak",
+            imageRes = R.drawable.hot,
+            correctAnswer = "hot",
+            options = listOf("hot", "warm", "cool", "cold")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "It is hot today.",
+            res = R.drawable.hot,
+            ansEnglish = "Bugün hava sıcak.",
+            opts = listOf(
+                "Bugün hava serin.",
+                "Bugün hava sıcak.",
+                "Bugün hava bulutlu.",
+                "Bugün hava sisli."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "ılık",
+            imageRes = R.drawable.warm,
+            correctAnswer = "warm",
+            options = listOf("warm", "cool", "rainy", "stormy")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Warm weather is perfect for a picnic.",
+            res = R.drawable.garden,
+            ansEnglish = "Ilık hava piknik için mükemmeldir.",
+            opts = listOf(
+                "Fırtınalı hava piknik için mükemmeldir.",
+                "Ilık hava piknik için mükemmeldir.",
+                "Sisli hava piknik için mükemmeldir.",
+                "Karlı hava piknik için mükemmeldir."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "serin",
+            imageRes = R.drawable.cool,
+            correctAnswer = "cool",
+            options = listOf("hot", "cool", "warm", "sunny")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I like cool weather because I can walk outside.",
+            res = R.drawable.cool,
+            ansEnglish = "Serin havayı severim çünkü dışarıda yürüyebilirim.",
+            opts = listOf(
+                "Serin havayı severim çünkü dışarıda yürüyebilirim.",
+                "Sıcak havayı severim çünkü uyurum.",
+                "Karlı havayı severim çünkü yüzebilirim.",
+                "Sisli havayı severim çünkü koşmam."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "It is hot today, so I drink cold water.",
+            res = R.drawable.water,
+            ansEnglish = "Bugün hava sıcak, bu yüzden soğuk su içerim.",
+            opts = listOf(
+                "Bugün hava sıcak, bu yüzden soğuk su içerim.",
+                "Bugün hava karlı, bu yüzden çay içerim.",
+                "Bugün hava sisli, bu yüzden uyurum.",
+                "Bugün hava yağmurlu, bu yüzden koşarım."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "My favorite weather is warm and sunny.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "En sevdiğim hava ılık ve güneşli havadır.",
+            opts = listOf(
+                "En sevdiğim hava yağmurlu ve rüzgarlı havadır.",
+                "En sevdiğim hava ılık ve güneşli havadır.",
+                "En sevdiğim hava fırtınalı havadır.",
+                "En sevdiğim hava sisli havadır."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The weather is cool. My father is reading in the garden.",
+            res = R.drawable.garden,
+            ansEnglish = "Hava serin. Babam bahçede kitap okuyor.",
+            opts = listOf(
+                "Hava sıcak. Babam uyuyor.",
+                "Hava serin. Babam bahçede kitap okuyor.",
+                "Hava karlı. Babam kartopu oynuyor.",
+                "Hava fırtınalı. Babam koşuyor."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "It is too hot. Let's stay inside.",
+            res = R.drawable.hot,
+            ansEnglish = "Hava çok sıcak. İçeride kalalım.",
+            opts = listOf(
+                "Hava çok sıcak. İçeride kalalım.",
+                "Hava çok serin. Piknik yapalım.",
+                "Hava çok karlı. Yüzelim.",
+                "Hava çok sisli. Bahçeye gidelim."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Today is warm and sunny. We can eat outside.",
+            res = R.drawable.garden,
+            ansEnglish = "Bugün hava ılık ve güneşli. Dışarıda yemek yiyebiliriz.",
+            opts = listOf(
+                "Bugün hava yağmurlu. Evde kalabiliriz.",
+                "Bugün hava ılık ve güneşli. Dışarıda yemek yiyebiliriz.",
+                "Bugün hava fırtınalı. Kartopu oynayabiliriz.",
+                "Bugün hava sisli. Piknik yapabiliriz."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Temperature Weather",
+            image = R.drawable.cat_logo,
+            pairs = "warm,cool,hot,sunny,rainy,snowy",
+            turkishOptions = listOf(
+                "ılık",
+                "serin",
+                "sıcak",
+                "güneşli",
+                "yağmurlu",
+                "karlı"
+            )
+        )
+    )
+}
+
+    fun getQuiz125(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "parçalı bulutlu",
+            imageRes = R.drawable.partly_cloudy,
+            correctAnswer = "partly cloudy",
+            options = listOf("foggy", "partly cloudy", "stormy", "snowy")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "What's the weather like today? It is sunny.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bugün hava nasıl? Güneşli.",
+            opts = listOf(
+                "Bugün hava nasıl? Güneşli.",
+                "Bugün hava nasıl? Karlı.",
+                "Bugün hava nasıl? Sisli.",
+                "Bugün hava nasıl? Fırtınalı."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "sisli",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "foggy",
+            options = listOf("foggy", "cloudy", "rainy", "sunny")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "How is the weather today? It is foggy.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bugün hava nasıl? Sisli.",
+            opts = listOf(
+                "Bugün hava nasıl? Sisli.",
+                "Bugün hava nasıl? Güneşli.",
+                "Bugün hava nasıl? Yağmurlu.",
+                "Bugün hava nasıl? Karlı."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "ılık",
+            imageRes = R.drawable.warm,
+            correctAnswer = "warm",
+            options = listOf("cool", "hot", "warm", "cold")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "My favorite weather is warm and sunny.",
+            res = R.drawable.warm,
+            ansEnglish = "En sevdiğim hava ılık ve güneşli havadır.",
+            opts = listOf(
+                "En sevdiğim hava yağmurlu havadır.",
+                "En sevdiğim hava ılık ve güneşli havadır.",
+                "En sevdiğim hava fırtınalı havadır.",
+                "En sevdiğim hava sisli havadır."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "serin",
+            imageRes = R.drawable.cool,
+            correctAnswer = "cool",
+            options = listOf("warm", "cool", "hot", "snowy")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "I like cool weather because I can walk outside.",
+            res = R.drawable.cool,
+            ansEnglish = "Serin havayı severim çünkü dışarıda yürüyebilirim.",
+            opts = listOf(
+                "Serin havayı severim çünkü dışarıda yürüyebilirim.",
+                "Sıcak havayı severim çünkü uyurum.",
+                "Karlı havayı severim çünkü yüzerim.",
+                "Fırtınalı havayı severim çünkü koşarım."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "sıcak",
+            imageRes = R.drawable.hot,
+            correctAnswer = "hot",
+            options = listOf("hot", "warm", "cool", "cold")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I don't like hot weather.",
+            res = R.drawable.hot,
+            ansEnglish = "Sıcak havayı sevmem.",
+            opts = listOf(
+                "Sıcak havayı severim.",
+                "Sıcak havayı sevmem.",
+                "Yağmurlu havayı sevmem.",
+                "Serin havayı severim."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "When it is rainy, we stay at home.",
+            res = R.drawable.house,
+            ansEnglish = "Hava yağmurlu olduğunda evde kalırız.",
+            opts = listOf(
+                "Hava güneşli olduğunda piknik yaparız.",
+                "Hava yağmurlu olduğunda evde kalırız.",
+                "Hava karlı olduğunda yüzeriz.",
+                "Hava sisli olduğunda koşarız."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "When it is snowy, we play snowball.",
+            res = R.drawable.play_snowball,
+            ansEnglish = "Hava karlı olduğunda kartopu oynarız.",
+            opts = listOf(
+                "Hava karlı olduğunda kartopu oynarız.",
+                "Hava güneşli olduğunda uyuruz.",
+                "Hava yağmurlu olduğunda yüzmeye gideriz.",
+                "Hava fırtınalı olduğunda piknik yaparız."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "If it is sunny, we can have a picnic.",
+            res = R.drawable.garden,
+            ansEnglish = "Hava güneşliyse piknik yapabiliriz.",
+            opts = listOf(
+                "Hava güneşliyse piknik yapabiliriz.",
+                "Hava fırtınalıysa piknik yapabiliriz.",
+                "Hava sisliyse kartopu oynayabiliriz.",
+                "Hava yağmurluysa bahçede oturabiliriz."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "If it is stormy, we stay inside.",
+            res = R.drawable.stormy,
+            ansEnglish = "Hava fırtınalıysa içeride kalırız.",
+            opts = listOf(
+                "Hava güneşliyse içeride kalırız.",
+                "Hava fırtınalıysa içeride kalırız.",
+                "Hava karlıysa yüzmeye gideriz.",
+                "Hava parçalı bulutluysa evde kalırız."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Do you like sunny weather? Yes, I do.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Güneşli havayı sever misin? Evet, severim.",
+            opts = listOf(
+                "Güneşli havayı sever misin? Hayır, sevmem.",
+                "Güneşli havayı sever misin? Evet, severim.",
+                "Yağmurlu havayı sever misin? Evet, severim.",
+                "Sisli havayı sever misin? Hayır, sevmem."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Weather Final Review",
+            image = R.drawable.cat_logo,
+            pairs = "sunny,rainy,snowy,stormy,warm,cool",
+            turkishOptions = listOf(
+                "güneşli",
+                "yağmurlu",
+                "karlı",
+                "fırtınalı",
+                "ılık",
+                "serin"
+            )
+        )
+    )
+}
+
+    fun getQuiz126(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "müzik",
+            imageRes = R.drawable.music,
+            correctAnswer = "music",
+            options = listOf("football", "music", "movie", "drawing")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I like music.",
+            res = R.drawable.music,
+            ansEnglish = "Müziği severim.",
+            opts = listOf(
+                "Müziği severim.",
+                "Futbolu severim.",
+                "Film izlemeyi severim.",
+                "Çizim yapmayı severim."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "futbol",
+            imageRes = R.drawable.football,
+            correctAnswer = "football",
+            options = listOf("drawing", "football", "music", "movie")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "My brother likes football.",
+            res = R.drawable.football,
+            ansEnglish = "Erkek kardeşim futbolu sever.",
+            opts = listOf(
+                "Erkek kardeşim müziği sever.",
+                "Erkek kardeşim futbolu sever.",
+                "Erkek kardeşim film izlemeyi sever.",
+                "Erkek kardeşim çizim yapmayı sever."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "film",
+            imageRes = R.drawable.movie,
+            correctAnswer = "movie",
+            options = listOf("music", "movie", "drawing", "football")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "My mother likes movies.",
+            res = R.drawable.movie,
+            ansEnglish = "Annem filmleri sever.",
+            opts = listOf(
+                "Annem futbolu sever.",
+                "Annem filmleri sever.",
+                "Annem müziği sever.",
+                "Annem çizim yapmayı sever."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "çizim yapmak",
+            imageRes = R.drawable.drawing,
+            correctAnswer = "drawing",
+            options = listOf("movie", "music", "drawing", "football")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "My sister likes drawing.",
+            res = R.drawable.drawing,
+            ansEnglish = "Kız kardeşim çizim yapmayı sever.",
+            opts = listOf(
+                "Kız kardeşim futbolu sever.",
+                "Kız kardeşim müziği sever.",
+                "Kız kardeşim çizim yapmayı sever.",
+                "Kız kardeşim film izlemeyi sever."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "müzik",
+            imageRes = R.drawable.music,
+            correctAnswer = "music",
+            options = listOf("music", "drawing", "football", "movie")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "She likes music because it is relaxing.",
+            res = R.drawable.music,
+            ansEnglish = "O müziği sever çünkü rahatlatıcıdır.",
+            opts = listOf(
+                "O futbolu sever çünkü eğlencelidir.",
+                "O müziği sever çünkü rahatlatıcıdır.",
+                "O film izlemeyi sever çünkü uzundur.",
+                "O çizim yapmayı sever çünkü zordur."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "I watch movies on rainy days.",
+            res = R.drawable.movie,
+            ansEnglish = "Yağmurlu günlerde film izlerim.",
+            opts = listOf(
+                "Yağmurlu günlerde futbol oynarım.",
+                "Yağmurlu günlerde film izlerim.",
+                "Yağmurlu günlerde koşarım.",
+                "Yağmurlu günlerde yüzerim."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "My father likes music and movies.",
+            res = R.drawable.music,
+            ansEnglish = "Babam müzik ve filmleri sever.",
+            opts = listOf(
+                "Babam futbol ve çizimi sever.",
+                "Babam müzik ve filmleri sever.",
+                "Babam sadece futbolu sever.",
+                "Babam sadece müziği sever."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "He plays football with his friends.",
+            res = R.drawable.football,
+            ansEnglish = "O arkadaşlarıyla futbol oynar.",
+            opts = listOf(
+                "O arkadaşlarıyla futbol oynar.",
+                "O arkadaşlarıyla film izler.",
+                "O arkadaşlarıyla müzik dinler.",
+                "O arkadaşlarıyla resim çizer."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Today is sunny, so we listen to music in the garden.",
+            res = R.drawable.garden,
+            ansEnglish = "Bugün hava güneşli, bu yüzden bahçede müzik dinliyoruz.",
+            opts = listOf(
+                "Bugün hava yağmurlu, bu yüzden evde kalıyoruz.",
+                "Bugün hava güneşli, bu yüzden bahçede müzik dinliyoruz.",
+                "Bugün hava karlı, bu yüzden kartopu oynuyoruz.",
+                "Bugün hava fırtınalı, bu yüzden uyuyoruz."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "My teacher likes drawing.",
+            res = R.drawable.drawing,
+            ansEnglish = "Öğretmenim çizim yapmayı sever.",
+            opts = listOf(
+                "Öğretmenim futbolu sever.",
+                "Öğretmenim çizim yapmayı sever.",
+                "Öğretmenim film izlemeyi sever.",
+                "Öğretmenim müziği sever."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Hobbies Introduction",
+            image = R.drawable.cat_logo,
+            pairs = "music,football,movie,drawing,teacher,brother",
+            turkishOptions = listOf(
+                "müzik",
+                "futbol",
+                "film",
+                "çizim yapmak",
+                "öğretmen",
+                "erkek kardeş"
+            )
+        )
+    )
+}
+
+    fun getQuiz127(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "film",
+            imageRes = R.drawable.movie,
+            correctAnswer = "movie",
+            options = listOf("music", "football", "movie", "drawing")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "She watches movies every weekend.",
+            res = R.drawable.movie,
+            ansEnglish = "O her hafta sonu film izler.",
+            opts = listOf(
+                "O her hafta sonu futbol oynar.",
+                "O her hafta sonu film izler.",
+                "O her hafta sonu müzik dinler.",
+                "O her hafta sonu resim çizer."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "müzik",
+            imageRes = R.drawable.music,
+            correctAnswer = "music",
+            options = listOf("music", "drawing", "movie", "football")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "My father listens to music in the evening.",
+            res = R.drawable.music,
+            ansEnglish = "Babam akşamları müzik dinler.",
+            opts = listOf(
+                "Babam akşamları futbol oynar.",
+                "Babam akşamları müzik dinler.",
+                "Babam akşamları film izler.",
+                "Babam akşamları kitap okur."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "çizim yapmak",
+            imageRes = R.drawable.drawing,
+            correctAnswer = "drawing",
+            options = listOf("football", "movie", "drawing", "music")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "My sister draws pictures after school.",
+            res = R.drawable.drawing,
+            ansEnglish = "Kız kardeşim okuldan sonra resim çizer.",
+            opts = listOf(
+                "Kız kardeşim okuldan sonra futbol oynar.",
+                "Kız kardeşim okuldan sonra film izler.",
+                "Kız kardeşim okuldan sonra resim çizer.",
+                "Kız kardeşim okuldan sonra müzik dinler."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "futbol",
+            imageRes = R.drawable.football,
+            correctAnswer = "football",
+            options = listOf("football", "music", "drawing", "movie")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "He plays football with his friends.",
+            res = R.drawable.football,
+            ansEnglish = "O arkadaşlarıyla futbol oynar.",
+            opts = listOf(
+                "O arkadaşlarıyla müzik dinler.",
+                "O arkadaşlarıyla futbol oynar.",
+                "O arkadaşlarıyla film izler.",
+                "O arkadaşlarıyla resim çizer."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "müzik",
+            imageRes = R.drawable.music,
+            correctAnswer = "music",
+            options = listOf("drawing", "music", "football", "movie")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I like music, but my brother likes football.",
+            res = R.drawable.music,
+            ansEnglish = "Ben müziği severim ama erkek kardeşim futbolu sever.",
+            opts = listOf(
+                "Ben futbolu severim ama erkek kardeşim müziği sever.",
+                "Ben müziği severim ama erkek kardeşim futbolu sever.",
+                "Ben filmi severim ama erkek kardeşim resim çizmeyi sever.",
+                "Ben müziği severim ama erkek kardeşim film izlemeyi sever."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "My teacher watches movies on rainy days.",
+            res = R.drawable.movie,
+            ansEnglish = "Öğretmenim yağmurlu günlerde film izler.",
+            opts = listOf(
+                "Öğretmenim yağmurlu günlerde futbol oynar.",
+                "Öğretmenim yağmurlu günlerde film izler.",
+                "Öğretmenim yağmurlu günlerde resim çizer.",
+                "Öğretmenim yağmurlu günlerde müzik dinler."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "My mother likes drawing because it is relaxing.",
+            res = R.drawable.drawing,
+            ansEnglish = "Annem çizim yapmayı sever çünkü rahatlatıcıdır.",
+            opts = listOf(
+                "Annem futbolu sever çünkü eğlencelidir.",
+                "Annem çizim yapmayı sever çünkü rahatlatıcıdır.",
+                "Annem müziği sever çünkü zordur.",
+                "Annem film izlemeyi sever çünkü uzundur."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Today is sunny, so we play football in the garden.",
+            res = R.drawable.football,
+            ansEnglish = "Bugün hava güneşli, bu yüzden bahçede futbol oynuyoruz.",
+            opts = listOf(
+                "Bugün hava yağmurlu, bu yüzden evde kalıyoruz.",
+                "Bugün hava güneşli, bu yüzden bahçede futbol oynuyoruz.",
+                "Bugün hava karlı, bu yüzden kartopu oynuyoruz.",
+                "Bugün hava fırtınalı, bu yüzden uyuyoruz."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "She listens to music while she draws pictures.",
+            res = R.drawable.drawing,
+            ansEnglish = "O resim çizerken müzik dinler.",
+            opts = listOf(
+                "O futbol oynarken müzik dinler.",
+                "O resim çizerken müzik dinler.",
+                "O film izlerken uyur.",
+                "O kitap okurken koşar."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "My friend likes movies and music.",
+            res = R.drawable.movie,
+            ansEnglish = "Arkadaşım film ve müziği sever.",
+            opts = listOf(
+                "Arkadaşım futbol ve resmi sever.",
+                "Arkadaşım film ve müziği sever.",
+                "Arkadaşım sadece futbolu sever.",
+                "Arkadaşım sadece resmi sever."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Hobbies Review",
+            image = R.drawable.cat_logo,
+            pairs = "music,football,movie,drawing,father,teacher",
+            turkishOptions = listOf(
+                "müzik",
+                "futbol",
+                "film",
+                "çizim yapmak",
+                "baba",
+                "öğretmen"
+            )
+        )
+    )
+}
+
+    fun getQuiz128(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "yüzme",
+            imageRes = R.drawable.swimming,
+            correctAnswer = "swimming",
+            options = listOf("sing", "swimming", "music", "football")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I like swimming.",
+            res = R.drawable.swimming,
+            ansEnglish = "Yüzmeyi severim.",
+            opts = listOf(
+                "Şarkı söylemeyi severim.",
+                "Yüzmeyi severim.",
+                "Müziği severim.",
+                "Futbolu severim."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "şarkı söylemek",
+            imageRes = R.drawable.sing,
+            correctAnswer = "singing",
+            options = listOf("movie", "drawing", "sing", "music")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "My sister likes singing.",
+            res = R.drawable.sing,
+            ansEnglish = "Kız kardeşim şarkı söylemeyi sever.",
+            opts = listOf(
+                "Kız kardeşim yüzmeyi sever.",
+                "Kız kardeşim şarkı söylemeyi sever.",
+                "Kız kardeşim futbolu sever.",
+                "Kız kardeşim film izlemeyi sever."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "yüzme",
+            imageRes = R.drawable.swimming,
+            correctAnswer = "swimming",
+            options = listOf("swimming", "football", "movie", "drawing")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "My brother goes swimming in summer.",
+            res = R.drawable.swimming,
+            ansEnglish = "Erkek kardeşim yazın yüzmeye gider.",
+            opts = listOf(
+                "Erkek kardeşim yazın futbol oynar.",
+                "Erkek kardeşim yazın yüzmeye gider.",
+                "Erkek kardeşim yazın film izler.",
+                "Erkek kardeşim yazın kitap okur."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "şarkı söylemek",
+            imageRes = R.drawable.sing,
+            correctAnswer = "sing",
+            options = listOf("music", "football", "sing", "movie")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "My mother sings very well.",
+            res = R.drawable.sing,
+            ansEnglish = "Annem çok iyi şarkı söyler.",
+            opts = listOf(
+                "Annem çok iyi resim çizer.",
+                "Annem çok iyi şarkı söyler.",
+                "Annem çok iyi futbol oynar.",
+                "Annem çok iyi film izler."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "müzik",
+            imageRes = R.drawable.music,
+            correctAnswer = "music",
+            options = listOf("music", "sing", "swimming", "movie")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "She likes music and singing.",
+            res = R.drawable.sing,
+            ansEnglish = "O müziği ve şarkı söylemeyi sever.",
+            opts = listOf(
+                "O futbolu ve yüzmeyi sever.",
+                "O müziği ve şarkı söylemeyi sever.",
+                "O film izlemeyi ve resim çizmeyi sever.",
+                "O sadece müziği sever."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "I go swimming when the weather is hot.",
+            res = R.drawable.swimming,
+            ansEnglish = "Hava sıcak olduğunda yüzmeye giderim.",
+            opts = listOf(
+                "Hava sıcak olduğunda yüzmeye giderim.",
+                "Hava yağmurlu olduğunda evde kalırım.",
+                "Hava karlı olduğunda kartopu oynarım.",
+                "Hava sisli olduğunda kitap okurum."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "My teacher likes singing in her free time.",
+            res = R.drawable.sing,
+            ansEnglish = "Öğretmenim boş zamanlarında şarkı söylemeyi sever.",
+            opts = listOf(
+                "Öğretmenim boş zamanlarında futbol oynamayı sever.",
+                "Öğretmenim boş zamanlarında şarkı söylemeyi sever.",
+                "Öğretmenim boş zamanlarında yüzmeyi sever.",
+                "Öğretmenim boş zamanlarında film izlemeyi sever."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Today is sunny, so we go swimming.",
+            res = R.drawable.swimming,
+            ansEnglish = "Bugün hava güneşli, bu yüzden yüzmeye gidiyoruz.",
+            opts = listOf(
+                "Bugün hava yağmurlu, bu yüzden evde kalıyoruz.",
+                "Bugün hava güneşli, bu yüzden yüzmeye gidiyoruz.",
+                "Bugün hava karlı, bu yüzden kartopu oynuyoruz.",
+                "Bugün hava fırtınalı, bu yüzden uyuyoruz."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "He sings while he cooks.",
+            res = R.drawable.sing,
+            ansEnglish = "O yemek yaparken şarkı söyler.",
+            opts = listOf(
+                "O yemek yaparken şarkı söyler.",
+                "O futbol oynarken kitap okur.",
+                "O film izlerken uyur.",
+                "O yüzmeye giderken koşar."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "My friend likes swimming, but I like football.",
+            res = R.drawable.swimming,
+            ansEnglish = "Arkadaşım yüzmeyi sever ama ben futbolu severim.",
+            opts = listOf(
+                "Arkadaşım şarkı söylemeyi sever ama ben müziği severim.",
+                "Arkadaşım yüzmeyi sever ama ben futbolu severim.",
+                "Arkadaşım futbolu sever ama ben yüzmeyi severim.",
+                "Arkadaşım film izlemeyi sever ama ben resim çizmeyi severim."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "New Hobbies",
+            image = R.drawable.cat_logo,
+            pairs = "swimming,sing,music,football,summer,teacher",
+            turkishOptions = listOf(
+                "yüzme",
+                "şarkı söylemek",
+                "müzik",
+                "futbol",
+                "yaz",
+                "öğretmen"
+            )
+        )
+    )
+}
+
+    fun getQuiz129(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "kitap okumak",
+            imageRes = R.drawable.read,
+            correctAnswer = "reading",
+            options = listOf("gaming", "read", "music", "football")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I like reading.",
+            res = R.drawable.read,
+            ansEnglish = "Kitap okumayı severim.",
+            opts = listOf(
+                "Kitap okumayı severim.",
+                "Oyun oynamayı severim.",
+                "Müziği severim.",
+                "Futbolu severim."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "oyun oynamak",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "gaming",
+            options = listOf("movie", "drawing", "gaming", "music")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "My brother likes gaming.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Erkek kardeşim oyun oynamayı sever.",
+            opts = listOf(
+                "Erkek kardeşim kitap okumayı sever.",
+                "Erkek kardeşim oyun oynamayı sever.",
+                "Erkek kardeşim futbolu sever.",
+                "Erkek kardeşim film izlemeyi sever."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "kitap okumak",
+            imageRes = R.drawable.read,
+            correctAnswer = "reading",
+            options = listOf("read", "football", "movie", "drawing")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "My mother reads books every evening.",
+            res = R.drawable.read,
+            ansEnglish = "Annem her akşam kitap okur.",
+            opts = listOf(
+                "Annem her akşam futbol oynar.",
+                "Annem her akşam kitap okur.",
+                "Annem her akşam film izler.",
+                "Annem her akşam yüzmeye gider."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "oyun oynamak",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "gaming",
+            options = listOf("music", "football", "gaming", "movie")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "He plays games with his friends.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "O arkadaşlarıyla oyun oynar.",
+            opts = listOf(
+                "O arkadaşlarıyla futbol oynar.",
+                "O arkadaşlarıyla oyun oynar.",
+                "O arkadaşlarıyla kitap okur.",
+                "O arkadaşlarıyla film izler."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "müzik",
+            imageRes = R.drawable.music,
+            correctAnswer = "music",
+            options = listOf("music", "gaming", "swimming", "movie")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "She likes music and reading.",
+            res = R.drawable.music,
+            ansEnglish = "O müziği ve kitap okumayı sever.",
+            opts = listOf(
+                "O futbolu ve oyun oynamayı sever.",
+                "O müziği ve kitap okumayı sever.",
+                "O film izlemeyi ve resim çizmeyi sever.",
+                "O sadece müziği sever."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "I read books when the weather is rainy.",
+            res = R.drawable.read,
+            ansEnglish = "Hava yağmurlu olduğunda kitap okurum.",
+            opts = listOf(
+                "Hava yağmurlu olduğunda kitap okurum.",
+                "Hava güneşli olduğunda yüzmeye giderim.",
+                "Hava karlı olduğunda kartopu oynarım.",
+                "Hava sisli olduğunda koşarım."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "My teacher likes reading in her free time.",
+            res = R.drawable.read,
+            ansEnglish = "Öğretmenim boş zamanlarında kitap okumayı sever.",
+            opts = listOf(
+                "Öğretmenim boş zamanlarında futbol oynamayı sever.",
+                "Öğretmenim boş zamanlarında kitap okumayı sever.",
+                "Öğretmenim boş zamanlarında yüzmeyi sever.",
+                "Öğretmenim boş zamanlarında film izlemeyi sever."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Today is sunny, so we go swimming.",
+            res = R.drawable.swimming,
+            ansEnglish = "Bugün hava güneşli, bu yüzden yüzmeye gidiyoruz.",
+            opts = listOf(
+                "Bugün hava yağmurlu, bu yüzden evde kalıyoruz.",
+                "Bugün hava güneşli, bu yüzden yüzmeye gidiyoruz.",
+                "Bugün hava karlı, bu yüzden kartopu oynuyoruz.",
+                "Bugün hava fırtınalı, bu yüzden uyuyoruz."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "He reads while his sister plays games.",
+            res = R.drawable.read,
+            ansEnglish = "Kız kardeşi oyun oynarken o kitap okur.",
+            opts = listOf(
+                "Kız kardeşi oyun oynarken o kitap okur.",
+                "Kız kardeşi futbol oynarken o uyur.",
+                "Kız kardeşi film izlerken o koşar.",
+                "Kız kardeşi yüzmeye giderken o yemek yer."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "My friend likes gaming, but I like football.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Arkadaşım oyun oynamayı sever ama ben futbolu severim.",
+            opts = listOf(
+                "Arkadaşım kitap okumayı sever ama ben müziği severim.",
+                "Arkadaşım oyun oynamayı sever ama ben futbolu severim.",
+                "Arkadaşım futbolu sever ama ben yüzmeyi severim.",
+                "Arkadaşım film izlemeyi sever ama ben resim çizmeyi severim."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Hobbies Expansion",
+            image = R.drawable.cat_logo,
+            pairs = "reading,gaming,music,football,swimming,movie",
+            turkishOptions = listOf(
+                "kitap okumak",
+                "oyun oynamak",
+                "müzik",
+                "futbol",
+                "yüzme",
+                "film"
+            )
+        )
+    )
+}
+
+    fun getQuiz130(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "oyun oynamak",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "gaming",
+            options = listOf("music", "gaming", "football", "movie")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "My favorite hobby is gaming.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "En sevdiğim hobim oyun oynamaktır.",
+            opts = listOf(
+                "En sevdiğim hobim futbol oynamaktır.",
+                "En sevdiğim hobim oyun oynamaktır.",
+                "En sevdiğim hobim müzik dinlemektir.",
+                "En sevdiğim hobim film izlemektir."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "müzik",
+            imageRes = R.drawable.music,
+            correctAnswer = "music",
+            options = listOf("football", "movie", "music", "drawing")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "She enjoys music in her free time.",
+            res = R.drawable.music,
+            ansEnglish = "O boş zamanında müzikten keyif alır.",
+            opts = listOf(
+                "O boş zamanında futbol oynar.",
+                "O boş zamanında film izler.",
+                "O boş zamanında müzikten keyif alır.",
+                "O boş zamanında oyun oynar."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "futbol",
+            imageRes = R.drawable.football,
+            correctAnswer = "football",
+            options = listOf("movie", "football", "swimming", "gaming")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "He plays football after school.",
+            res = R.drawable.football,
+            ansEnglish = "O okuldan sonra futbol oynar.",
+            opts = listOf(
+                "O okuldan sonra film izler.",
+                "O okuldan sonra futbol oynar.",
+                "O okuldan sonra oyun oynar.",
+                "O okuldan sonra yüzer."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "film",
+            imageRes = R.drawable.movie,
+            correctAnswer = "movie",
+            options = listOf("drawing", "music", "movie", "football")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "We watch a movie at home.",
+            res = R.drawable.movie,
+            ansEnglish = "Evde film izleriz.",
+            opts = listOf(
+                "Evde müzik dinleriz.",
+                "Evde futbol oynarız.",
+                "Evde film izleriz.",
+                "Evde oyun oynarız."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "yüzme",
+            imageRes = R.drawable.swimming,
+            correctAnswer = "swimming",
+            options = listOf("swimming", "movie", "gaming", "music")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I enjoy swimming when it is hot.",
+            res = R.drawable.swimming,
+            ansEnglish = "Hava sıcak olduğunda yüzmekten keyif alırım.",
+            opts = listOf(
+                "Hava sıcak olduğunda yüzmekten keyif alırım.",
+                "Hava yağmurlu olduğunda film izlerim.",
+                "Hava karlı olduğunda oyun oynarım.",
+                "Hava rüzgarlı olduğunda müzik dinlerim."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "My brother's favorite hobby is football.",
+            res = R.drawable.football,
+            ansEnglish = "Erkek kardeşimin en sevdiği hobi futboldur.",
+            opts = listOf(
+                "Erkek kardeşimin en sevdiği hobi müziktir.",
+                "Erkek kardeşimin en sevdiği hobi futboldur.",
+                "Erkek kardeşimin en sevdiği hobi filmdir.",
+                "Erkek kardeşimin en sevdiği hobi oyundur."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "My sister likes drawing because it is relaxing.",
+            res = R.drawable.drawing,
+            ansEnglish = "Kız kardeşim resim çizmeyi sever çünkü rahatlatıcıdır.",
+            opts = listOf(
+                "Kız kardeşim futbolu sever çünkü eğlencelidir.",
+                "Kız kardeşim resim çizmeyi sever çünkü rahatlatıcıdır.",
+                "Kız kardeşim oyun oynamayı sever çünkü zordur.",
+                "Kız kardeşim film izlemeyi sever çünkü kısadır."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "On rainy days, we watch movies.",
+            res = R.drawable.movie,
+            ansEnglish = "Yağmurlu günlerde film izleriz.",
+            opts = listOf(
+                "Güneşli günlerde yüzeriz.",
+                "Yağmurlu günlerde film izleriz.",
+                "Karlı günlerde futbol oynarız.",
+                "Sisli günlerde bahçeye gideriz."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "He likes gaming, but she likes music.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "O oyun oynamayı sever ama o müziği sever.",
+            opts = listOf(
+                "O futbolu sever ama o film izlemeyi sever.",
+                "O oyun oynamayı sever ama o müziği sever.",
+                "O yüzmeyi sever ama o futbolu sever.",
+                "O müziği sever ama o oyun oynamayı sever."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "In my free time, I listen to music and watch movies.",
+            res = R.drawable.music,
+            ansEnglish = "Boş zamanımda müzik dinlerim ve film izlerim.",
+            opts = listOf(
+                "Boş zamanımda futbol oynarım ve yüzerim.",
+                "Boş zamanımda oyun oynarım ve resim çizerim.",
+                "Boş zamanımda müzik dinlerim ve film izlerim.",
+                "Boş zamanımda evde kalırım ve uyurum."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Hobbies Pattern Review",
+            image = R.drawable.cat_logo,
+            pairs = "gaming,music,football,movie,swimming,drawing",
+            turkishOptions = listOf(
+                "oyun oynamak",
+                "müzik",
+                "futbol",
+                "film",
+                "yüzme",
+                "resim çizmek"
+            )
+        )
+    )
+}
+
+    fun getQuiz131(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "dans etmek",
+            imageRes = R.drawable.dance,
+            correctAnswer = "dance",
+            options = listOf("paint", "dance", "cook", "travel")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "My favorite hobby is dancing.",
+            res = R.drawable.dance,
+            ansEnglish = "En sevdiğim hobi dans etmektir.",
+            opts = listOf(
+                "En sevdiğim hobi dans etmektir.",
+                "En sevdiğim hobi seyahat etmektir.",
+                "En sevdiğim hobi yemek yapmaktır.",
+                "En sevdiğim hobi resim yapmaktır."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "boyamak",
+            imageRes = R.drawable.paint,
+            correctAnswer = "paint",
+            options = listOf("dance", "paint", "travel", "movie")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "She likes painting.",
+            res = R.drawable.paint,
+            ansEnglish = "O resim yapmayı sever.",
+            opts = listOf(
+                "O seyahat etmeyi sever.",
+                "O futbol oynamayı sever.",
+                "O resim yapmayı sever.",
+                "O yüzmeyi sever."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "yemek yapmak",
+            imageRes = R.drawable.cook,
+            correctAnswer = "cook",
+            options = listOf("cook", "dance", "music", "travel")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "I like cooking with my mother.",
+            res = R.drawable.cook,
+            ansEnglish = "Annemle yemek yapmayı severim.",
+            opts = listOf(
+                "Annemle yemek yapmayı severim.",
+                "Annemle film izlemeyi severim.",
+                "Annemle yüzmeyi severim.",
+                "Annemle futbol oynamayı severim."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "seyahat etmek",
+            imageRes = R.drawable.travel,
+            correctAnswer = "travel",
+            options = listOf("travel", "cook", "paint", "dance")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "My father likes traveling.",
+            res = R.drawable.travel,
+            ansEnglish = "Babam seyahat etmeyi sever.",
+            opts = listOf(
+                "Babam müzik dinlemeyi sever.",
+                "Babam seyahat etmeyi sever.",
+                "Babam oyun oynamayı sever.",
+                "Babam yüzmeyi sever."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "dans etmek",
+            imageRes = R.drawable.dance,
+            correctAnswer = "dance",
+            options = listOf("gaming", "dance", "read", "music")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "We dance at parties.",
+            res = R.drawable.dance,
+            ansEnglish = "Partilerde dans ederiz.",
+            opts = listOf(
+                "Partilerde dans ederiz.",
+                "Partilerde film izleriz.",
+                "Partilerde kitap okuruz.",
+                "Partilerde yüzeriz."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "My favorite hobby is traveling.",
+            res = R.drawable.travel,
+            ansEnglish = "En sevdiğim hobi seyahat etmektir.",
+            opts = listOf(
+                "En sevdiğim hobi yüzmektir.",
+                "En sevdiğim hobi seyahat etmektir.",
+                "En sevdiğim hobi oyun oynamaktır.",
+                "En sevdiğim hobi futbol oynamaktır."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "He cooks every weekend.",
+            res = R.drawable.cook,
+            ansEnglish = "O her hafta sonu yemek yapar.",
+            opts = listOf(
+                "O her hafta sonu seyahat eder.",
+                "O her hafta sonu yemek yapar.",
+                "O her hafta sonu dans eder.",
+                "O her hafta sonu film izler."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I paint pictures in my free time.",
+            res = R.drawable.paint,
+            ansEnglish = "Boş zamanımda resim yaparım.",
+            opts = listOf(
+                "Boş zamanımda resim yaparım.",
+                "Boş zamanımda futbol oynarım.",
+                "Boş zamanımda yüzerim.",
+                "Boş zamanımda seyahat ederim."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "She likes music and dancing.",
+            res = R.drawable.dance,
+            ansEnglish = "O müziği ve dans etmeyi sever.",
+            opts = listOf(
+                "O futbolu ve yüzmeyi sever.",
+                "O müziği ve dans etmeyi sever.",
+                "O film izlemeyi ve oyun oynamayı sever.",
+                "O sadece müziği sever."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Traveling is fun.",
+            res = R.drawable.travel,
+            ansEnglish = "Seyahat etmek eğlencelidir.",
+            opts = listOf(
+                "Seyahat etmek eğlencelidir.",
+                "Yemek yapmak zordur.",
+                "Dans etmek sıkıcıdır.",
+                "Film izlemek pahalıdır."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "New Hobbies and Activities",
+            image = R.drawable.cat_logo,
+            pairs = "dance,paint,cook,travel,music,football",
+            turkishOptions = listOf(
+                "dans etmek",
+                "boyamak",
+                "yemek yapmak",
+                "seyahat etmek",
+                "müzik",
+                "futbol"
+            )
+        )
+    )
+}
+
+    fun getQuiz132(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "dans etmek",
+            imageRes = R.drawable.dance,
+            correctAnswer = "dance",
+            options = listOf("paint", "dance", "cook", "travel")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "What is your favorite hobby?",
+            res = R.drawable.pp1,
+            ansEnglish = "En sevdiğin hobi nedir?",
+            opts = listOf(
+                "En sevdiğin hobi nedir?",
+                "Bugün hava nasıl?",
+                "Kaç kardeşin var?",
+                "Nereye gidiyorsun?"
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "boyamak",
+            imageRes = R.drawable.paint,
+            correctAnswer = "paint",
+            options = listOf("dance", "paint", "travel", "cook")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "My favorite hobby is painting.",
+            res = R.drawable.pp2,
+            ansEnglish = "En sevdiğim hobi resim yapmaktır.",
+            opts = listOf(
+                "En sevdiğim hobi dans etmektir.",
+                "En sevdiğim hobi resim yapmaktır.",
+                "En sevdiğim hobi seyahat etmektir.",
+                "En sevdiğim hobi yemek yapmaktır."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "yemek yapmak",
+            imageRes = R.drawable.cook,
+            correctAnswer = "cook",
+            options = listOf("cook", "dance", "music", "travel")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "I enjoy cooking.",
+            res = R.drawable.cook,
+            ansEnglish = "Yemek yapmaktan keyif alırım.",
+            opts = listOf(
+                "Yemek yapmaktan keyif alırım.",
+                "Dans etmekten keyif alırım.",
+                "Müzik dinlemekten keyif alırım.",
+                "Seyahat etmekten keyif alırım."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "seyahat etmek",
+            imageRes = R.drawable.travel,
+            correctAnswer = "travel",
+            options = listOf("travel", "cook", "paint", "dance")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "What do you do in your free time?",
+            res = R.drawable.pp3,
+            ansEnglish = "Boş zamanlarında ne yaparsın?",
+            opts = listOf(
+                "Boş zamanlarında ne yaparsın?",
+                "Kaç yaşındasın?",
+                "Nerede yaşıyorsun?",
+                "Bugün hava nasıl?"
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "müzik",
+            imageRes = R.drawable.music,
+            correctAnswer = "music",
+            options = listOf("music", "gaming", "travel", "movie")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I like listening to music.",
+            res = R.drawable.music,
+            ansEnglish = "Müzik dinlemeyi severim.",
+            opts = listOf(
+                "Müzik dinlemeyi severim.",
+                "Film izlemeyi severim.",
+                "Yüzmeyi severim.",
+                "Futbol oynamayı severim."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "Do you like dancing?",
+            res = R.drawable.pp4,
+            ansEnglish = "Dans etmeyi sever misin?",
+            opts = listOf(
+                "Dans etmeyi sever misin?",
+                "Müzik dinler misin?",
+                "Film izler misin?",
+                "Yüzmeyi sever misin?"
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Yes, I do. I like dancing.",
+            res = R.drawable.pp5,
+            ansEnglish = "Evet, severim. Dans etmeyi severim.",
+            opts = listOf(
+                "Evet, severim. Dans etmeyi severim.",
+                "Hayır, sevmem. Dans etmeyi severim.",
+                "Evet, severim. Seyahat etmeyi severim.",
+                "Hayır, sevmem. Müzik dinlemeyi severim."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "She likes painting, but he likes gaming.",
+            res = R.drawable.pp6,
+            ansEnglish = "O resim yapmayı sever ama o oyun oynamayı sever.",
+            opts = listOf(
+                "O resim yapmayı sever ama o oyun oynamayı sever.",
+                "O dans etmeyi sever ama o seyahat etmeyi sever.",
+                "O müziği sever ama o futbolu sever.",
+                "O film izlemeyi sever ama o yüzmeyi sever."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "My father likes traveling.",
+            res = R.drawable.travel,
+            ansEnglish = "Babam seyahat etmeyi sever.",
+            opts = listOf(
+                "Babam seyahat etmeyi sever.",
+                "Babam dans etmeyi sever.",
+                "Babam yemek yapmayı sever.",
+                "Babam futbol oynamayı sever."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "My hobby is cooking.",
+            res = R.drawable.cook,
+            ansEnglish = "Hobim yemek yapmaktır.",
+            opts = listOf(
+                "Hobim yemek yapmaktır.",
+                "Hobim dans etmektir.",
+                "Hobim seyahat etmektir.",
+                "Hobim resim yapmaktır."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Hobbies and Activities",
+            image = R.drawable.cat_logo,
+            pairs = "dance,paint,cook,travel,music,gaming",
+            turkishOptions = listOf(
+                "dans etmek",
+                "boyamak",
+                "yemek yapmak",
+                "seyahat etmek",
+                "müzik",
+                "oyun oynamak"
+            )
+        )
+    )
+}
+
+    fun getQuiz133(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "seyahat etmek",
+            imageRes = R.drawable.travel,
+            correctAnswer = "travel",
+            options = listOf("dance", "travel", "cook", "paint")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "What do you like doing?",
+            res = R.drawable.pp1,
+            ansEnglish = "Ne yapmayı seversin?",
+            opts = listOf(
+                "Ne yapmayı seversin?",
+                "Bugün hava nasıl?",
+                "Nereye gidiyorsun?",
+                "Kaç yaşındasın?"
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "dans etmek",
+            imageRes = R.drawable.dance,
+            correctAnswer = "dance",
+            options = listOf("paint", "cook", "dance", "travel")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I like dancing.",
+            res = R.drawable.dance,
+            ansEnglish = "Dans etmeyi severim.",
+            opts = listOf(
+                "Yemek yapmayı severim.",
+                "Seyahat etmeyi severim.",
+                "Dans etmeyi severim.",
+                "Resim yapmayı severim."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "boyamak",
+            imageRes = R.drawable.paint,
+            correctAnswer = "paint",
+            options = listOf("travel", "paint", "music", "gaming")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "How about you?",
+            res = R.drawable.pp2,
+            ansEnglish = "Peki ya sen?",
+            opts = listOf(
+                "Peki ya sen?",
+                "Sen nerelisin?",
+                "Hava nasıl?",
+                "Saat kaç?"
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "yemek yapmak",
+            imageRes = R.drawable.cook,
+            correctAnswer = "cook",
+            options = listOf("cook", "dance", "football", "movie")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "My hobby is cooking.",
+            res = R.drawable.cook,
+            ansEnglish = "Hobim yemek yapmaktır.",
+            opts = listOf(
+                "Hobim film izlemektir.",
+                "Hobim yemek yapmaktır.",
+                "Hobim futbol oynamaktır.",
+                "Hobim müzik dinlemektir."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "oyun oynamak",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "gaming",
+            options = listOf("gaming", "travel", "drawing", "music")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "He likes gaming after school.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "O okuldan sonra oyun oynamayı sever.",
+            opts = listOf(
+                "O okuldan sonra oyun oynamayı sever.",
+                "O okuldan sonra yemek yapmayı sever.",
+                "O okuldan sonra seyahat etmeyi sever.",
+                "O okuldan sonra film izlemeyi sever."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "Do you have a hobby?",
+            res = R.drawable.pp3,
+            ansEnglish = "Bir hobin var mı?",
+            opts = listOf(
+                "Bir hobin var mı?",
+                "Bir kitabın var mı?",
+                "Bir kalemin var mı?",
+                "Bir kardeşin var mı?"
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Yes, I do. I like painting.",
+            res = R.drawable.paint,
+            ansEnglish = "Evet, var. Resim yapmayı severim.",
+            opts = listOf(
+                "Evet, var. Resim yapmayı severim.",
+                "Hayır, yok. Yemek yapmayı severim.",
+                "Evet, var. Seyahat etmeyi severim.",
+                "Hayır, yok. Dans etmeyi severim."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "She likes traveling with her family.",
+            res = R.drawable.travel,
+            ansEnglish = "O ailesiyle seyahat etmeyi sever.",
+            opts = listOf(
+                "O arkadaşlarıyla dans etmeyi sever.",
+                "O ailesiyle seyahat etmeyi sever.",
+                "O annesiyle yemek yapmayı sever.",
+                "O kardeşiyle oyun oynamayı sever."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "In my free time, I cook.",
+            res = R.drawable.cook,
+            ansEnglish = "Boş zamanımda yemek yaparım.",
+            opts = listOf(
+                "Boş zamanımda dans ederim.",
+                "Boş zamanımda yemek yaparım.",
+                "Boş zamanımda seyahat ederim.",
+                "Boş zamanımda oyun oynarım."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "My favorite hobby is dancing.",
+            res = R.drawable.dance,
+            ansEnglish = "En sevdiğim hobi dans etmektir.",
+            opts = listOf(
+                "En sevdiğim hobi seyahat etmektir.",
+                "En sevdiğim hobi yemek yapmaktır.",
+                "En sevdiğim hobi dans etmektir.",
+                "En sevdiğim hobi oyun oynamaktır."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Hobbies Question Review",
+            image = R.drawable.cat_logo,
+            pairs = "dance,paint,cook,travel,gaming,music",
+            turkishOptions = listOf(
+                "dans etmek",
+                "boyamak",
+                "yemek yapmak",
+                "seyahat etmek",
+                "oyun oynamak",
+                "müzik"
+            )
+        )
+    )
+}
+
+    fun getQuiz134(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "kamp yapmak",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "camp",
+            options = listOf("camp", "fish", "dance", "cook")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "usually",
+            res = R.drawable.pp1,
+            ansEnglish = "Genellikle",
+            opts = listOf(
+                "Genellikle",
+                "Her zaman",
+                "Asla",
+                "Bazen"
+            )
+        ),
+
+        createListening(
+            id = 3,
+            qTurkish = "He usually goes camping.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "O genellikle kamp yapar.",
+            opts = listOf(
+                "O her zaman kamp yapar.",
+                "O genellikle kamp yapar.",
+                "O asla kamp yapmaz.",
+                "O bazen kamp yapar."
+            )
+        ),
+
+        createVisual(
+            id = 4,
+            questionTurkish = "balık tutmak",
+            imageRes = R.drawable.fish,
+            correctAnswer = "fish",
+            options = listOf("travel", "fish", "paint", "camp")
+        ),
+
+        createListening(
+            id = 5,
+            qTurkish = "What is your favorite hobby?",
+            res = R.drawable.pp2,
+            ansEnglish = "En sevdiğin hobi nedir?",
+            opts = listOf(
+                "En sevdiğin hobi nedir?",
+                "Bugün hava nasıl?",
+                "Kaç kardeşin var?",
+                "Nereye gidiyorsun?"
+            )
+        ),
+
+        createVisual(
+            id = 6,
+            questionTurkish = "seyahat etmek",
+            imageRes = R.drawable.travel,
+            correctAnswer = "travel",
+            options = listOf("travel", "camp", "fish", "dance")
+        ),
+
+        createListening(
+            id = 7,
+            qTurkish = "My favorite hobby is traveling.",
+            res = R.drawable.travel,
+            ansEnglish = "En sevdiğim hobi seyahat etmektir.",
+            opts = listOf(
+                "En sevdiğim hobi seyahat etmektir.",
+                "En sevdiğim hobi dans etmektir.",
+                "En sevdiğim hobi yemek yapmaktır.",
+                "En sevdiğim hobi futbol oynamaktır."
+            )
+        ),
+
+        createVisual(
+            id = 8,
+            questionTurkish = "yemek yapmak",
+            imageRes = R.drawable.cook,
+            correctAnswer = "cook",
+            options = listOf("cook", "dance", "music", "camp")
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "I enjoy cooking.",
+            res = R.drawable.cook,
+            ansEnglish = "Yemek yapmaktan keyif alırım.",
+            opts = listOf(
+                "Yemek yapmaktan keyif alırım.",
+                "Dans etmekten keyif alırım.",
+                "Seyahat etmekten keyif alırım.",
+                "Müzik dinlemekten keyif alırım."
+            )
+        ),
+
+        createVisual(
+            id = 10,
+            questionTurkish = "dans etmek",
+            imageRes = R.drawable.dance,
+            correctAnswer = "dance",
+            options = listOf("dance", "cook", "fish", "travel")
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "free time",
+            res = R.drawable.pp3,
+            ansEnglish = "boş zaman",
+            opts = listOf(
+                "Boş zaman",
+                "meşgul",
+                "zaman",
+                "Saat"
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "I usually listen to music in my free time.",
+            res = R.drawable.music,
+            ansEnglish = "Boş zamanlarımda genellikle müzik dinlerim.",
+            opts = listOf(
+                "Boş zamanlarımda her zaman futbol oynarım.",
+                "Boş zamanlarımda genellikle müzik dinlerim.",
+                "Boş zamanlarımda asla film izlemem.",
+                "Boş zamanlarımda bazen yüzerim."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Do you like fishing?",
+            res = R.drawable.pp4,
+            ansEnglish = "Balık tutmayı sever misin?",
+            opts = listOf(
+                "Balık tutmayı sever misin?",
+                "Kamp yapmayı sever misin?",
+                "Dans etmeyi sever misin?",
+                "Seyahat etmeyi sever misin?"
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Yes, I do. Fishing is fun.",
+            res = R.drawable.fish,
+            ansEnglish = "Evet, severim. Balık tutmak eğlencelidir.",
+            opts = listOf(
+                "Evet, severim. Balık tutmak eğlencelidir.",
+                "Hayır, sevmem. Balık tutmak zordur.",
+                "Evet, severim. Kamp yapmak sıkıcıdır.",
+                "Hayır, sevmem. Dans etmek eğlencelidir."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "My father likes camping and fishing.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Babam kamp yapmayı ve balık tutmayı sever.",
+            opts = listOf(
+                "Babam dans etmeyi ve seyahat etmeyi sever.",
+                "Babam kamp yapmayı ve balık tutmayı sever.",
+                "Babam yemek yapmayı ve müzik dinlemeyi sever.",
+                "Babam futbol oynamayı ve film izlemeyi sever."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "New Hobbies Review",
+            image = R.drawable.cat_logo,
+            pairs = "camp,fish,dance,cook,travel,music",
+            turkishOptions = listOf(
+                "kamp yapmak",
+                "balık tutmak",
+                "dans etmek",
+                "yemek yapmak",
+                "seyahat etmek",
+                "müzik"
+            )
+        )
+    )
+}
+
+    fun getQuiz135(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "kamp yapmak",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "camp",
+            options = listOf("fish", "camp", "travel", "cook")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "free time",
+            res = R.drawable.pp1,
+            ansEnglish = "boş zaman",
+            opts = listOf(
+                "boş zaman",
+                "hafta sonu",
+                "her zaman",
+                "genellikle"
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "balık tutmak",
+            imageRes = R.drawable.fish,
+            correctAnswer = "fish",
+            options = listOf("dance", "fish", "paint", "camp")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "always",
+            res = R.drawable.pp2,
+            ansEnglish = "her zaman",
+            opts = listOf(
+                "bazen",
+                "genellikle",
+                "her zaman",
+                "asla"
+            )
+        ),
+
+        createListening(
+            id = 5,
+            qTurkish = "I always cook.",
+            res = R.drawable.cook,
+            ansEnglish = "Her zaman yemek yaparım.",
+            opts = listOf(
+                "Genellikle yemek yaparım.",
+                "Her zaman yemek yaparım.",
+                "Asla yemek yapmam.",
+                "Bazen yemek yaparım."
+            )
+        ),
+
+        createVisual(
+            id = 6,
+            questionTurkish = "seyahat etmek",
+            imageRes = R.drawable.travel,
+            correctAnswer = "travel",
+            options = listOf("travel", "camp", "fish", "dance")
+        ),
+
+        createListening(
+            id = 7,
+            qTurkish = "I cook in my free time.",
+            res = R.drawable.cook,
+            ansEnglish = "Boş zamanımda yemek yaparım.",
+            opts = listOf(
+                "Boş zamanımda yemek yaparım.",
+                "Hafta sonu yemek yaparım.",
+                "Her zaman yemek yaparım.",
+                "Asla yemek yapmam."
+            )
+        ),
+
+        createVisual(
+            id = 8,
+            questionTurkish = "yemek yapmak",
+            imageRes = R.drawable.cook,
+            correctAnswer = "cook",
+            options = listOf("cook", "dance", "music", "travel")
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "I always cook in my free time.",
+            res = R.drawable.cook,
+            ansEnglish = "Boş zamanımda her zaman yemek yaparım.",
+            opts = listOf(
+                "Boş zamanımda genellikle müzik dinlerim.",
+                "Boş zamanımda her zaman yemek yaparım.",
+                "Boş zamanımda asla film izlemem.",
+                "Boş zamanımda bazen yüzerim."
+            )
+        ),
+
+        createVisual(
+            id = 10,
+            questionTurkish = "dans etmek",
+            imageRes = R.drawable.dance,
+            correctAnswer = "dance",
+            options = listOf("paint", "dance", "camp", "fish")
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "What do you do in your free time?",
+            res = R.drawable.pp3,
+            ansEnglish = "Boş zamanında ne yaparsın?",
+            opts = listOf(
+                "Boş zamanında ne yaparsın?",
+                "En sevdiğin hobi nedir?",
+                "Bugün hava nasıl?",
+                "Nereye gidiyorsun?"
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "I fish in my free time.",
+            res = R.drawable.fish,
+            ansEnglish = "Boş zamanımda balık tutarım.",
+            opts = listOf(
+                "Boş zamanımda balık tutarım.",
+                "Boş zamanımda dans ederim.",
+                "Boş zamanımda seyahat ederim.",
+                "Boş zamanımda yemek yaparım."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "He always goes camping.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "O her zaman kamp yapar.",
+            opts = listOf(
+                "O bazen kamp yapar.",
+                "O genellikle kamp yapar.",
+                "O her zaman kamp yapar.",
+                "O asla kamp yapmaz."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "My favorite hobby is traveling.",
+            res = R.drawable.travel,
+            ansEnglish = "En sevdiğim hobi seyahat etmektir.",
+            opts = listOf(
+                "En sevdiğim hobi seyahat etmektir.",
+                "En sevdiğim hobi yemek yapmaktır.",
+                "En sevdiğim hobi dans etmektir.",
+                "En sevdiğim hobi balık tutmaktır."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "She always dances in her free time.",
+            res = R.drawable.dance,
+            ansEnglish = "O boş zamanında her zaman dans eder.",
+            opts = listOf(
+                "O boş zamanında genellikle dans eder.",
+                "O boş zamanında her zaman dans eder.",
+                "O boş zamanında asla dans etmez.",
+                "O boş zamanında bazen dans eder."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Hobbies Pattern Review",
+            image = R.drawable.cat_logo,
+            pairs = "camp,fish,travel,cook,dance,always",
+            turkishOptions = listOf(
+                "kamp yapmak",
+                "balık tutmak",
+                "seyahat etmek",
+                "yemek yapmak",
+                "dans etmek",
+                "her zaman"
+            )
+        )
+    )
+}
+
+    fun getQuiz136(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "balık tutmak",
+            imageRes = R.drawable.fish,
+            correctAnswer = "fish",
+            options = listOf("camp", "fish", "travel", "cook")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "sometimes",
+            res = R.drawable.pp1,
+            ansEnglish = "bazen",
+            opts = listOf(
+                "her zaman",
+                "genellikle",
+                "bazen",
+                "asla"
+            )
+        ),
+
+        createListening(
+            id = 3,
+            qTurkish = "She sometimes paints.",
+            res = R.drawable.paint,
+            ansEnglish = "O bazen resim yapar.",
+            opts = listOf(
+                "O her zaman resim yapar.",
+                "O genellikle resim yapar.",
+                "O bazen resim yapar.",
+                "O asla resim yapmaz."
+            )
+        ),
+
+        createVisual(
+            id = 4,
+            questionTurkish = "kamp yapmak",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "camp",
+            options = listOf("paint", "camp", "dance", "fish")
+        ),
+
+        createListening(
+            id = 5,
+            qTurkish = "on weekends",
+            res = R.drawable.pp2,
+            ansEnglish = "hafta sonları",
+            opts = listOf(
+                "boş zamanlarda",
+                "hafta sonları",
+                "her zaman",
+                "bazen"
+            )
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "I go camping on weekends.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Hafta sonları kamp yaparım.",
+            opts = listOf(
+                "Hafta sonları kamp yaparım.",
+                "Boş zamanımda dans ederim.",
+                "Her zaman yemek yaparım.",
+                "Bazen seyahat ederim."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "boyamak",
+            imageRes = R.drawable.paint,
+            correctAnswer = "paint",
+            options = listOf("travel", "paint", "cook", "fish")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "He sometimes cooks on weekends.",
+            res = R.drawable.cook,
+            ansEnglish = "O hafta sonları bazen yemek yapar.",
+            opts = listOf(
+                "O hafta sonları her zaman dans eder.",
+                "O hafta sonları bazen yemek yapar.",
+                "O hafta sonları asla seyahat etmez.",
+                "O hafta sonları genellikle futbol oynar."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "seyahat etmek",
+            imageRes = R.drawable.travel,
+            correctAnswer = "travel",
+            options = listOf("travel", "camp", "paint", "dance")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "What do you do on weekends?",
+            res = R.drawable.pp3,
+            ansEnglish = "Hafta sonları ne yaparsın?",
+            opts = listOf(
+                "Hafta sonları ne yaparsın?",
+                "En sevdiğin hobi nedir?",
+                "Bugün hava nasıl?",
+                "Nerede yaşıyorsun?"
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "dans etmek",
+            imageRes = R.drawable.dance,
+            correctAnswer = "dance",
+            options = listOf("dance", "cook", "travel", "camp")
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "I sometimes dance on weekends.",
+            res = R.drawable.dance,
+            ansEnglish = "Hafta sonları bazen dans ederim.",
+            opts = listOf(
+                "Hafta sonları her zaman dans ederim.",
+                "Hafta sonları bazen dans ederim.",
+                "Hafta sonları asla dans etmem.",
+                "Hafta sonları genellikle dans ederim."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "My father goes fishing on weekends.",
+            res = R.drawable.fish,
+            ansEnglish = "Babam hafta sonları balık tutmaya gider.",
+            opts = listOf(
+                "Babam hafta sonları balık tutmaya gider.",
+                "Babam hafta sonları yemek yapar.",
+                "Babam hafta sonları dans eder.",
+                "Babam hafta sonları film izler."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "She likes painting in her free time.",
+            res = R.drawable.paint,
+            ansEnglish = "O boş zamanında resim yapmayı sever.",
+            opts = listOf(
+                "O boş zamanında yemek yapmayı sever.",
+                "O boş zamanında resim yapmayı sever.",
+                "O boş zamanında seyahat etmeyi sever.",
+                "O boş zamanında kamp yapmayı sever."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "On weekends, we travel with our family.",
+            res = R.drawable.travel,
+            ansEnglish = "Hafta sonları ailemizle seyahat ederiz.",
+            opts = listOf(
+                "Hafta sonları ailemizle seyahat ederiz.",
+                "Hafta sonları evde kalırız.",
+                "Hafta sonları okulda oluruz.",
+                "Hafta sonları kitap okuruz."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Weekend Hobbies Review",
+            image = R.drawable.cat_logo,
+            pairs = "fish,camp,paint,travel,dance,sometimes",
+            turkishOptions = listOf(
+                "balık tutmak",
+                "kamp yapmak",
+                "boyamak",
+                "seyahat etmek",
+                "dans etmek",
+                "bazen"
+            )
+        )
+    )
+}
+
+    fun getQuiz137(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "bisiklete binmek",
+            imageRes = R.drawable.ride,
+            correctAnswer = "ride",
+            options = listOf("ride", "garden", "hike", "cook")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "often",
+            res = R.drawable.pp1,
+            ansEnglish = "sık sık",
+            opts = listOf(
+                "bazen",
+                "genellikle",
+                "sık sık",
+                "asla"
+            )
+        ),
+
+        createListening(
+            id = 3,
+            qTurkish = "He often rides his bike.",
+            res = R.drawable.ride,
+            ansEnglish = "O sık sık bisiklete biner.",
+            opts = listOf(
+                "O her zaman bisiklete biner.",
+                "O sık sık bisiklete biner.",
+                "O asla bisiklete binmez.",
+                "O bazen bisiklete biner."
+            )
+        ),
+
+        createVisual(
+            id = 4,
+            questionTurkish = "fotoğraf çekmek",
+            imageRes = R.drawable.take_photo,
+            correctAnswer = "take photo",
+            options = listOf("take photo", "ride", "travel", "garden")
+        ),
+
+        createListening(
+            id = 5,
+            qTurkish = "take photos",
+            res = R.drawable.pp2,
+            ansEnglish = "fotoğraf çekmek",
+            opts = listOf(
+                "fotoğraf çekmek",
+                "bahçeyle uğraşmak",
+                "kamp yapmak",
+                "dans etmek"
+            )
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "She takes photos on weekends.",
+            res = R.drawable.take_photo,
+            ansEnglish = "O hafta sonları fotoğraf çeker.",
+            opts = listOf(
+                "O hafta sonları kamp yapar.",
+                "O hafta sonları fotoğraf çeker.",
+                "O hafta sonları yemek yapar.",
+                "O hafta sonları balık tutar."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "bahçeyle uğraşmak",
+            imageRes = R.drawable.garden,
+            correctAnswer = "garden",
+            options = listOf("garden", "ride", "dance", "hike")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "My grandfather gardens every day.",
+            res = R.drawable.garden,
+            ansEnglish = "Dedem her gün bahçeyle uğraşır.",
+            opts = listOf(
+                "Dedem her gün balık tutar.",
+                "Dedem her gün bahçeyle uğraşır.",
+                "Dedem her gün dans eder.",
+                "Dedem her gün seyahat eder."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "doğa yürüyüşü yapmak",
+            imageRes = R.drawable.hike,
+            correctAnswer = "hike",
+            options = listOf("hike", "camp", "garden", "travel")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "What do you do in your free time?",
+            res = R.drawable.pp3,
+            ansEnglish = "Boş zamanlarında ne yaparsın?",
+            opts = listOf(
+                "Boş zamanlarında ne yaparsın?",
+                "En sevdiğin hobi nedir?",
+                "Bugün hava nasıl?",
+                "Saat kaç?"
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "I hike with my friends.",
+            res = R.drawable.hike,
+            ansEnglish = "Arkadaşlarımla doğa yürüyüşü yaparım.",
+            opts = listOf(
+                "Arkadaşlarımla yemek yaparım.",
+                "Arkadaşlarımla doğa yürüyüşü yaparım.",
+                "Arkadaşlarımla film izlerim.",
+                "Arkadaşlarımla dans ederim."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "My favorite hobby is taking photos.",
+            res = R.drawable.take_photo,
+            ansEnglish = "En sevdiğim hobi fotoğraf çekmektir.",
+            opts = listOf(
+                "En sevdiğim hobi kamp yapmaktır.",
+                "En sevdiğim hobi fotoğraf çekmektir.",
+                "En sevdiğim hobi bahçeyle uğraşmaktır.",
+                "En sevdiğim hobi dans etmektir."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "We often go hiking on weekends.",
+            res = R.drawable.hike,
+            ansEnglish = "Hafta sonları sık sık doğa yürüyüşüne gideriz.",
+            opts = listOf(
+                "Hafta sonları sık sık doğa yürüyüşüne gideriz.",
+                "Hafta sonları sık sık evde kalırız.",
+                "Hafta sonları sık sık film izleriz.",
+                "Hafta sonları sık sık futbol oynarız."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Do you like gardening?",
+            res = R.drawable.pp4,
+            ansEnglish = "Bahçeyle uğraşmayı sever misin?",
+            opts = listOf(
+                "Bahçeyle uğraşmayı sever misin?",
+                "Balık tutmayı sever misin?",
+                "Kamp yapmayı sever misin?",
+                "Dans etmeyi sever misin?"
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Yes, I do. I like gardening.",
+            res = R.drawable.garden,
+            ansEnglish = "Evet, severim. Bahçeyle uğraşmayı severim.",
+            opts = listOf(
+                "Evet, severim. Bahçeyle uğraşmayı severim.",
+                "Hayır, sevmem. Bahçeyle uğraşmayı severim.",
+                "Evet, severim. Kamp yapmayı severim.",
+                "Hayır, sevmem. Balık tutmayı severim."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "New Hobbies",
+            image = R.drawable.cat_logo,
+            pairs = "ride,take photo,garden,hike,fish,camp",
+            turkishOptions = listOf(
+                "bisiklete binmek",
+                "fotoğraf çekmek",
+                "bahçeyle uğraşmak",
+                "doğa yürüyüşü yapmak",
+                "balık tutmak",
+                "kamp yapmak"
+            )
+        )
+    )
+}
+
+    fun getQuiz138(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "fotoğraf çekmek",
+            imageRes = R.drawable.take_photo,
+            correctAnswer = "take photo",
+            options = listOf("ride", "take photo", "hike", "garden")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "never",
+            res = R.drawable.pp1,
+            ansEnglish = "asla",
+            opts = listOf(
+                "bazen",
+                "genellikle",
+                "asla",
+                "sık sık"
+            )
+        ),
+
+        createListening(
+            id = 3,
+            qTurkish = "He never rides his bike.",
+            res = R.drawable.ride,
+            ansEnglish = "O asla bisiklete binmez.",
+            opts = listOf(
+                "O sık sık bisiklete biner.",
+                "O genellikle bisiklete biner.",
+                "O asla bisiklete binmez.",
+                "O bazen bisiklete biner."
+            )
+        ),
+
+        createVisual(
+            id = 4,
+            questionTurkish = "doğa yürüyüşü yapmak",
+            imageRes = R.drawable.hike,
+            correctAnswer = "hike",
+            options = listOf("hike", "camp", "fish", "travel")
+        ),
+
+        createListening(
+            id = 5,
+            qTurkish = "take photos",
+            res = R.drawable.pp2,
+            ansEnglish = "fotoğraf çekmek",
+            opts = listOf(
+                "fotoğraf çekmek",
+                "bisiklete binmek",
+                "kamp yapmak",
+                "dans etmek"
+            )
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "She takes photos.",
+            res = R.drawable.take_photo,
+            ansEnglish = "O fotoğraf çeker.",
+            opts = listOf(
+                "O fotoğraf çeker.",
+                "O yemek yapar.",
+                "O dans eder.",
+                "O seyahat eder."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "bahçeyle uğraşmak",
+            imageRes = R.drawable.garden,
+            correctAnswer = "garden",
+            options = listOf("garden", "paint", "cook", "ride")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "in the morning",
+            res = R.drawable.pp3,
+            ansEnglish = "sabahları",
+            opts = listOf(
+                "sabahları",
+                "hafta sonları",
+                "boş zamanda",
+                "her zaman"
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "My grandfather gardens in the morning.",
+            res = R.drawable.garden,
+            ansEnglish = "Dedem sabahları bahçeyle uğraşır.",
+            opts = listOf(
+                "Dedem sabahları balık tutar.",
+                "Dedem sabahları bahçeyle uğraşır.",
+                "Dedem sabahları dans eder.",
+                "Dedem sabahları seyahat eder."
+            )
+        ),
+
+        createVisual(
+            id = 10,
+            questionTurkish = "bisiklete binmek",
+            imageRes = R.drawable.ride,
+            correctAnswer = "ride",
+            options = listOf("ride", "hike", "garden", "take photo")
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "Do you like hiking?",
+            res = R.drawable.pp4,
+            ansEnglish = "Doğa yürüyüşü yapmayı sever misin?",
+            opts = listOf(
+                "Doğa yürüyüşü yapmayı sever misin?",
+                "Fotoğraf çekmeyi sever misin?",
+                "Bisiklete binmeyi sever misin?",
+                "Bahçeyle uğraşmayı sever misin?"
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Yes, I do. I like hiking.",
+            res = R.drawable.hike,
+            ansEnglish = "Evet, severim. Doğa yürüyüşü yapmayı severim.",
+            opts = listOf(
+                "Evet, severim. Doğa yürüyüşü yapmayı severim.",
+                "Hayır, sevmem. Doğa yürüyüşü yapmayı severim.",
+                "Evet, severim. Fotoğraf çekmeyi severim.",
+                "Hayır, sevmem. Bisiklete binmeyi severim."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "My favorite hobby is riding a bike.",
+            res = R.drawable.ride,
+            ansEnglish = "En sevdiğim hobi bisiklete binmektir.",
+            opts = listOf(
+                "En sevdiğim hobi bisiklete binmektir.",
+                "En sevdiğim hobi fotoğraf çekmektir.",
+                "En sevdiğim hobi bahçeyle uğraşmaktır.",
+                "En sevdiğim hobi kamp yapmaktır."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "On weekends, we go hiking.",
+            res = R.drawable.hike,
+            ansEnglish = "Hafta sonları doğa yürüyüşüne gideriz.",
+            opts = listOf(
+                "Hafta sonları doğa yürüyüşüne gideriz.",
+                "Hafta sonları film izleriz.",
+                "Hafta sonları yemek yaparız.",
+                "Hafta sonları evde kalırız."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "She likes taking photos in her free time.",
+            res = R.drawable.take_photo,
+            ansEnglish = "O boş zamanında fotoğraf çekmeyi sever.",
+            opts = listOf(
+                "O boş zamanında fotoğraf çekmeyi sever.",
+                "O boş zamanında dans etmeyi sever.",
+                "O boş zamanında yemek yapmayı sever.",
+                "O boş zamanında seyahat etmeyi sever."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Hobbies Review",
+            image = R.drawable.cat_logo,
+            pairs = "ride,take photo,garden,hike,camp,fish",
+            turkishOptions = listOf(
+                "bisiklete binmek",
+                "fotoğraf çekmek",
+                "bahçeyle uğraşmak",
+                "doğa yürüyüşü yapmak",
+                "kamp yapmak",
+                "balık tutmak"
+            )
+        )
+    )
+}
+
+    fun getQuiz139(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "bisiklete binmek",
+            imageRes = R.drawable.ride,
+            correctAnswer = "ride",
+            options = listOf("hike", "ride", "garden", "take photo")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "every day",
+            res = R.drawable.pp1,
+            ansEnglish = "her gün",
+            opts = listOf(
+                "her gün",
+                "hafta sonları",
+                "boş zamanda",
+                "asla"
+            )
+        ),
+
+        createListening(
+            id = 3,
+            qTurkish = "He rides his bike every day.",
+            res = R.drawable.ride,
+            ansEnglish = "O her gün bisiklete biner.",
+            opts = listOf(
+                "O her gün bisiklete biner.",
+                "O hafta sonları kamp yapar.",
+                "O bazen balık tutar.",
+                "O asla dans etmez."
+            )
+        ),
+
+        createVisual(
+            id = 4,
+            questionTurkish = "fotoğraf çekmek",
+            imageRes = R.drawable.take_photo,
+            correctAnswer = "take photo",
+            options = listOf("take photo", "travel", "cook", "paint")
+        ),
+
+        createListening(
+            id = 5,
+            qTurkish = "My hobby is taking photos.",
+            res = R.drawable.take_photo,
+            ansEnglish = "Hobim fotoğraf çekmektir.",
+            opts = listOf(
+                "Hobim fotoğraf çekmektir.",
+                "Hobim yemek yapmaktır.",
+                "Hobim seyahat etmektir.",
+                "Hobim dans etmektir."
+            )
+        ),
+
+        createVisual(
+            id = 6,
+            questionTurkish = "bahçeyle uğraşmak",
+            imageRes = R.drawable.garden,
+            correctAnswer = "garden",
+            options = listOf("garden", "fish", "camp", "hike")
+        ),
+
+        createListening(
+            id = 7,
+            qTurkish = "My grandmother gardens every day.",
+            res = R.drawable.garden,
+            ansEnglish = "Büyükannem her gün bahçeyle uğraşır.",
+            opts = listOf(
+                "Büyükannem her gün bahçeyle uğraşır.",
+                "Büyükannem hafta sonları film izler.",
+                "Büyükannem bazen yemek yapar.",
+                "Büyükannem asla futbol oynamaz."
+            )
+        ),
+
+        createVisual(
+            id = 8,
+            questionTurkish = "doğa yürüyüşü yapmak",
+            imageRes = R.drawable.hike,
+            correctAnswer = "hike",
+            options = listOf("ride", "take photo", "hike", "garden")
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "What do you do every day?",
+            res = R.drawable.pp2,
+            ansEnglish = "Her gün ne yaparsın?",
+            opts = listOf(
+                "Her gün ne yaparsın?",
+                "En sevdiğin hobi nedir?",
+                "Bugün hava nasıl?",
+                "Nerede yaşıyorsun?"
+            )
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I take photos in the garden.",
+            res = R.drawable.take_photo,
+            ansEnglish = "Bahçede fotoğraf çekerim.",
+            opts = listOf(
+                "Bahçede fotoğraf çekerim.",
+                "Evde film izlerim.",
+                "Okulda ders dinlerim.",
+                "Restoranda yemek yerim."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "She likes hiking with her friends.",
+            res = R.drawable.hike,
+            ansEnglish = "O arkadaşlarıyla doğa yürüyüşü yapmayı sever.",
+            opts = listOf(
+                "O arkadaşlarıyla doğa yürüyüşü yapmayı sever.",
+                "O ailesiyle yemek yapmayı sever.",
+                "O kardeşiyle futbol oynamayı sever.",
+                "O annesiyle müzik dinlemeyi sever."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Do you like riding a bike?",
+            res = R.drawable.pp3,
+            ansEnglish = "Bisiklete binmeyi sever misin?",
+            opts = listOf(
+                "Bisiklete binmeyi sever misin?",
+                "Balık tutmayı sever misin?",
+                "Kamp yapmayı sever misin?",
+                "Yemek yapmayı sever misin?"
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Yes, I do. I like riding a bike.",
+            res = R.drawable.ride,
+            ansEnglish = "Evet, severim. Bisiklete binmeyi severim.",
+            opts = listOf(
+                "Evet, severim. Bisiklete binmeyi severim.",
+                "Hayır, sevmem. Bisiklete binmeyi severim.",
+                "Evet, severim. Balık tutmayı severim.",
+                "Hayır, sevmem. Kamp yapmayı severim."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "On sunny days, we go hiking.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Güneşli günlerde doğa yürüyüşüne gideriz.",
+            opts = listOf(
+                "Güneşli günlerde doğa yürüyüşüne gideriz.",
+                "Yağmurlu günlerde evde kalırız.",
+                "Karlı günlerde film izleriz.",
+                "Fırtınalı günlerde piknik yaparız."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "My father likes riding and taking photos.",
+            res = R.drawable.ride,
+            ansEnglish = "Babam bisiklete binmeyi ve fotoğraf çekmeyi sever.",
+            opts = listOf(
+                "Babam bisiklete binmeyi ve fotoğraf çekmeyi sever.",
+                "Babam yemek yapmayı ve dans etmeyi sever.",
+                "Babam kamp yapmayı ve balık tutmayı sever.",
+                "Babam müzik dinlemeyi ve film izlemeyi sever."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Hobbies Daily Review",
+            image = R.drawable.cat_logo,
+            pairs = "ride,take photo,garden,hike,every day,sunny",
+            turkishOptions = listOf(
+                "bisiklete binmek",
+                "fotoğraf çekmek",
+                "bahçeyle uğraşmak",
+                "doğa yürüyüşü yapmak",
+                "her gün",
+                "güneşli"
+            )
+        )
+    )
+}
+
+    fun getQuiz140(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "koleksiyon yapmak",
+            imageRes = R.drawable.collect,
+            correctAnswer = "collect",
+            options = listOf("collect", "skate", "exercise", "ride")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "often",
+            res = R.drawable.pp1,
+            ansEnglish = "sık sık",
+            opts = listOf(
+                "her zaman",
+                "bazen",
+                "sık sık",
+                "asla"
+            )
+        ),
+
+        createListening(
+            id = 3,
+            qTurkish = "He often collects stamps.",
+            res = R.drawable.collect,
+            ansEnglish = "O sık sık pul koleksiyonu yapar.",
+            opts = listOf(
+                "O her zaman pul koleksiyonu yapar.",
+                "O sık sık pul koleksiyonu yapar.",
+                "O asla pul koleksiyonu yapmaz.",
+                "O bazen pul koleksiyonu yapar."
+            )
+        ),
+
+        createVisual(
+            id = 4,
+            questionTurkish = "kaykay yapmak",
+            imageRes = R.drawable.skate,
+            correctAnswer = "skate",
+            options = listOf("skate", "collect", "camp", "dance")
+        ),
+
+        createListening(
+            id = 5,
+            qTurkish = "play chess",
+            res = R.drawable.pp2,
+            ansEnglish = "satranç oynamak",
+            opts = listOf(
+                "satranç oynamak",
+                "kaykay yapmak",
+                "koleksiyon yapmak",
+                "egzersiz yapmak"
+            )
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "My brother plays chess every evening.",
+            res = R.drawable.chess,
+            ansEnglish = "Erkek kardeşim her akşam satranç oynar.",
+            opts = listOf(
+                "Erkek kardeşim her akşam satranç oynar.",
+                "Erkek kardeşim her akşam kaykay yapar.",
+                "Erkek kardeşim her akşam dans eder.",
+                "Erkek kardeşim her akşam kamp yapar."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "satranç oynamak",
+            imageRes = R.drawable.chess,
+            correctAnswer = "play chess",
+            options = listOf("play chess", "exercise", "collect", "travel")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "exercise",
+            res = R.drawable.pp3,
+            ansEnglish = "egzersiz yapmak",
+            opts = listOf(
+                "egzersiz yapmak",
+                "bisiklete binmek",
+                "fotoğraf çekmek",
+                "doğa yürüyüşü yapmak"
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "She exercises every day.",
+            res = R.drawable.exercise,
+            ansEnglish = "O her gün egzersiz yapar.",
+            opts = listOf(
+                "O hafta sonları egzersiz yapar.",
+                "O her gün egzersiz yapar.",
+                "O bazen egzersiz yapar.",
+                "O asla egzersiz yapmaz."
+            )
+        ),
+
+        createVisual(
+            id = 10,
+            questionTurkish = "egzersiz yapmak",
+            imageRes = R.drawable.exercise,
+            correctAnswer = "exercise",
+            options = listOf("exercise", "skate", "collect", "cook")
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "What is your favorite hobby?",
+            res = R.drawable.pp4,
+            ansEnglish = "En sevdiğin hobi nedir?",
+            opts = listOf(
+                "En sevdiğin hobi nedir?",
+                "Bugün hava nasıl?",
+                "Nerede yaşıyorsun?",
+                "Saat kaç?"
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "My favorite hobby is skating.",
+            res = R.drawable.skate,
+            ansEnglish = "En sevdiğim hobi kaykay yapmaktır.",
+            opts = listOf(
+                "En sevdiğim hobi kaykay yapmaktır.",
+                "En sevdiğim hobi satranç oynamaktır.",
+                "En sevdiğim hobi egzersiz yapmaktır.",
+                "En sevdiğim hobi koleksiyon yapmaktır."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I exercise in my free time.",
+            res = R.drawable.exercise,
+            ansEnglish = "Boş zamanımda egzersiz yaparım.",
+            opts = listOf(
+                "Boş zamanımda egzersiz yaparım.",
+                "Boş zamanımda satranç oynarım.",
+                "Boş zamanımda kaykay yaparım.",
+                "Boş zamanımda kamp yaparım."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Do you like collecting stamps?",
+            res = R.drawable.pp5,
+            ansEnglish = "Pul koleksiyonu yapmayı sever misin?",
+            opts = listOf(
+                "Pul koleksiyonu yapmayı sever misin?",
+                "Kaykay yapmayı sever misin?",
+                "Egzersiz yapmayı sever misin?",
+                "Satranç oynamayı sever misin?"
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Yes, I do. I like collecting stamps.",
+            res = R.drawable.collect,
+            ansEnglish = "Evet, severim. Pul koleksiyonu yapmayı severim.",
+            opts = listOf(
+                "Evet, severim. Pul koleksiyonu yapmayı severim.",
+                "Hayır, sevmem. Pul koleksiyonu yapmayı severim.",
+                "Evet, severim. Kaykay yapmayı severim.",
+                "Hayır, sevmem. Egzersiz yapmayı severim."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "New Hobbies Final Group",
+            image = R.drawable.cat_logo,
+            pairs = "collect,skate,play chess,exercise,camp,fish",
+            turkishOptions = listOf(
+                "koleksiyon yapmak",
+                "kaykay yapmak",
+                "satranç oynamak",
+                "egzersiz yapmak",
+                "kamp yapmak",
+                "balık tutmak"
+            )
+        )
+    )
+}
+
+    fun getQuiz141(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "kaykay yapmak",
+            imageRes = R.drawable.skate,
+            correctAnswer = "skate",
+            options = listOf("exercise", "skate", "collect", "play chess")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "My hobby is skating.",
+            res = R.drawable.skate,
+            ansEnglish = "Hobim kaykay yapmaktır.",
+            opts = listOf(
+                "Hobim egzersiz yapmaktır.",
+                "Hobim kaykay yapmaktır.",
+                "Hobim koleksiyon yapmaktır.",
+                "Hobim satranç oynamaktır."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "satranç oynamak",
+            imageRes = R.drawable.chess,
+            correctAnswer = "play chess",
+            options = listOf("collect", "exercise", "play chess", "skate")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "She plays chess.",
+            res = R.drawable.chess,
+            ansEnglish = "O satranç oynar.",
+            opts = listOf(
+                "O egzersiz yapar.",
+                "O kaykay yapar.",
+                "O satranç oynar.",
+                "O koleksiyon yapar."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "egzersiz yapmak",
+            imageRes = R.drawable.exercise,
+            correctAnswer = "exercise",
+            options = listOf("exercise", "skate", "camp", "fish")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "I exercise every day.",
+            res = R.drawable.exercise,
+            ansEnglish = "Her gün egzersiz yaparım.",
+            opts = listOf(
+                "Her gün egzersiz yaparım.",
+                "Hafta sonları kamp yaparım.",
+                "Bazen balık tutarım.",
+                "Asla dans etmem."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "koleksiyon yapmak",
+            imageRes = R.drawable.collect,
+            correctAnswer = "collect",
+            options = listOf("paint", "collect", "travel", "cook")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "He collects stamps.",
+            res = R.drawable.collect,
+            ansEnglish = "O pul koleksiyonu yapar.",
+            opts = listOf(
+                "O pul koleksiyonu yapar.",
+                "O fotoğraf çeker.",
+                "O bisiklete biner.",
+                "O doğa yürüyüşü yapar."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "kamp yapmak",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "camp",
+            options = listOf("camp", "skate", "exercise", "play chess")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "My brother likes camping.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Erkek kardeşim kamp yapmayı sever.",
+            opts = listOf(
+                "Erkek kardeşim kaykay yapmayı sever.",
+                "Erkek kardeşim kamp yapmayı sever.",
+                "Erkek kardeşim egzersiz yapmayı sever.",
+                "Erkek kardeşim satranç oynamayı sever."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "What do you do in your free time?",
+            res = R.drawable.pp1,
+            ansEnglish = "Boş zamanında ne yaparsın?",
+            opts = listOf(
+                "Boş zamanında ne yaparsın?",
+                "Bugün hava nasıl?",
+                "En sevdiğin yemek nedir?",
+                "Nerede yaşıyorsun?"
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "I play chess in my free time.",
+            res = R.drawable.chess,
+            ansEnglish = "Boş zamanımda satranç oynarım.",
+            opts = listOf(
+                "Boş zamanımda satranç oynarım.",
+                "Boş zamanımda egzersiz yaparım.",
+                "Boş zamanımda kaykay yaparım.",
+                "Boş zamanımda kamp yaparım."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Do you like exercising?",
+            res = R.drawable.pp2,
+            ansEnglish = "Egzersiz yapmayı sever misin?",
+            opts = listOf(
+                "Egzersiz yapmayı sever misin?",
+                "Satranç oynamayı sever misin?",
+                "Kamp yapmayı sever misin?",
+                "Kaykay yapmayı sever misin?"
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Yes, I do. I like exercising.",
+            res = R.drawable.exercise,
+            ansEnglish = "Evet, severim. Egzersiz yapmayı severim.",
+            opts = listOf(
+                "Evet, severim. Egzersiz yapmayı severim.",
+                "Hayır, sevmem. Egzersiz yapmayı severim.",
+                "Evet, severim. Kaykay yapmayı severim.",
+                "Hayır, sevmem. Satranç oynamayı severim."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "My favorite hobby is collecting stamps.",
+            res = R.drawable.collect,
+            ansEnglish = "En sevdiğim hobi pul koleksiyonu yapmaktır.",
+            opts = listOf(
+                "En sevdiğim hobi satranç oynamaktır.",
+                "En sevdiğim hobi pul koleksiyonu yapmaktır.",
+                "En sevdiğim hobi egzersiz yapmaktır.",
+                "En sevdiğim hobi kaykay yapmaktır."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Hobbies Final Group Review",
+            image = R.drawable.cat_logo,
+            pairs = "skate,play chess,exercise,collect,camp,fish",
+            turkishOptions = listOf(
+                "kaykay yapmak",
+                "satranç oynamak",
+                "egzersiz yapmak",
+                "koleksiyon yapmak",
+                "kamp yapmak",
+                "balık tutmak"
+            )
+        )
+    )
+}
+
+    fun getQuiz142(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "satranç oynamak",
+            imageRes = R.drawable.chess,
+            correctAnswer = "play chess",
+            options = listOf("play chess", "collect", "skate", "exercise")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I am good at playing chess.",
+            res = R.drawable.chess,
+            ansEnglish = "Satranç oynamada iyiyim.",
+            opts = listOf(
+                "Satranç oynamada iyiyim.",
+                "Kaykay yapmayı severim.",
+                "Egzersiz yapıyorum.",
+                "Kamp yapmak istiyorum."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "kaykay yapmak",
+            imageRes = R.drawable.skate,
+            correctAnswer = "skate",
+            options = listOf("skate", "ride", "camp", "dance")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I want to learn skating.",
+            res = R.drawable.skate,
+            ansEnglish = "Kaykay yapmayı öğrenmek istiyorum.",
+            opts = listOf(
+                "Kaykay yapmayı öğrenmek istiyorum.",
+                "Kaykay yapmayı sevmiyorum.",
+                "Kaykay yapıyorum.",
+                "Kaykay yapmada iyiyim."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "koleksiyon yapmak",
+            imageRes = R.drawable.collect,
+            correctAnswer = "collect",
+            options = listOf("collect", "garden", "exercise", "travel")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Why do you like collecting stamps?",
+            res = R.drawable.pp1,
+            ansEnglish = "Neden pul koleksiyonu yapmayı seviyorsun?",
+            opts = listOf(
+                "Neden pul koleksiyonu yapmayı seviyorsun?",
+                "Ne zaman pul topluyorsun?",
+                "Pulun var mı?",
+                "Pul nerede?"
+            )
+        ),
+
+        createListening(
+            id = 7,
+            qTurkish = "Because it is relaxing.",
+            res = R.drawable.pp2,
+            ansEnglish = "Çünkü rahatlatıcıdır.",
+            opts = listOf(
+                "Çünkü rahatlatıcıdır.",
+                "Çünkü pahalıdır.",
+                "Çünkü yağmurludur.",
+                "Çünkü uzaktır."
+            )
+        ),
+
+        createVisual(
+            id = 8,
+            questionTurkish = "egzersiz yapmak",
+            imageRes = R.drawable.exercise,
+            correctAnswer = "exercise",
+            options = listOf("exercise", "fish", "cook", "ride")
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "I exercise before dinner.",
+            res = R.drawable.exercise,
+            ansEnglish = "Akşam yemeğinden önce egzersiz yaparım.",
+            opts = listOf(
+                "Akşam yemeğinden önce egzersiz yaparım.",
+                "Akşam yemeğinden sonra uyurum.",
+                "Sabahları balık tutarım.",
+                "Hafta sonları kamp yaparım."
+            )
+        ),
+
+        createVisual(
+            id = 10,
+            questionTurkish = "bisiklete binmek",
+            imageRes = R.drawable.ride,
+            correctAnswer = "ride",
+            options = listOf("ride", "take photo", "hike", "camp")
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "I can ride a bike.",
+            res = R.drawable.ride,
+            ansEnglish = "Bisiklete binebilirim.",
+            opts = listOf(
+                "Bisiklete binebilirim.",
+                "Bisiklete binmek istiyorum.",
+                "Bisiklete binemem.",
+                "Bisiklete binmeyi severim."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Would you like to go camping?",
+            res = R.drawable.pp3,
+            ansEnglish = "Kamp yapmaya gitmek ister misin?",
+            opts = listOf(
+                "Kamp yapmaya gitmek ister misin?",
+                "Kamp yapıyor musun?",
+                "Kamp yapabilir misin?",
+                "Kamp yapmayı sever misin?"
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Let's go camping this weekend.",
+            res = R.drawable.pp4,
+            ansEnglish = "Bu hafta sonu kamp yapalım.",
+            opts = listOf(
+                "Bu hafta sonu kamp yapalım.",
+                "Bu hafta sonu evde kalalım.",
+                "Bu hafta sonu ders çalışalım.",
+                "Bu hafta sonu alışveriş yapalım."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "On sunny days, we take photos in the park.",
+            res = R.drawable.take_photo,
+            ansEnglish = "Güneşli günlerde parkta fotoğraf çekeriz.",
+            opts = listOf(
+                "Güneşli günlerde parkta fotoğraf çekeriz.",
+                "Yağmurlu günlerde evde kalırız.",
+                "Karlı günlerde kamp yaparız.",
+                "Rüzgarlı günlerde satranç oynarız."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "My sister hikes with her friends after school.",
+            res = R.drawable.hike,
+            ansEnglish = "Kız kardeşim okuldan sonra arkadaşlarıyla doğa yürüyüşü yapar.",
+            opts = listOf(
+                "Kız kardeşim okuldan sonra arkadaşlarıyla doğa yürüyüşü yapar.",
+                "Kız kardeşim okuldan sonra satranç oynar.",
+                "Kız kardeşim okuldan sonra yemek yapar.",
+                "Kız kardeşim okuldan sonra kaykay yapar."
+            )
+        ),
+
+        createListening(
+            id = 16,
+            qTurkish = "How often do you exercise?",
+            res = R.drawable.pp5,
+            ansEnglish = "Ne sıklıkla egzersiz yaparsın?",
+            opts = listOf(
+                "Ne sıklıkla egzersiz yaparsın?",
+                "Egzersiz yapabilir misin?",
+                "Egzersiz yapmak ister misin?",
+                "Egzersiz yapıyor musun?"
+            )
+        ),
+
+        createListening(
+            id = 17,
+            qTurkish = "I usually exercise after school.",
+            res = R.drawable.exercise,
+            ansEnglish = "Genellikle okuldan sonra egzersiz yaparım.",
+            opts = listOf(
+                "Genellikle okuldan sonra egzersiz yaparım.",
+                "Asla egzersiz yapmam.",
+                "Sadece hafta sonları egzersiz yaparım.",
+                "Sabahları satranç oynarım."
+            )
+        ),
+
+        createListening(
+            id = 18,
+            qTurkish = "My father and I collect coins together.",
+            res = R.drawable.collect,
+            ansEnglish = "Babamla birlikte madeni para koleksiyonu yaparız.",
+            opts = listOf(
+                "Babamla birlikte madeni para koleksiyonu yaparız.",
+                "Babamla birlikte balık tutarız.",
+                "Babamla birlikte kamp yaparız.",
+                "Babamla birlikte film izleriz."
+            )
+        ),
+
+        createListening(
+            id = 19,
+            qTurkish = "Skating is exciting.",
+            res = R.drawable.skate,
+            ansEnglish = "Kaykay yapmak heyecan vericidir.",
+            opts = listOf(
+                "Kaykay yapmak heyecan vericidir.",
+                "Kaykay yapmak sıkıcıdır.",
+                "Kaykay yapmak zordur.",
+                "Kaykay yapmak pahalıdır."
+            )
+        ),
+
+        createMatching(
+            id = 20,
+            questionText = "Ultimate Hobby Review",
+            image = R.drawable.cat_logo,
+            pairs = "collect,skate,play chess,exercise,ride,hike",
+            turkishOptions = listOf(
+                "koleksiyon yapmak",
+                "kaykay yapmak",
+                "satranç oynamak",
+                "egzersiz yapmak",
+                "bisiklete binmek",
+                "doğa yürüyüşü yapmak"
+            )
+        )
+    )
+}
+
+    fun getQuiz143(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "oda",
+            imageRes = R.drawable.room,
+            correctAnswer = "room",
+            options = listOf("room", "key", "reception", "reservation")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I need a room.",
+            res = R.drawable.room,
+            ansEnglish = "Bir odaya ihtiyacım var.",
+            opts = listOf(
+                "Bir odaya ihtiyacım var.",
+                "Bir anahtarım var.",
+                "Resepsiyonu arıyorum.",
+                "Bir rezervasyonum var."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "anahtar",
+            imageRes = R.drawable.key,
+            correctAnswer = "key",
+            options = listOf("reservation", "room", "key", "reception")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Here is your room key.",
+            res = R.drawable.key,
+            ansEnglish = "İşte oda anahtarınız.",
+            opts = listOf(
+                "İşte oda anahtarınız.",
+                "İşte rezervasyonunuz.",
+                "İşte pasaportunuz.",
+                "İşte odanız."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "resepsiyon",
+            imageRes = R.drawable.reception,
+            correctAnswer = "reception",
+            options = listOf("reception", "reservation", "room", "key")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Welcome to our hotel.",
+            res = R.drawable.pp1,
+            ansEnglish = "Otelimize hoş geldiniz.",
+            opts = listOf(
+                "Otelimize hoş geldiniz.",
+                "İyi yolculuklar.",
+                "İyi geceler.",
+                "Görüşürüz."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "rezervasyon",
+            imageRes = R.drawable.reservation,
+            correctAnswer = "reservation",
+            options = listOf("room", "reservation", "key", "reception")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "I have a reservation.",
+            res = R.drawable.reservation,
+            ansEnglish = "Bir rezervasyonum var.",
+            opts = listOf(
+                "Bir rezervasyonum var.",
+                "Bir anahtarım var.",
+                "Bir odam var.",
+                "Bir otelim var."
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "Where is the reception?",
+            res = R.drawable.reception,
+            ansEnglish = "Resepsiyon nerede?",
+            opts = listOf(
+                "Resepsiyon nerede?",
+                "Asansör nerede?",
+                "Restoran nerede?",
+                "Odam nerede?"
+            )
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Can I have a room, please?",
+            res = R.drawable.room,
+            ansEnglish = "Bir oda alabilir miyim lütfen?",
+            opts = listOf(
+                "Bir oda alabilir miyim lütfen?",
+                "Anahtarımı alabilir miyim?",
+                "Kahvaltı alabilir miyim?",
+                "Çıkış yapabilir miyim?"
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "Do you have a reservation?",
+            res = R.drawable.pp2,
+            ansEnglish = "Rezervasyonunuz var mı?",
+            opts = listOf(
+                "Rezervasyonunuz var mı?",
+                "Odanız var mı?",
+                "Pasaportunuz var mı?",
+                "Valiziniz var mı?"
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Yes, I do. I have a reservation.",
+            res = R.drawable.reservation,
+            ansEnglish = "Evet, var. Bir rezervasyonum var.",
+            opts = listOf(
+                "Evet, var. Bir rezervasyonum var.",
+                "Hayır, yok. Bir rezervasyonum var.",
+                "Evet, var. Bir odam var.",
+                "Hayır, yok. Bir anahtarım var."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The reception gives me a room key.",
+            res = R.drawable.reception,
+            ansEnglish = "Resepsiyon bana oda anahtarı verir.",
+            opts = listOf(
+                "Resepsiyon bana oda anahtarı verir.",
+                "Resepsiyon bana kahvaltı verir.",
+                "Resepsiyon bana yemek verir.",
+                "Resepsiyon bana valiz verir."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "My room is very nice.",
+            res = R.drawable.room,
+            ansEnglish = "Odam çok güzel.",
+            opts = listOf(
+                "Odam çok güzel.",
+                "Odam çok küçük.",
+                "Odam çok temiz.",
+                "Odam çok eski."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Thank you. Here is your key.",
+            res = R.drawable.key,
+            ansEnglish = "Teşekkür ederim. İşte anahtarınız.",
+            opts = listOf(
+                "Teşekkür ederim. İşte anahtarınız.",
+                "Teşekkür ederim. İşte valiziniz.",
+                "Teşekkür ederim. İşte pasaportunuz.",
+                "Teşekkür ederim. İşte rezervasyonunuz."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "At The Hotel - 1",
+            image = R.drawable.cat_logo,
+            pairs = "room,key,reception,reservation,hotel,key",
+            turkishOptions = listOf(
+                "oda",
+                "anahtar",
+                "resepsiyon",
+                "rezervasyon",
+                "otel",
+                "anahtar"
+            )
+        )
+    )
+}
+
+    fun getQuiz144(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "oda",
+            imageRes = R.drawable.room,
+            correctAnswer = "room",
+            options = listOf("room", "key", "reception", "reservation")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I need a room.",
+            res = R.drawable.room,
+            ansEnglish = "Bir odaya ihtiyacım var.",
+            opts = listOf(
+                "Bir odaya ihtiyacım var.",
+                "Bir anahtarım var.",
+                "Bir rezervasyonum var.",
+                "Resepsiyon nerede?"
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "anahtar",
+            imageRes = R.drawable.key,
+            correctAnswer = "key",
+            options = listOf("reservation", "room", "key", "reception")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "Here is your key.",
+            res = R.drawable.key,
+            ansEnglish = "İşte anahtarınız.",
+            opts = listOf(
+                "İşte anahtarınız.",
+                "İşte odanız.",
+                "İşte rezervasyonunuz.",
+                "İşte oteliniz."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "resepsiyon",
+            imageRes = R.drawable.reception,
+            correctAnswer = "reception",
+            options = listOf("reception", "room", "key", "reservation")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Where is the reception?",
+            res = R.drawable.reception,
+            ansEnglish = "Resepsiyon nerede?",
+            opts = listOf(
+                "Resepsiyon nerede?",
+                "Oda nerede?",
+                "Anahtar nerede?",
+                "Otel nerede?"
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "rezerve etmek",
+            imageRes = R.drawable.book,
+            correctAnswer = "book",
+            options = listOf("book", "room", "key", "hotel")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "I want to book a room.",
+            res = R.drawable.book,
+            ansEnglish = "Bir oda rezerve etmek istiyorum.",
+            opts = listOf(
+                "Bir oda rezerve etmek istiyorum.",
+                "Bir oda temizlemek istiyorum.",
+                "Bir anahtar istiyorum.",
+                "Resepsiyona gitmek istiyorum."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "rezervasyon",
+            imageRes = R.drawable.reservation,
+            correctAnswer = "reservation",
+            options = listOf("room", "reservation", "key", "reception")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I have a reservation.",
+            res = R.drawable.reservation,
+            ansEnglish = "Bir rezervasyonum var.",
+            opts = listOf(
+                "Bir rezervasyonum var.",
+                "Bir odam var.",
+                "Bir anahtarım var.",
+                "Bir otelim var."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "Do you have a reservation?",
+            res = R.drawable.pp1,
+            ansEnglish = "Rezervasyonunuz var mı?",
+            opts = listOf(
+                "Rezervasyonunuz var mı?",
+                "Odanız var mı?",
+                "Anahtarınız var mı?",
+                "Oteliniz var mı?"
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Yes, I do. I have a reservation.",
+            res = R.drawable.reservation,
+            ansEnglish = "Evet, var. Bir rezervasyonum var.",
+            opts = listOf(
+                "Evet, var. Bir rezervasyonum var.",
+                "Hayır, yok. Bir rezervasyonum var.",
+                "Evet, var. Bir anahtarım var.",
+                "Hayır, yok. Bir odam var."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Come to the reception, please.",
+            res = R.drawable.reception,
+            ansEnglish = "Lütfen resepsiyona gelin.",
+            opts = listOf(
+                "Lütfen resepsiyona gelin.",
+                "Lütfen odaya gidin.",
+                "Lütfen anahtarı alın.",
+                "Lütfen otelde kalın."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "My room is clean.",
+            res = R.drawable.room,
+            ansEnglish = "Odam temiz.",
+            opts = listOf(
+                "Odam temiz.",
+                "Odam eski.",
+                "Odam küçük.",
+                "Odam soğuk."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Thank you. Here is your room.",
+            res = R.drawable.room,
+            ansEnglish = "Teşekkür ederim. İşte odanız.",
+            opts = listOf(
+                "Teşekkür ederim. İşte odanız.",
+                "Teşekkür ederim. İşte anahtarınız.",
+                "Teşekkür ederim. İşte rezervasyonunuz.",
+                "Teşekkür ederim. İşte resepsiyon."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "At The Hotel - 2",
+            image = R.drawable.cat_logo,
+            pairs = "room,key,reception,reservation,book,hotel",
+            turkishOptions = listOf(
+                "oda",
+                "anahtar",
+                "resepsiyon",
+                "rezervasyon",
+                "rezerve etmek",
+                "otel"
+            )
+        )
+    )
+}
+
+    fun getQuiz145(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "otel",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "hotel",
+            options = listOf("hotel", "room", "reservation", "reception")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Today I have a reservation at this hotel.",
+            res = R.drawable.reservation,
+            ansEnglish = "Bugün bu otelde bir rezervasyonum var.",
+            opts = listOf(
+                "Bugün bu otelde bir rezervasyonum var.",
+                "Bugün bu otelde çalışıyorum.",
+                "Bugün bu otelden ayrılıyorum.",
+                "Bugün bu otelde yemek yiyorum."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "rezerve etmek",
+            imageRes = R.drawable.book,
+            correctAnswer = "book",
+            options = listOf("book", "hotel", "room", "key")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I want to book this room.",
+            res = R.drawable.room,
+            ansEnglish = "Bu odayı rezerve etmek istiyorum.",
+            opts = listOf(
+                "Bu odayı rezerve etmek istiyorum.",
+                "Bu odayı temizlemek istiyorum.",
+                "Bu odayı görmek istemiyorum.",
+                "Bu odada uyumak istemiyorum."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "oda",
+            imageRes = R.drawable.room,
+            correctAnswer = "room",
+            options = listOf("room", "reservation", "hotel", "reception")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "I like this room.",
+            res = R.drawable.room,
+            ansEnglish = "Bu odayı beğendim.",
+            opts = listOf(
+                "Bu odayı beğendim.",
+                "Bu oteli beğendim.",
+                "Bu anahtarı beğendim.",
+                "Bu resepsiyonu beğendim."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "resepsiyon",
+            imageRes = R.drawable.reception,
+            correctAnswer = "reception",
+            options = listOf("reception", "hotel", "room", "key")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "Welcome! Your room is ready.",
+            res = R.drawable.reception,
+            ansEnglish = "Hoş geldiniz! Odanız hazır.",
+            opts = listOf(
+                "Hoş geldiniz! Odanız hazır.",
+                "Hoş geldiniz! Otel kapalı.",
+                "Hoş geldiniz! Kahvaltı hazır.",
+                "Hoş geldiniz! Odanız küçük."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "anahtar",
+            imageRes = R.drawable.key,
+            correctAnswer = "key",
+            options = listOf("reservation", "key", "book", "hotel")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "My key is in my bag.",
+            res = R.drawable.key,
+            ansEnglish = "Anahtarım çantamda.",
+            opts = listOf(
+                "Anahtarım çantamda.",
+                "Anahtarım masada.",
+                "Anahtarım odada.",
+                "Anahtarım kayıp."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "I stay at this hotel for two nights.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bu otelde iki gece kalıyorum.",
+            opts = listOf(
+                "Bu otelde iki gece kalıyorum.",
+                "Bu otelde çalışıyorum.",
+                "Bu oteli satın alıyorum.",
+                "Bu otelden ayrılıyorum."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Thank you. I like this hotel.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Teşekkür ederim. Bu oteli beğendim.",
+            opts = listOf(
+                "Teşekkür ederim. Bu oteli beğendim.",
+                "Teşekkür ederim. Bu otelden ayrılıyorum.",
+                "Teşekkür ederim. Bu odayı temizliyorum.",
+                "Teşekkür ederim. Bu anahtarı kaybettim."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The reception is busy today.",
+            res = R.drawable.reception,
+            ansEnglish = "Resepsiyon bugün yoğun.",
+            opts = listOf(
+                "Resepsiyon bugün yoğun.",
+                "Resepsiyon bugün kapalı.",
+                "Resepsiyon bugün temiz.",
+                "Resepsiyon bugün boş."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "I need a room for tonight.",
+            res = R.drawable.room,
+            ansEnglish = "Bu gece için bir odaya ihtiyacım var.",
+            opts = listOf(
+                "Bu gece için bir odaya ihtiyacım var.",
+                "Bu gece için bir anahtara ihtiyacım var.",
+                "Bu gece için bir restorana ihtiyacım var.",
+                "Bu gece için bir çantaya ihtiyacım var."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Here is your key. Enjoy your stay.",
+            res = R.drawable.key,
+            ansEnglish = "İşte anahtarınız. İyi konaklamalar.",
+            opts = listOf(
+                "İşte anahtarınız. İyi konaklamalar.",
+                "İşte odanız. İyi yolculuklar.",
+                "İşte valiziniz. İyi akşamlar.",
+                "İşte rezervasyonunuz. Hoşça kalın."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "At The Hotel - 3",
+            image = R.drawable.cat_logo,
+            pairs = "hotel,book,room,reception,key,reservation",
+            turkishOptions = listOf(
+                "otel",
+                "rezerve etmek",
+                "oda",
+                "resepsiyon",
+                "anahtar",
+                "rezervasyon"
+            )
+        )
+    )
+}
+
+    fun getQuiz146(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "asansör",
+            imageRes = R.drawable.elevator,
+            correctAnswer = "elevator",
+            options = listOf("elevator", "lobby", "breakfast", "guest")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Where is the elevator?",
+            res = R.drawable.elevator,
+            ansEnglish = "Asansör nerede?",
+            opts = listOf(
+                "Asansör nerede?",
+                "Oda nerede?",
+                "Resepsiyon nerede?",
+                "Kahvaltı nerede?"
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "lobi",
+            imageRes = R.drawable.lobby,
+            correctAnswer = "lobby",
+            options = listOf("room", "breakfast", "lobby", "guest")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The lobby is very big.",
+            res = R.drawable.lobby,
+            ansEnglish = "Lobi çok büyük.",
+            opts = listOf(
+                "Lobi çok büyük.",
+                "Lobi çok küçük.",
+                "Lobi kapalı.",
+                "Lobi temiz değil."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "kahvaltı",
+            imageRes = R.drawable.breakfast,
+            correctAnswer = "breakfast",
+            options = listOf("breakfast", "elevator", "guest", "lobby")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Breakfast is ready.",
+            res = R.drawable.breakfast,
+            ansEnglish = "Kahvaltı hazır.",
+            opts = listOf(
+                "Kahvaltı hazır.",
+                "Kahvaltı pahalı.",
+                "Kahvaltı bitti.",
+                "Kahvaltı lezzetli."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "misafir",
+            imageRes = R.drawable.guest,
+            correctAnswer = "guest",
+            options = listOf("guest", "room", "reservation", "hotel")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "I am a guest at this hotel.",
+            res = R.drawable.guest,
+            ansEnglish = "Bu otelde bir misafirim.",
+            opts = listOf(
+                "Bu otelde bir misafirim.",
+                "Bu otelde çalışıyorum.",
+                "Bu otelin sahibiyim.",
+                "Bu otelden ayrılıyorum."
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "We have breakfast at the hotel.",
+            res = R.drawable.breakfast,
+            ansEnglish = "Otelde kahvaltı yapıyoruz.",
+            opts = listOf(
+                "Otelde kahvaltı yapıyoruz.",
+                "Otelde uyuyoruz.",
+                "Otelde çalışıyoruz.",
+                "Otelde yüzüyoruz."
+            )
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The elevator is near the lobby.",
+            res = R.drawable.elevator,
+            ansEnglish = "Asansör lobinin yakınında.",
+            opts = listOf(
+                "Asansör lobinin yakınında.",
+                "Asansör odanın içinde.",
+                "Asansör resepsiyonun arkasında.",
+                "Asansör kapalı."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The guest has a reservation.",
+            res = R.drawable.guest,
+            ansEnglish = "Misafirin bir rezervasyonu var.",
+            opts = listOf(
+                "Misafirin bir rezervasyonu var.",
+                "Misafirin bir anahtarı yok.",
+                "Misafir otelden ayrılıyor.",
+                "Misafir kahvaltı yapıyor."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "I eat breakfast with my family.",
+            res = R.drawable.breakfast,
+            ansEnglish = "Ailemle kahvaltı yaparım.",
+            opts = listOf(
+                "Ailemle kahvaltı yaparım.",
+                "Ailemle otelde kalırım.",
+                "Ailemle asansöre binerim.",
+                "Ailemle resepsiyona giderim."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The lobby is clean.",
+            res = R.drawable.lobby,
+            ansEnglish = "Lobi temiz.",
+            opts = listOf(
+                "Lobi temiz.",
+                "Lobi kirli.",
+                "Lobi küçük.",
+                "Lobi eski."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Good morning! Breakfast is ready.",
+            res = R.drawable.breakfast,
+            ansEnglish = "Günaydın! Kahvaltı hazır.",
+            opts = listOf(
+                "Günaydın! Kahvaltı hazır.",
+                "İyi akşamlar! Odanız hazır.",
+                "Hoş geldiniz! Asansör kapalı.",
+                "İyi geceler! Resepsiyon açık."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Welcome! The lobby is on your left.",
+            res = R.drawable.lobby,
+            ansEnglish = "Hoş geldiniz! Lobi solunuzda.",
+            opts = listOf(
+                "Hoş geldiniz! Lobi solunuzda.",
+                "Hoş geldiniz! Odanız hazır.",
+                "Hoş geldiniz! Kahvaltı bitti.",
+                "Hoş geldiniz! Anahtarınız kayıp."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "At The Hotel - 4",
+            image = R.drawable.cat_logo,
+            pairs = "elevator,lobby,breakfast,guest,hotel,room",
+            turkishOptions = listOf(
+                "asansör",
+                "lobi",
+                "kahvaltı",
+                "misafir",
+                "otel",
+                "oda"
+            )
+        )
+    )
+}
+
+    fun getQuiz147(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "asansör",
+            imageRes = R.drawable.elevator,
+            correctAnswer = "elevator",
+            options = listOf("lobby", "elevator", "room", "key")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The elevator is near the reception.",
+            res = R.drawable.elevator,
+            ansEnglish = "Asansör resepsiyonun yakınında.",
+            opts = listOf(
+                "Asansör resepsiyonun yakınında.",
+                "Oda resepsiyonun yanında.",
+                "Anahtar çantamda.",
+                "Kahvaltı hazır."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "lobi",
+            imageRes = R.drawable.lobby,
+            correctAnswer = "lobby",
+            options = listOf("room", "lobby", "breakfast", "reservation")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I wait in the lobby.",
+            res = R.drawable.lobby,
+            ansEnglish = "Lobide beklerim.",
+            opts = listOf(
+                "Lobide beklerim.",
+                "Odada uyurum.",
+                "Restoranda yemek yerim.",
+                "Resepsiyona giderim."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "kahvaltı",
+            imageRes = R.drawable.breakfast,
+            correctAnswer = "breakfast",
+            options = listOf("breakfast", "key", "guest", "hotel")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "Breakfast is ready, and my room is clean.",
+            res = R.drawable.breakfast,
+            ansEnglish = "Kahvaltı hazır ve odam temiz.",
+            opts = listOf(
+                "Kahvaltı hazır ve odam temiz.",
+                "Anahtar hazır ve lobi temiz.",
+                "Oda küçük ve resepsiyon yoğun.",
+                "Otel eski ve kahvaltı bitti."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "misafir",
+            imageRes = R.drawable.guest,
+            correctAnswer = "guest",
+            options = listOf("guest", "reception", "room", "book")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The guest has a key.",
+            res = R.drawable.guest,
+            ansEnglish = "Misafirin bir anahtarı var.",
+            opts = listOf(
+                "Misafirin bir anahtarı var.",
+                "Misafirin bir kitabı var.",
+                "Misafirin bir kahvaltısı var.",
+                "Misafirin bir arabası var."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "rezervasyon",
+            imageRes = R.drawable.reservation,
+            correctAnswer = "reservation",
+            options = listOf("reservation", "room", "lobby", "elevator")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Today I have a reservation at this hotel.",
+            res = R.drawable.reservation,
+            ansEnglish = "Bugün bu otelde bir rezervasyonum var.",
+            opts = listOf(
+                "Bugün bu otelde bir rezervasyonum var.",
+                "Bugün bu restoranda yemek yerim.",
+                "Bugün bu odada kitap okurum.",
+                "Bugün bu evde uyurum."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "I want to book a room.",
+            res = R.drawable.book,
+            ansEnglish = "Bir oda rezerve etmek istiyorum.",
+            opts = listOf(
+                "Bir oda rezerve etmek istiyorum.",
+                "Bir anahtar almak istiyorum.",
+                "Kahvaltı yapmak istiyorum.",
+                "Lobide beklemek istiyorum."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "My key is in my bag.",
+            res = R.drawable.key,
+            ansEnglish = "Anahtarım çantamda.",
+            opts = listOf(
+                "Anahtarım çantamda.",
+                "Odam temiz.",
+                "Kahvaltı hazır.",
+                "Lobi büyük."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The hotel has a clean lobby.",
+            res = R.drawable.lobby,
+            ansEnglish = "Otelin temiz bir lobisi var.",
+            opts = listOf(
+                "Otelin temiz bir lobisi var.",
+                "Otelin küçük bir anahtarı var.",
+                "Otelin sıcak bir kahvaltısı var.",
+                "Otelin eski bir odası var."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The guest eats breakfast at the hotel.",
+            res = R.drawable.breakfast,
+            ansEnglish = "Misafir otelde kahvaltı yapar.",
+            opts = listOf(
+                "Misafir otelde kahvaltı yapar.",
+                "Misafir odada uyur.",
+                "Misafir resepsiyonda bekler.",
+                "Misafir anahtarı alır."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Welcome! Your room key is here.",
+            res = R.drawable.key,
+            ansEnglish = "Hoş geldiniz! Oda anahtarınız burada.",
+            opts = listOf(
+                "Hoş geldiniz! Oda anahtarınız burada.",
+                "Hoş geldiniz! Kahvaltınız burada.",
+                "Hoş geldiniz! Çantanız burada.",
+                "Hoş geldiniz! Kitabınız burada."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "At The Hotel Review",
+            image = R.drawable.cat_logo,
+            pairs = "elevator,lobby,breakfast,guest,reservation,key",
+            turkishOptions = listOf(
+                "asansör",
+                "lobi",
+                "kahvaltı",
+                "misafir",
+                "rezervasyon",
+                "anahtar"
+            )
+        )
+    )
+}
+
+    fun getQuiz148(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "oda",
+            imageRes = R.drawable.room,
+            correctAnswer = "room",
+            options = listOf("room", "key", "lobby", "breakfast")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "This room is clean.",
+            res = R.drawable.room,
+            ansEnglish = "Bu oda temiz.",
+            opts = listOf(
+                "Bu oda temiz.",
+                "Bu lobi büyük.",
+                "Bu anahtar küçük.",
+                "Bu kahvaltı hazır."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "misafir",
+            imageRes = R.drawable.guest,
+            correctAnswer = "guest",
+            options = listOf("guest", "reception", "reservation", "hotel")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The guest is in the lobby.",
+            res = R.drawable.guest,
+            ansEnglish = "Misafir lobide.",
+            opts = listOf(
+                "Misafir lobide.",
+                "Misafir odada.",
+                "Misafir restoranda.",
+                "Misafir bahçede."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "asansör",
+            imageRes = R.drawable.elevator,
+            correctAnswer = "elevator",
+            options = listOf("lobby", "elevator", "room", "key")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "I use the elevator.",
+            res = R.drawable.elevator,
+            ansEnglish = "Asansörü kullanırım.",
+            opts = listOf(
+                "Asansörü kullanırım.",
+                "Anahtarı alırım.",
+                "Odayı beğenirim.",
+                "Kahvaltı yaparım."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "rezerve etmek",
+            imageRes = R.drawable.book,
+            correctAnswer = "book",
+            options = listOf("book", "room", "key", "hotel")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "I want to book this room.",
+            res = R.drawable.book,
+            ansEnglish = "Bu odayı rezerve etmek istiyorum.",
+            opts = listOf(
+                "Bu odayı rezerve etmek istiyorum.",
+                "Bu anahtarı almak istiyorum.",
+                "Bu otelde kalmak istiyorum.",
+                "Bu lobide beklemek istiyorum."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "kahvaltı",
+            imageRes = R.drawable.breakfast,
+            correctAnswer = "breakfast",
+            options = listOf("breakfast", "lobby", "reservation", "guest")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Breakfast is in the hotel.",
+            res = R.drawable.breakfast,
+            ansEnglish = "Kahvaltı otelde.",
+            opts = listOf(
+                "Kahvaltı otelde.",
+                "Anahtar çantada.",
+                "Misafir lobide.",
+                "Oda temiz."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "I have a key and a room.",
+            res = R.drawable.key,
+            ansEnglish = "Bir anahtarım ve bir odam var.",
+            opts = listOf(
+                "Bir anahtarım ve bir odam var.",
+                "Bir rezervasyonum ve bir çantam var.",
+                "Bir kahvaltım ve bir odam var.",
+                "Bir otelim ve bir lobim var."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The reception gives the key.",
+            res = R.drawable.reception,
+            ansEnglish = "Resepsiyon anahtarı verir.",
+            opts = listOf(
+                "Resepsiyon anahtarı verir.",
+                "Misafir kahvaltı yapar.",
+                "Otel oda verir.",
+                "Asansör çalışır."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I stay at this hotel tonight.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bu gece bu otelde kalırım.",
+            opts = listOf(
+                "Bu gece bu otelde kalırım.",
+                "Bu sabah kahvaltı yaparım.",
+                "Bugün okula giderim.",
+                "Bu akşam eve giderim."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The lobby is big and clean.",
+            res = R.drawable.lobby,
+            ansEnglish = "Lobi büyük ve temiz.",
+            opts = listOf(
+                "Lobi büyük ve temiz.",
+                "Oda küçük ve soğuk.",
+                "Kahvaltı sıcak ve hazır.",
+                "Anahtar eski ve küçük."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Thank you. I like this hotel.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Teşekkür ederim. Bu oteli beğendim.",
+            opts = listOf(
+                "Teşekkür ederim. Bu oteli beğendim.",
+                "Teşekkür ederim. Bu odayı istemiyorum.",
+                "Teşekkür ederim. Anahtar nerede?",
+                "Teşekkür ederim. Kahvaltı bitti."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "At The Hotel Mixed Review",
+            image = R.drawable.cat_logo,
+            pairs = "room,guest,elevator,book,breakfast,lobby",
+            turkishOptions = listOf(
+                "oda",
+                "misafir",
+                "asansör",
+                "rezerve etmek",
+                "kahvaltı",
+                "lobi"
+            )
+        )
+    )
+}
+
+    fun getQuiz149(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "pasaport",
+            imageRes = R.drawable.passport,
+            correctAnswer = "passport",
+            options = listOf("passport", "luggage", "key", "room")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I have my passport.",
+            res = R.drawable.passport,
+            ansEnglish = "Pasaportum var.",
+            opts = listOf(
+                "Pasaportum var.",
+                "Anahtarım var.",
+                "Rezervasyonum var.",
+                "Valizim var."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "valiz",
+            imageRes = R.drawable.luggage,
+            correctAnswer = "luggage",
+            options = listOf("reservation", "luggage", "passport", "reception")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "My luggage is in the room.",
+            res = R.drawable.luggage,
+            ansEnglish = "Valizim odada.",
+            opts = listOf(
+                "Valizim odada.",
+                "Pasaportum çantamda.",
+                "Anahtarım resepsiyonda.",
+                "Kahvaltı hazır."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "resepsiyon",
+            imageRes = R.drawable.reception,
+            correctAnswer = "reception",
+            options = listOf("reception", "passport", "room", "luggage")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The guest has a passport.",
+            res = R.drawable.guest,
+            ansEnglish = "Misafirin pasaportu var.",
+            opts = listOf(
+                "Misafirin pasaportu var.",
+                "Misafirin anahtarı var.",
+                "Misafirin odası var.",
+                "Misafirin kahvaltısı var."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "oda",
+            imageRes = R.drawable.room,
+            correctAnswer = "room",
+            options = listOf("room", "key", "passport", "luggage")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "I put my luggage in the room.",
+            res = R.drawable.room,
+            ansEnglish = "Valizimi odaya koyarım.",
+            opts = listOf(
+                "Valizimi odaya koyarım.",
+                "Anahtarımı çantaya koyarım.",
+                "Pasaportumu masaya koyarım.",
+                "Kahvaltımı lobide yaparım."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "anahtar",
+            imageRes = R.drawable.key,
+            correctAnswer = "key",
+            options = listOf("key", "reservation", "passport", "luggage")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I show my passport at the reception.",
+            res = R.drawable.reception,
+            ansEnglish = "Pasaportumu resepsiyonda gösteririm.",
+            opts = listOf(
+                "Pasaportumu resepsiyonda gösteririm.",
+                "Valizimi odaya koyarım.",
+                "Anahtarımı çantamda tutarım.",
+                "Kahvaltı otelde hazır."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "My key is next to my passport.",
+            res = R.drawable.key,
+            ansEnglish = "Anahtarım pasaportumun yanında.",
+            opts = listOf(
+                "Anahtarım pasaportumun yanında.",
+                "Valizim lobide.",
+                "Odam temiz.",
+                "Kahvaltı hazır."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The luggage is heavy.",
+            res = R.drawable.luggage,
+            ansEnglish = "Valiz ağır.",
+            opts = listOf(
+                "Valiz ağır.",
+                "Oda temiz.",
+                "Lobi büyük.",
+                "Anahtar küçük."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I want to book a room at this hotel.",
+            res = R.drawable.book,
+            ansEnglish = "Bu otelde bir oda rezerve etmek istiyorum.",
+            opts = listOf(
+                "Bu otelde bir oda rezerve etmek istiyorum.",
+                "Bu otelde kahvaltı yapmak istiyorum.",
+                "Bu otelde valizimi almak istiyorum.",
+                "Bu otelde pasaportumu bulmak istiyorum."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "My passport is in my bag.",
+            res = R.drawable.passport,
+            ansEnglish = "Pasaportum çantamda.",
+            opts = listOf(
+                "Pasaportum çantamda.",
+                "Anahtarım odada.",
+                "Valizim lobide.",
+                "Rezervasyonum hazır."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The guest takes the key and the luggage.",
+            res = R.drawable.guest,
+            ansEnglish = "Misafir anahtarı ve valizi alır.",
+            opts = listOf(
+                "Misafir anahtarı ve valizi alır.",
+                "Misafir kahvaltı yapar.",
+                "Misafir resepsiyonda bekler.",
+                "Misafir odayı rezerve eder."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Hotel Passport and Luggage",
+            image = R.drawable.cat_logo,
+            pairs = "passport,luggage,room,key,reception,guest",
+            turkishOptions = listOf(
+                "pasaport",
+                "valiz",
+                "oda",
+                "anahtar",
+                "resepsiyon",
+                "misafir"
+            )
+        )
+    )
+}
+
+    fun getQuiz150(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "giriş yapmak",
+            imageRes = R.drawable.check_in,
+            correctAnswer = "check in",
+            options = listOf("check in", "check out", "passport", "luggage")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I want to check in now.",
+            res = R.drawable.check_in,
+            ansEnglish = "Şimdi giriş yapmak istiyorum.",
+            opts = listOf(
+                "Şimdi giriş yapmak istiyorum.",
+                "Şimdi çıkış yapmak istiyorum.",
+                "Şimdi kahvaltı yapmak istiyorum.",
+                "Şimdi odama gitmek istiyorum."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "çıkış yapmak",
+            imageRes = R.drawable.check_out,
+            correctAnswer = "check out",
+            options = listOf("check out", "check in", "room", "key")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I check out tomorrow morning.",
+            res = R.drawable.check_out,
+            ansEnglish = "Yarın sabah çıkış yapıyorum.",
+            opts = listOf(
+                "Yarın sabah çıkış yapıyorum.",
+                "Yarın sabah giriş yapıyorum.",
+                "Yarın sabah kahvaltı yapıyorum.",
+                "Yarın sabah otelde kalıyorum."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "pasaport",
+            imageRes = R.drawable.passport,
+            correctAnswer = "passport",
+            options = listOf("passport", "reservation", "room", "guest")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The guest checks in with a passport.",
+            res = R.drawable.passport,
+            ansEnglish = "Misafir pasaport ile giriş yapar.",
+            opts = listOf(
+                "Misafir pasaport ile giriş yapar.",
+                "Misafir kahvaltı yapar.",
+                "Misafir odayı temizler.",
+                "Misafir valizi taşır."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "valiz",
+            imageRes = R.drawable.luggage,
+            correctAnswer = "luggage",
+            options = listOf("luggage", "hotel", "key", "lobby")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "After check in, I take my luggage to my room.",
+            res = R.drawable.luggage,
+            ansEnglish = "Giriş yaptıktan sonra valizimi odama götürürüm.",
+            opts = listOf(
+                "Giriş yaptıktan sonra valizimi odama götürürüm.",
+                "Çıkış yaptıktan sonra kahvaltı yaparım.",
+                "Giriş yaptıktan sonra resepsiyona giderim.",
+                "Çıkış yaptıktan sonra otelde kalırım."
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "When do you check out?",
+            res = R.drawable.pp1,
+            ansEnglish = "Ne zaman çıkış yaparsınız?",
+            opts = listOf(
+                "Ne zaman çıkış yaparsınız?",
+                "Ne zaman giriş yaparsınız?",
+                "Ne zaman kahvaltı yaparsınız?",
+                "Ne zaman uyursunuz?"
+            )
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I stay at this hotel for three days.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Bu otelde üç gün kalırım.",
+            opts = listOf(
+                "Bu otelde üç gün kalırım.",
+                "Bu otelde çalışırım.",
+                "Bu oteli satarım.",
+                "Bu otelde kahvaltı yapmam."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The receptionist gives me a room key.",
+            res = R.drawable.reception,
+            ansEnglish = "Resepsiyon görevlisi bana oda anahtarı verir.",
+            opts = listOf(
+                "Resepsiyon görevlisi bana oda anahtarı verir.",
+                "Misafir bana pasaport verir.",
+                "Otel bana kahvaltı verir.",
+                "Lobi bana anahtar verir."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "I leave my luggage in the room.",
+            res = R.drawable.luggage,
+            ansEnglish = "Valizimi odada bırakırım.",
+            opts = listOf(
+                "Valizimi odada bırakırım.",
+                "Anahtarımı resepsiyonda bırakırım.",
+                "Pasaportumu otelde bırakırım.",
+                "Kahvaltıyı lobide bırakırım."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Breakfast is free at this hotel.",
+            res = R.drawable.breakfast,
+            ansEnglish = "Bu otelde kahvaltı ücretsizdir.",
+            opts = listOf(
+                "Bu otelde kahvaltı ücretsizdir.",
+                "Bu otelde kahvaltı yoktur.",
+                "Bu otelde kahvaltı pahalıdır.",
+                "Bu otelde kahvaltı küçüktür."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The lobby is busy this morning.",
+            res = R.drawable.lobby,
+            ansEnglish = "Lobi bu sabah yoğun.",
+            opts = listOf(
+                "Lobi bu sabah yoğun.",
+                "Lobi bu sabah kapalı.",
+                "Lobi bu sabah temiz değil.",
+                "Lobi bu sabah boş."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "I am happy because my room is very nice.",
+            res = R.drawable.room,
+            ansEnglish = "Mutluyum çünkü odam çok güzel.",
+            opts = listOf(
+                "Mutluyum çünkü odam çok güzel.",
+                "Mutluyum çünkü kahvaltı bitti.",
+                "Mutluyum çünkü anahtarımı kaybettim.",
+                "Mutluyum çünkü otel kapalı."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Hotel Check In & Check Out",
+            image = R.drawable.cat_logo,
+            pairs = "check in,check out,passport,luggage,room,key",
+            turkishOptions = listOf(
+                "giriş yapmak",
+                "çıkış yapmak",
+                "pasaport",
+                "valiz",
+                "oda",
+                "anahtar"
+            )
+        )
+    )
+}
+
+    fun getQuiz151(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "park",
+            imageRes = R.drawable.park,
+            correctAnswer = "park",
+            options = listOf("park", "hospital", "library", "bank")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I go to the park with my friends.",
+            res = R.drawable.park,
+            ansEnglish = "Arkadaşlarımla parka giderim.",
+            opts = listOf(
+                "Arkadaşlarımla parka giderim.",
+                "Arkadaşlarımla kütüphaneye giderim.",
+                "Arkadaşlarımla bankaya giderim.",
+                "Arkadaşlarımla hastaneye giderim."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "hastane",
+            imageRes = R.drawable.hospital,
+            correctAnswer = "hospital",
+            options = listOf("library", "bank", "hospital", "park")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "My father works at the hospital.",
+            res = R.drawable.hospital,
+            ansEnglish = "Babam hastanede çalışır.",
+            opts = listOf(
+                "Babam hastanede çalışır.",
+                "Babam parkta yürür.",
+                "Babam bankada bekler.",
+                "Babam kütüphanede kitap okur."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "kütüphane",
+            imageRes = R.drawable.library,
+            correctAnswer = "library",
+            options = listOf("bank", "park", "library", "hospital")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "I study in the library after school.",
+            res = R.drawable.library,
+            ansEnglish = "Okuldan sonra kütüphanede ders çalışırım.",
+            opts = listOf(
+                "Okuldan sonra kütüphanede ders çalışırım.",
+                "Okuldan sonra parkta koşarım.",
+                "Okuldan sonra hastaneye giderim.",
+                "Okuldan sonra bankada çalışırım."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "banka",
+            imageRes = R.drawable.bank,
+            correctAnswer = "bank",
+            options = listOf("hospital", "bank", "park", "library")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "My mother is at the bank.",
+            res = R.drawable.bank,
+            ansEnglish = "Annem bankada.",
+            opts = listOf(
+                "Annem bankada.",
+                "Annem parkta.",
+                "Annem kütüphanede.",
+                "Annem hastanede."
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "Where is the library?",
+            res = R.drawable.pp1,
+            ansEnglish = "Kütüphane nerede?",
+            opts = listOf(
+                "Kütüphane nerede?",
+                "Park ne zaman açık?",
+                "Hastane büyük mü?",
+                "Bankada kim var?"
+            )
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The park is near my house.",
+            res = R.drawable.park,
+            ansEnglish = "Park evimin yakınında.",
+            opts = listOf(
+                "Park evimin yakınında.",
+                "Park çok pahalı.",
+                "Park bugün kapalı.",
+                "Park çok sessiz."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "I read books in the library.",
+            res = R.drawable.library,
+            ansEnglish = "Kütüphanede kitap okurum.",
+            opts = listOf(
+                "Kütüphanede kitap okurum.",
+                "Bankada kitap okurum.",
+                "Hastanede yemek yerim.",
+                "Parkta ders çalışırım."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The hospital is very big.",
+            res = R.drawable.hospital,
+            ansEnglish = "Hastane çok büyük.",
+            opts = listOf(
+                "Hastane çok büyük.",
+                "Hastane çok küçük.",
+                "Hastane kapalı.",
+                "Hastane sessiz."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Let's go to the park today.",
+            res = R.drawable.park,
+            ansEnglish = "Bugün parka gidelim.",
+            opts = listOf(
+                "Bugün parka gidelim.",
+                "Bugün bankaya gidelim.",
+                "Bugün hastanede çalışalım.",
+                "Bugün evde uyuyalım."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The bank is next to the hospital.",
+            res = R.drawable.bank,
+            ansEnglish = "Banka hastanenin yanında.",
+            opts = listOf(
+                "Banka hastanenin yanında.",
+                "Banka parkın içinde.",
+                "Banka evimin arkasında.",
+                "Banka bugün kapalı."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "I like the library because it is quiet.",
+            res = R.drawable.library,
+            ansEnglish = "Kütüphaneyi seviyorum çünkü sessiz.",
+            opts = listOf(
+                "Kütüphaneyi seviyorum çünkü sessiz.",
+                "Parkı seviyorum çünkü büyük.",
+                "Bankayı seviyorum çünkü temiz.",
+                "Hastaneyi seviyorum çünkü yeni."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Places in Town - 1",
+            image = R.drawable.cat_logo,
+            pairs = "park,hospital,library,bank,park,library",
+            turkishOptions = listOf(
+                "park",
+                "hastane",
+                "kütüphane",
+                "banka",
+                "park",
+                "kütüphane"
+            )
+        )
+    )
+}
+
+    fun getQuiz152(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "banka",
+            imageRes = R.drawable.bank,
+            correctAnswer = "bank",
+            options = listOf("library", "bank", "park", "hospital")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "in front of",
+            res = R.drawable.pp1,
+            ansEnglish = "önünde / karşısında",
+            opts = listOf(
+                "önünde / karşısında",
+                "yanında",
+                "içinde",
+                "yakınında"
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "hastane",
+            imageRes = R.drawable.hospital,
+            correctAnswer = "hospital",
+            options = listOf("hospital", "park", "bank", "library")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The bank is in front of the hospital.",
+            res = R.drawable.bank,
+            ansEnglish = "Banka hastanenin karşısında.",
+            opts = listOf(
+                "Banka hastanenin karşısında.",
+                "Banka parkta.",
+                "Banka kütüphanede.",
+                "Banka okulda."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "park",
+            imageRes = R.drawable.park,
+            correctAnswer = "park",
+            options = listOf("bank", "library", "park", "hospital")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "next to",
+            res = R.drawable.pp2,
+            ansEnglish = "yanında",
+            opts = listOf(
+                "karşısında",
+                "yanında",
+                "içinde",
+                "üstünde"
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "kütüphane",
+            imageRes = R.drawable.library,
+            correctAnswer = "library",
+            options = listOf("park", "hospital", "library", "bank")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The library is next to the park.",
+            res = R.drawable.library,
+            ansEnglish = "Kütüphane parkın yanında.",
+            opts = listOf(
+                "Kütüphane parkın yanında.",
+                "Kütüphane hastanenin karşısında.",
+                "Kütüphane bankada.",
+                "Kütüphane otelde."
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "Where is the bank?",
+            res = R.drawable.pp3,
+            ansEnglish = "Banka nerede?",
+            opts = listOf(
+                "Banka nerede?",
+                "Park açık mı?",
+                "Hastane büyük mü?",
+                "Kütüphane sessiz mi?"
+            )
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The park is next to my school.",
+            res = R.drawable.park,
+            ansEnglish = "Park okulumun yanında.",
+            opts = listOf(
+                "Park okulumun yanında.",
+                "Park hastanenin içinde.",
+                "Park bankanın karşısında.",
+                "Park otelin içinde."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "My mother is at the hospital.",
+            res = R.drawable.hospital,
+            ansEnglish = "Annem hastanede.",
+            opts = listOf(
+                "Annem hastanede.",
+                "Annem parkta.",
+                "Annem bankada.",
+                "Annem kütüphanede."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "I go to the library after school.",
+            res = R.drawable.library,
+            ansEnglish = "Okuldan sonra kütüphaneye giderim.",
+            opts = listOf(
+                "Okuldan sonra kütüphaneye giderim.",
+                "Okuldan sonra hastanede çalışırım.",
+                "Okuldan sonra bankada beklerim.",
+                "Okuldan sonra parkta uyurum."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The hospital is next to the bank.",
+            res = R.drawable.hospital,
+            ansEnglish = "Hastane bankanın yanında.",
+            opts = listOf(
+                "Hastane bankanın yanında.",
+                "Hastane parkın içinde.",
+                "Hastane kütüphanede.",
+                "Hastane okulda."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The park is in front of the library.",
+            res = R.drawable.park,
+            ansEnglish = "Park kütüphanenin karşısında.",
+            opts = listOf(
+                "Park kütüphanenin karşısında.",
+                "Park bankanın yanında.",
+                "Park hastanenin içinde.",
+                "Park otelde."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "I like this library because it is quiet.",
+            res = R.drawable.library,
+            ansEnglish = "Bu kütüphaneyi seviyorum çünkü sessiz.",
+            opts = listOf(
+                "Bu kütüphaneyi seviyorum çünkü sessiz.",
+                "Bu parkı seviyorum çünkü soğuk.",
+                "Bu bankayı seviyorum çünkü yağmurlu.",
+                "Bu hastaneyi seviyorum çünkü küçük."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Places and Directions - 1",
+            image = R.drawable.cat_logo,
+            pairs = "bank,hospital,park,library,in front of,next to",
+            turkishOptions = listOf(
+                "banka",
+                "hastane",
+                "park",
+                "kütüphane",
+                "önünde / karşısında",
+                "yanında"
+            )
+        )
+    )
+}
+
+    fun getQuiz153(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "park",
+            imageRes = R.drawable.park,
+            correctAnswer = "park",
+            options = listOf("hospital", "bank", "park", "library")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The bank is next to the park.",
+            res = R.drawable.bank,
+            ansEnglish = "Banka parkın yanında.",
+            opts = listOf(
+                "Banka parkın yanında.",
+                "Banka parkın karşısında.",
+                "Banka parkın içinde.",
+                "Banka parkın arkasında."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "kütüphane",
+            imageRes = R.drawable.library,
+            correctAnswer = "library",
+            options = listOf("park", "bank", "library", "hospital")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I read books in the library.",
+            res = R.drawable.library,
+            ansEnglish = "Kütüphanede kitap okurum.",
+            opts = listOf(
+                "Kütüphanede kitap okurum.",
+                "Parkta kitap okurum.",
+                "Bankada kitap okurum.",
+                "Hastanede kitap okurum."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "hastane",
+            imageRes = R.drawable.hospital,
+            correctAnswer = "hospital",
+            options = listOf("hospital", "park", "bank", "library")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The hospital is in front of the bank.",
+            res = R.drawable.hospital,
+            ansEnglish = "Hastane bankanın karşısında.",
+            opts = listOf(
+                "Hastane bankanın karşısında.",
+                "Hastane bankanın yanında.",
+                "Hastane parkın içinde.",
+                "Hastane kütüphanede."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "banka",
+            imageRes = R.drawable.bank,
+            correctAnswer = "bank",
+            options = listOf("library", "hospital", "bank", "park")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "My father works at the bank.",
+            res = R.drawable.bank,
+            ansEnglish = "Babam bankada çalışır.",
+            opts = listOf(
+                "Babam bankada çalışır.",
+                "Babam parkta yürür.",
+                "Babam kütüphanede ders çalışır.",
+                "Babam hastanede bekler."
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "Where is the hospital?",
+            res = R.drawable.pp1,
+            ansEnglish = "Hastane nerede?",
+            opts = listOf(
+                "Hastane nerede?",
+                "Park ne zaman açık?",
+                "Kim hastanede çalışıyor?",
+                "Kütüphane büyük mü?"
+            )
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The library is next to the hospital.",
+            res = R.drawable.library,
+            ansEnglish = "Kütüphane hastanenin yanında.",
+            opts = listOf(
+                "Kütüphane hastanenin yanında.",
+                "Kütüphane parkın karşısında.",
+                "Kütüphane bankanın içinde.",
+                "Kütüphane otelin arkasında."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "Let's go to the park after school.",
+            res = R.drawable.park,
+            ansEnglish = "Okuldan sonra parka gidelim.",
+            opts = listOf(
+                "Okuldan sonra parka gidelim.",
+                "Okuldan sonra bankada çalışalım.",
+                "Okuldan sonra hastanede bekleyelim.",
+                "Okuldan sonra eve dönelim."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "My mother is at the hospital today.",
+            res = R.drawable.hospital,
+            ansEnglish = "Annem bugün hastanede.",
+            opts = listOf(
+                "Annem bugün hastanede.",
+                "Annem bugün parkta.",
+                "Annem bugün bankada.",
+                "Annem bugün kütüphanede."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The park is near my house.",
+            res = R.drawable.park,
+            ansEnglish = "Park evimin yakınında.",
+            opts = listOf(
+                "Park evimin yakınında.",
+                "Park evimin içinde.",
+                "Park evimin üstünde.",
+                "Park evimin altında."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "I study in the library with my friends.",
+            res = R.drawable.library,
+            ansEnglish = "Arkadaşlarımla kütüphanede ders çalışırım.",
+            opts = listOf(
+                "Arkadaşlarımla kütüphanede ders çalışırım.",
+                "Arkadaşlarımla parkta futbol oynarım.",
+                "Arkadaşlarımla bankada çalışırım.",
+                "Arkadaşlarımla hastanede beklerim."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The bank and the hospital are very big.",
+            res = R.drawable.bank,
+            ansEnglish = "Banka ve hastane çok büyük.",
+            opts = listOf(
+                "Banka ve hastane çok büyük.",
+                "Park ve kütüphane çok küçük.",
+                "Banka ve park kapalı.",
+                "Hastane ve kütüphane sessiz."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Places in Town Review",
+            image = R.drawable.cat_logo,
+            pairs = "park,hospital,library,bank,next to,in front of",
+            turkishOptions = listOf(
+                "park",
+                "hastane",
+                "kütüphane",
+                "banka",
+                "yanında",
+                "karşısında"
+            )
+        )
+    )
+}
+
+    fun getQuiz154(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "süpermarket",
+            imageRes = R.drawable.supermarkets,
+            correctAnswer = "supermarket",
+            options = listOf("supermarket", "pharmacy", "bank", "library")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I buy food at the supermarket.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Süpermarketten yiyecek alırım.",
+            opts = listOf(
+                "Süpermarketten yiyecek alırım.",
+                "Kütüphanede kitap okurum.",
+                "Bankada çalışırım.",
+                "Parkta yürürüm."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "eczane",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pharmacy",
+            options = listOf("hospital", "park", "pharmacy", "supermarket")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "My mother goes to the pharmacy.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Annem eczaneye gider.",
+            opts = listOf(
+                "Annem eczaneye gider.",
+                "Annem süpermarkette çalışır.",
+                "Annem parkta yürür.",
+                "Annem bankada bekler."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "banka",
+            imageRes = R.drawable.bank,
+            correctAnswer = "bank",
+            options = listOf("bank", "pharmacy", "supermarket", "hospital")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The supermarket is very busy today.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Süpermarket bugün çok yoğun.",
+            opts = listOf(
+                "Süpermarket bugün çok yoğun.",
+                "Süpermarket bugün kapalı.",
+                "Süpermarket bugün sessiz.",
+                "Süpermarket bugün küçük."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "park",
+            imageRes = R.drawable.park,
+            correctAnswer = "park",
+            options = listOf("library", "supermarket", "park", "pharmacy")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "I need medicine, so I go to the pharmacy.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "İlaca ihtiyacım var, bu yüzden eczaneye giderim.",
+            opts = listOf(
+                "İlaca ihtiyacım var, bu yüzden eczaneye giderim.",
+                "Kitaba ihtiyacım var, bu yüzden parka giderim.",
+                "Paraya ihtiyacım var, bu yüzden hastaneye giderim.",
+                "Yemeğe ihtiyacım var, bu yüzden bankaya giderim."
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "Where is the supermarket?",
+            res = R.drawable.pp1,
+            ansEnglish = "Süpermarket nerede?",
+            opts = listOf(
+                "Süpermarket nerede?",
+                "Eczane açık mı?",
+                "Banka büyük mü?",
+                "Park sessiz mi?"
+            )
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I buy fruit and milk at the supermarket.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Süpermarketten meyve ve süt alırım.",
+            opts = listOf(
+                "Süpermarketten meyve ve süt alırım.",
+                "Eczaneden meyve alırım.",
+                "Bankada süt içerim.",
+                "Parkta meyve yerim."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The pharmacy is open today.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Eczane bugün açık.",
+            opts = listOf(
+                "Eczane bugün açık.",
+                "Eczane bugün kapalı.",
+                "Eczane bugün sessiz.",
+                "Eczane bugün küçük."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "My father buys food at the supermarket.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Babam süpermarketten yiyecek alır.",
+            opts = listOf(
+                "Babam süpermarketten yiyecek alır.",
+                "Babam eczanede çalışır.",
+                "Babam parkta koşar.",
+                "Babam kütüphanede kitap okur."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I go to the pharmacy with my sister.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kız kardeşimle eczaneye giderim.",
+            opts = listOf(
+                "Kız kardeşimle eczaneye giderim.",
+                "Kız kardeşimle bankada çalışırım.",
+                "Kız kardeşimle parkta koşarım.",
+                "Kız kardeşimle hastanede beklerim."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "Let's go to the supermarket.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Süpermarkete gidelim.",
+            opts = listOf(
+                "Süpermarkete gidelim.",
+                "Bankada bekleyelim.",
+                "Kütüphanede ders çalışalım.",
+                "Evde uyuyalım."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The supermarket and the pharmacy are very useful places.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Süpermarket ve eczane çok faydalı yerlerdir.",
+            opts = listOf(
+                "Süpermarket ve eczane çok faydalı yerlerdir.",
+                "Park ve banka çok sessiz yerlerdir.",
+                "Kütüphane ve hastane çok küçük yerlerdir.",
+                "Süpermarket ve park çok eski yerlerdir."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Places in Town - 2",
+            image = R.drawable.cat_logo,
+            pairs = "supermarket,pharmacy,park,bank,library,hospital",
+            turkishOptions = listOf(
+                "süpermarket",
+                "eczane",
+                "park",
+                "banka",
+                "kütüphane",
+                "hastane"
+            )
+        )
+    )
+}
+
+    fun getQuiz155(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "eczane",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pharmacy",
+            options = listOf("supermarket", "pharmacy", "bank", "park")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The pharmacy is next to the hospital.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Eczane hastanenin yanında.",
+            opts = listOf(
+                "Eczane hastanenin yanında.",
+                "Eczane parkın karşısında.",
+                "Eczane bankanın içinde.",
+                "Eczane kütüphanede."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "süpermarket",
+            imageRes = R.drawable.supermarkets,
+            correctAnswer = "supermarket",
+            options = listOf("library", "supermarket", "hospital", "pharmacy")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The supermarket is in front of the bank.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Süpermarket bankanın karşısında.",
+            opts = listOf(
+                "Süpermarket bankanın karşısında.",
+                "Süpermarket hastanenin yanında.",
+                "Süpermarket parkın içinde.",
+                "Süpermarket kütüphanede."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "hastane",
+            imageRes = R.drawable.hospital,
+            correctAnswer = "hospital",
+            options = listOf("hospital", "bank", "supermarket", "library")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "I go to the pharmacy for medicine.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "İlaç için eczaneye giderim.",
+            opts = listOf(
+                "İlaç için eczaneye giderim.",
+                "Yiyecek için bankaya giderim.",
+                "Kitap için parka giderim.",
+                "Para için hastaneye giderim."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "banka",
+            imageRes = R.drawable.bank,
+            correctAnswer = "bank",
+            options = listOf("park", "pharmacy", "bank", "supermarket")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "My mother buys milk at the supermarket.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Annem süpermarketten süt alır.",
+            opts = listOf(
+                "Annem süpermarketten süt alır.",
+                "Annem eczaneden kitap alır.",
+                "Annem bankadan ekmek alır.",
+                "Annem parkta süt içer."
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "Where is the supermarket?",
+            res = R.drawable.pp1,
+            ansEnglish = "Süpermarket nerede?",
+            opts = listOf(
+                "Süpermarket nerede?",
+                "Eczane açık mı?",
+                "Banka büyük mü?",
+                "Park sessiz mi?"
+            )
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "It is next to the pharmacy.",
+            res = R.drawable.pp2,
+            ansEnglish = "Eczanenin yanında.",
+            opts = listOf(
+                "Eczanenin yanında.",
+                "Bankanın karşısında.",
+                "Parkın içinde.",
+                "Hastanede."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The bank is in front of the library.",
+            res = R.drawable.bank,
+            ansEnglish = "Banka kütüphanenin karşısında.",
+            opts = listOf(
+                "Banka kütüphanenin karşısında.",
+                "Banka parkın yanında.",
+                "Banka hastanenin içinde.",
+                "Banka süpermarkette."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The park is next to the supermarket.",
+            res = R.drawable.park,
+            ansEnglish = "Park süpermarketin yanında.",
+            opts = listOf(
+                "Park süpermarketin yanında.",
+                "Park bankanın karşısında.",
+                "Park hastanenin içinde.",
+                "Park kütüphanede."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "I need food, so I go to the supermarket.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Yiyeceğe ihtiyacım var, bu yüzden süpermarkete giderim.",
+            opts = listOf(
+                "Yiyeceğe ihtiyacım var, bu yüzden süpermarkete giderim.",
+                "İlaca ihtiyacım var, bu yüzden bankaya giderim.",
+                "Kitaba ihtiyacım var, bu yüzden parka giderim.",
+                "Anahtara ihtiyacım var, bu yüzden hastaneye giderim."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The pharmacy is open today.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Eczane bugün açık.",
+            opts = listOf(
+                "Eczane bugün açık.",
+                "Süpermarket bugün kapalı.",
+                "Banka bugün küçük.",
+                "Park bugün sessiz."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "Let's go to the supermarket after school.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Okuldan sonra süpermarkete gidelim.",
+            opts = listOf(
+                "Okuldan sonra süpermarkete gidelim.",
+                "Okuldan sonra hastanede bekleyelim.",
+                "Okuldan sonra bankada çalışalım.",
+                "Okuldan sonra evde uyuyalım."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Places in Town - 3",
+            image = R.drawable.cat_logo,
+            pairs = "supermarket,pharmacy,bank,hospital,next to,in front of",
+            turkishOptions = listOf(
+                "süpermarket",
+                "eczane",
+                "banka",
+                "hastane",
+                "yanında",
+                "karşısında"
+            )
+        )
+    )
+}
+
+    fun getQuiz156(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "park",
+            imageRes = R.drawable.park,
+            correctAnswer = "park",
+            options = listOf("park", "supermarket", "bank", "pharmacy")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "near",
+            res = R.drawable.pp1,
+            ansEnglish = "yakınında",
+            opts = listOf(
+                "yakınında",
+                "karşısında",
+                "yanında",
+                "etrafında"
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "süpermarket",
+            imageRes = R.drawable.supermarkets,
+            correctAnswer = "supermarket",
+            options = listOf("hospital", "supermarket", "library", "bank")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The supermarket is near the park.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Süpermarket parkın yakınında.",
+            opts = listOf(
+                "Süpermarket parkın yakınında.",
+                "Süpermarket parkın karşısında.",
+                "Süpermarket parkın içinde.",
+                "Süpermarket parkın yanında."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "eczane",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pharmacy",
+            options = listOf("pharmacy", "bank", "hospital", "park")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "around",
+            res = R.drawable.pp2,
+            ansEnglish = "etrafında / çevresinde",
+            opts = listOf(
+                "yanında",
+                "yakınında",
+                "etrafında / çevresinde",
+                "karşısında"
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "kütüphane",
+            imageRes = R.drawable.library,
+            correctAnswer = "library",
+            options = listOf("library", "pharmacy", "supermarket", "hospital")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "There are many trees around the park.",
+            res = R.drawable.park,
+            ansEnglish = "Parkın etrafında birçok ağaç vardır.",
+            opts = listOf(
+                "Parkın etrafında birçok ağaç vardır.",
+                "Parkın içinde birçok kitap vardır.",
+                "Parkın karşısında bir banka vardır.",
+                "Parkın yanında bir hastane vardır."
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "The hospital is near my house.",
+            res = R.drawable.hospital,
+            ansEnglish = "Hastane evimin yakınında.",
+            opts = listOf(
+                "Hastane evimin yakınında.",
+                "Hastane evimin karşısında.",
+                "Hastane evimin içinde.",
+                "Hastane evimin üstünde."
+            )
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I walk around the park with my friends.",
+            res = R.drawable.park,
+            ansEnglish = "Arkadaşlarımla parkın etrafında yürürüm.",
+            opts = listOf(
+                "Arkadaşlarımla parkın etrafında yürürüm.",
+                "Arkadaşlarımla bankada çalışırım.",
+                "Arkadaşlarımla kütüphanede ders çalışırım.",
+                "Arkadaşlarımla hastanede beklerim."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "Where is the pharmacy?",
+            res = R.drawable.pp3,
+            ansEnglish = "Eczane nerede?",
+            opts = listOf(
+                "Eczane nerede?",
+                "Park ne zaman açık?",
+                "Banka büyük mü?",
+                "Kütüphane sessiz mi?"
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The pharmacy is near the bank.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Eczane bankanın yakınında.",
+            opts = listOf(
+                "Eczane bankanın yakınında.",
+                "Eczane bankanın içinde.",
+                "Eczane parkın etrafında.",
+                "Eczane kütüphanede."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "There are many shops around the supermarket.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Süpermarketin etrafında birçok mağaza vardır.",
+            opts = listOf(
+                "Süpermarketin etrafında birçok mağaza vardır.",
+                "Süpermarketin içinde birçok kitap vardır.",
+                "Süpermarketin yanında bir hastane vardır.",
+                "Süpermarketin karşısında bir banka vardır."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The library is near the school.",
+            res = R.drawable.library,
+            ansEnglish = "Kütüphane okulun yakınında.",
+            opts = listOf(
+                "Kütüphane okulun yakınında.",
+                "Kütüphane okulun içinde.",
+                "Kütüphane okulun karşısında.",
+                "Kütüphane okulun etrafında."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "I like this park because there are many flowers around it.",
+            res = R.drawable.park,
+            ansEnglish = "Bu parkı seviyorum çünkü etrafında birçok çiçek var.",
+            opts = listOf(
+                "Bu parkı seviyorum çünkü etrafında birçok çiçek var.",
+                "Bu parkı seviyorum çünkü çok küçük.",
+                "Bu parkı seviyorum çünkü kapalı.",
+                "Bu parkı seviyorum çünkü sessiz değil."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Places and Directions - 2",
+            image = R.drawable.cat_logo,
+            pairs = "near,around,supermarket,pharmacy,park,library",
+            turkishOptions = listOf(
+                "yakınında",
+                "etrafında / çevresinde",
+                "süpermarket",
+                "eczane",
+                "park",
+                "kütüphane"
+            )
+        )
+    )
+}
+
+    fun getQuiz157(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "müze",
+            imageRes = R.drawable.museum,
+            correctAnswer = "museum",
+            options = listOf("museum", "cinema", "park", "library")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "I visit the museum with my family.",
+            res = R.drawable.museum,
+            ansEnglish = "Ailemle müzeyi ziyaret ederim.",
+            opts = listOf(
+                "Ailemle müzeyi ziyaret ederim.",
+                "Ailemle sinemaya giderim.",
+                "Ailemle bankaya giderim.",
+                "Ailemle eczaneye giderim."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "sinema",
+            imageRes = R.drawable.cinema,
+            correctAnswer = "cinema",
+            options = listOf("pharmacy", "cinema", "museum", "bank")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "We watch a movie at the cinema.",
+            res = R.drawable.cinema,
+            ansEnglish = "Sinemada film izleriz.",
+            opts = listOf(
+                "Sinemada film izleriz.",
+                "Müzede kitap okuruz.",
+                "Parkta kahvaltı yaparız.",
+                "Bankada film izleriz."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "süpermarket",
+            imageRes = R.drawable.supermarkets,
+            correctAnswer = "supermarket",
+            options = listOf("supermarket", "museum", "cinema", "hospital")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "My sister likes the museum.",
+            res = R.drawable.museum,
+            ansEnglish = "Kız kardeşim müzeyi sever.",
+            opts = listOf(
+                "Kız kardeşim müzeyi sever.",
+                "Kız kardeşim bankayı sever.",
+                "Kız kardeşim hastaneyi sever.",
+                "Kız kardeşim eczaneyi sever."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "eczane",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pharmacy",
+            options = listOf("park", "pharmacy", "cinema", "library")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The cinema is open today.",
+            res = R.drawable.cinema,
+            ansEnglish = "Sinema bugün açık.",
+            opts = listOf(
+                "Sinema bugün açık.",
+                "Müze bugün kapalı.",
+                "Banka bugün küçük.",
+                "Park bugün sessiz."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "kütüphane",
+            imageRes = R.drawable.library,
+            correctAnswer = "library",
+            options = listOf("museum", "library", "cinema", "supermarket")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "Let's go to the cinema tonight.",
+            res = R.drawable.cinema,
+            ansEnglish = "Bu gece sinemaya gidelim.",
+            opts = listOf(
+                "Bu gece sinemaya gidelim.",
+                "Bu gece bankaya gidelim.",
+                "Bu gece hastanede bekleyelim.",
+                "Bu gece kütüphanede uyuyalım."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The museum is very quiet.",
+            res = R.drawable.museum,
+            ansEnglish = "Müze çok sessiz.",
+            opts = listOf(
+                "Müze çok sessiz.",
+                "Sinema çok soğuk.",
+                "Park çok küçük.",
+                "Banka çok eski."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "I buy food at the supermarket.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Süpermarketten yiyecek alırım.",
+            opts = listOf(
+                "Süpermarketten yiyecek alırım.",
+                "Müzeden ilaç alırım.",
+                "Sinemadan süt alırım.",
+                "Bankadan kitap alırım."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "My friend is at the cinema.",
+            res = R.drawable.cinema,
+            ansEnglish = "Arkadaşım sinemada.",
+            opts = listOf(
+                "Arkadaşım sinemada.",
+                "Arkadaşım eczanede.",
+                "Arkadaşım hastanede.",
+                "Arkadaşım bankada."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "We visit the museum after school.",
+            res = R.drawable.museum,
+            ansEnglish = "Okuldan sonra müzeyi ziyaret ederiz.",
+            opts = listOf(
+                "Okuldan sonra müzeyi ziyaret ederiz.",
+                "Okuldan sonra bankada çalışırız.",
+                "Okuldan sonra eczaneye gideriz.",
+                "Okuldan sonra parkta uyuruz."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The cinema and the museum are fun places.",
+            res = R.drawable.cinema,
+            ansEnglish = "Sinema ve müze eğlenceli yerlerdir.",
+            opts = listOf(
+                "Sinema ve müze eğlenceli yerlerdir.",
+                "Banka ve hastane sessiz yerlerdir.",
+                "Park ve eczane küçük yerlerdir.",
+                "Kütüphane ve banka pahalı yerlerdir."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Places in Town - 4",
+            image = R.drawable.cat_logo,
+            pairs = "museum,cinema,supermarket,pharmacy,library,park",
+            turkishOptions = listOf(
+                "müze",
+                "sinema",
+                "süpermarket",
+                "eczane",
+                "kütüphane",
+                "park"
+            )
+        )
+    )
+}
+
+    fun getQuiz158(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "müze",
+            imageRes = R.drawable.museum,
+            correctAnswer = "museum",
+            options = listOf("cinema", "museum", "bank", "park")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "behind",
+            res = R.drawable.pp1,
+            ansEnglish = "arkasında",
+            opts = listOf(
+                "yanında",
+                "arkasında",
+                "yakınında",
+                "karşısında"
+            )
+        ),
+
+        createListening(
+            id = 3,
+            qTurkish = "The museum is behind the cinema.",
+            res = R.drawable.museum,
+            ansEnglish = "Müze sinemanın arkasında.",
+            opts = listOf(
+                "Müze sinemanın yanında.",
+                "Müze sinemanın arkasında.",
+                "Müze sinemanın yakınında.",
+                "Müze sinemanın karşısında."
+            )
+        ),
+
+        createVisual(
+            id = 4,
+            questionTurkish = "sinema",
+            imageRes = R.drawable.cinema,
+            correctAnswer = "cinema",
+            options = listOf("museum", "cinema", "library", "hospital")
+        ),
+
+        createListening(
+            id = 5,
+            qTurkish = "between",
+            res = R.drawable.pp2,
+            ansEnglish = "arasında",
+            opts = listOf(
+                "arasında",
+                "arkasında",
+                "yanında",
+                "yakınında"
+            )
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The park is between the bank and the library.",
+            res = R.drawable.park,
+            ansEnglish = "Park banka ile kütüphane arasında.",
+            opts = listOf(
+                "Park banka ile kütüphane arasında.",
+                "Park bankanın arkasında.",
+                "Park kütüphanenin yanında.",
+                "Park hastanenin yakınında."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "eczane",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pharmacy",
+            options = listOf("pharmacy", "supermarket", "cinema", "bank")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The pharmacy is behind the hospital.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Eczane hastanenin arkasında.",
+            opts = listOf(
+                "Eczane hastanenin arkasında.",
+                "Eczane hastanenin yanında.",
+                "Eczane hastanenin yakınında.",
+                "Eczane hastanenin karşısında."
+            )
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "süpermarket",
+            imageRes = R.drawable.supermarkets,
+            correctAnswer = "supermarket",
+            options = listOf("library", "supermarket", "park", "museum")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The supermarket is between the cinema and the pharmacy.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Süpermarket sinema ile eczane arasında.",
+            opts = listOf(
+                "Süpermarket sinema ile eczane arasında.",
+                "Süpermarket sinemanın arkasında.",
+                "Süpermarket eczanenin yanında.",
+                "Süpermarket bankanın yakınında."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "Where is the bank?",
+            res = R.drawable.pp3,
+            ansEnglish = "Banka nerede?",
+            opts = listOf(
+                "Banka nerede?",
+                "Sinema açık mı?",
+                "Müze büyük mü?",
+                "Park sessiz mi?"
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "The bank is near the supermarket.",
+            res = R.drawable.bank,
+            ansEnglish = "Banka süpermarketin yakınında.",
+            opts = listOf(
+                "Banka süpermarketin yakınında.",
+                "Banka süpermarketin arkasında.",
+                "Banka süpermarketin arasında.",
+                "Banka süpermarketin içinde."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The library is next to the museum.",
+            res = R.drawable.library,
+            ansEnglish = "Kütüphane müzenin yanında.",
+            opts = listOf(
+                "Kütüphane müzenin yanında.",
+                "Kütüphane müzenin arkasında.",
+                "Kütüphane müzenin yakınında.",
+                "Kütüphane müzenin karşısında."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The hospital is in front of the park.",
+            res = R.drawable.hospital,
+            ansEnglish = "Hastane parkın karşısında.",
+            opts = listOf(
+                "Hastane parkın karşısında.",
+                "Hastane parkın yanında.",
+                "Hastane parkın arkasında.",
+                "Hastane parkın yakınında."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The cinema is near the library.",
+            res = R.drawable.cinema,
+            ansEnglish = "Sinema kütüphanenin yakınında.",
+            opts = listOf(
+                "Sinema kütüphanenin yakınında.",
+                "Sinema kütüphanenin arkasında.",
+                "Sinema kütüphanenin yanında.",
+                "Sinema kütüphanenin karşısında."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Places and Directions Review",
+            image = R.drawable.cat_logo,
+            pairs = "behind,between,museum,cinema,pharmacy,supermarket",
+            turkishOptions = listOf(
+                "arkasında",
+                "arasında",
+                "müze",
+                "sinema",
+                "eczane",
+                "süpermarket"
+            )
+        )
+    )
+}
+
+    fun getQuiz159(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "banka",
+            imageRes = R.drawable.bank,
+            correctAnswer = "bank",
+            options = listOf("bank", "museum", "cinema", "pharmacy")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The bank is behind the hospital.",
+            res = R.drawable.bank,
+            ansEnglish = "Banka hastanenin arkasında.",
+            opts = listOf(
+                "Banka hastanenin arkasında.",
+                "Banka hastanenin yanında.",
+                "Banka hastanenin karşısında.",
+                "Banka hastanenin yakınında."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "müze",
+            imageRes = R.drawable.museum,
+            correctAnswer = "museum",
+            options = listOf("park", "museum", "hospital", "library")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The museum is between the bank and the cinema.",
+            res = R.drawable.museum,
+            ansEnglish = "Müze banka ile sinema arasında.",
+            opts = listOf(
+                "Müze banka ile sinema arasında.",
+                "Müze sinemanın arkasında.",
+                "Müze bankanın yanında.",
+                "Müze parkın yakınında."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "sinema",
+            imageRes = R.drawable.cinema,
+            correctAnswer = "cinema",
+            options = listOf("supermarket", "cinema", "bank", "pharmacy")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "I watch movies at the cinema with my friends.",
+            res = R.drawable.cinema,
+            ansEnglish = "Arkadaşlarımla sinemada film izlerim.",
+            opts = listOf(
+                "Arkadaşlarımla sinemada film izlerim.",
+                "Arkadaşlarımla bankada çalışırım.",
+                "Arkadaşlarımla hastanede beklerim.",
+                "Arkadaşlarımla eczaneye giderim."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "eczane",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pharmacy",
+            options = listOf("library", "pharmacy", "museum", "park")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The pharmacy is near the supermarket.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Eczane süpermarketin yakınında.",
+            opts = listOf(
+                "Eczane süpermarketin yakınında.",
+                "Eczane süpermarketin arkasında.",
+                "Eczane süpermarketin karşısında.",
+                "Eczane süpermarketin içinde."
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "Where is the cinema?",
+            res = R.drawable.pp1,
+            ansEnglish = "Sinema nerede?",
+            opts = listOf(
+                "Sinema nerede?",
+                "Müze açık mı?",
+                "Banka büyük mü?",
+                "Park sessiz mi?"
+            )
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The cinema is in front of the museum.",
+            res = R.drawable.cinema,
+            ansEnglish = "Sinema müzenin karşısında.",
+            opts = listOf(
+                "Sinema müzenin karşısında.",
+                "Sinema müzenin arkasında.",
+                "Sinema müzenin yanında.",
+                "Sinema müzenin yakınında."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The park is between the hospital and the bank.",
+            res = R.drawable.park,
+            ansEnglish = "Park hastane ile banka arasında.",
+            opts = listOf(
+                "Park hastane ile banka arasında.",
+                "Park bankanın arkasında.",
+                "Park hastanenin karşısında.",
+                "Park bankanın yanında."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "My mother buys medicine at the pharmacy.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Annem eczaneden ilaç alır.",
+            opts = listOf(
+                "Annem eczaneden ilaç alır.",
+                "Annem bankadan kitap alır.",
+                "Annem müzede çalışır.",
+                "Annem sinemada film izler."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The library is behind the park.",
+            res = R.drawable.library,
+            ansEnglish = "Kütüphane parkın arkasında.",
+            opts = listOf(
+                "Kütüphane parkın arkasında.",
+                "Kütüphane parkın karşısında.",
+                "Kütüphane parkın yanında.",
+                "Kütüphane parkın yakınında."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "I go to the museum after school.",
+            res = R.drawable.museum,
+            ansEnglish = "Okuldan sonra müzeye giderim.",
+            opts = listOf(
+                "Okuldan sonra müzeye giderim.",
+                "Okuldan sonra bankada çalışırım.",
+                "Okuldan sonra hastanede beklerim.",
+                "Okuldan sonra evde uyurum."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The supermarket is next to the bank.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Süpermarket bankanın yanında.",
+            opts = listOf(
+                "Süpermarket bankanın yanında.",
+                "Süpermarket bankanın arkasında.",
+                "Süpermarket bankanın karşısında.",
+                "Süpermarket bankanın yakınında."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Places in Town Review 2",
+            image = R.drawable.cat_logo,
+            pairs = "museum,cinema,pharmacy,bank,behind,between",
+            turkishOptions = listOf(
+                "müze",
+                "sinema",
+                "eczane",
+                "banka",
+                "arkasında",
+                "arasında"
+            )
+        )
+    )
+}
+
+    fun getQuiz160(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "postane",
+            imageRes = R.drawable.post_office,
+            correctAnswer = "post office",
+            options = listOf("post office", "bus stop", "restaurant", "police station")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "across from",
+            res = R.drawable.pp1,
+            ansEnglish = "karşısında",
+            opts = listOf(
+                "karşısında",
+                "arkasında",
+                "arasında",
+                "yakınında"
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "otobüs durağı",
+            imageRes = R.drawable.bus_stop,
+            correctAnswer = "bus stop",
+            options = listOf("bank", "bus stop", "restaurant", "post office")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "The bus stop is across from the bank.",
+            res = R.drawable.bus_stop,
+            ansEnglish = "Otobüs durağı bankanın karşısında.",
+            opts = listOf(
+                "Otobüs durağı bankanın karşısında.",
+                "Otobüs durağı bankanın arkasında.",
+                "Otobüs durağı bankanın yanında.",
+                "Otobüs durağı bankanın yakınında."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "restoran",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "restaurant",
+            options = listOf("restaurant", "library", "pharmacy", "park")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "on the corner of",
+            res = R.drawable.pp2,
+            ansEnglish = "köşesinde",
+            opts = listOf(
+                "köşesinde",
+                "karşısında",
+                "yanında",
+                "arkasında"
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "polis karakolu",
+            imageRes = R.drawable.police_station,
+            correctAnswer = "police station",
+            options = listOf("hospital", "police station", "museum", "cinema")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The restaurant is on the corner of Green Street.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Restoran Green Caddesi'nin köşesinde.",
+            opts = listOf(
+                "Restoran Green Caddesi'nin köşesinde.",
+                "Restoran bankanın arkasında.",
+                "Restoran parkın içinde.",
+                "Restoran hastanenin karşısında."
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "I wait at the bus stop every morning.",
+            res = R.drawable.bus_stop,
+            ansEnglish = "Her sabah otobüs durağında beklerim.",
+            opts = listOf(
+                "Her sabah otobüs durağında beklerim.",
+                "Her sabah postanede çalışırım.",
+                "Her sabah bankaya giderim.",
+                "Her sabah müzeyi ziyaret ederim."
+            )
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "I send a letter at the post office.",
+            res = R.drawable.post_office,
+            ansEnglish = "Postanede mektup gönderirim.",
+            opts = listOf(
+                "Postanede mektup gönderirim.",
+                "Restoranda mektup gönderirim.",
+                "Bankada mektup gönderirim.",
+                "Parkta mektup gönderirim."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The police station is near the hospital.",
+            res = R.drawable.police_station,
+            ansEnglish = "Polis karakolu hastanenin yakınında.",
+            opts = listOf(
+                "Polis karakolu hastanenin yakınında.",
+                "Polis karakolu bankanın arkasında.",
+                "Polis karakolu parkın içinde.",
+                "Polis karakolu müzenin karşısında."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Let's eat at the restaurant.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Restoranda yemek yiyelim.",
+            opts = listOf(
+                "Restoranda yemek yiyelim.",
+                "Bankada ders çalışalım.",
+                "Postanede bekleyelim.",
+                "Parkta uyuyalım."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Where is the post office?",
+            res = R.drawable.pp3,
+            ansEnglish = "Postane nerede?",
+            opts = listOf(
+                "Postane nerede?",
+                "Restoran açık mı?",
+                "Banka büyük mü?",
+                "Park sessiz mi?"
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "The restaurant is across from the cinema.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Restoran sinemanın karşısında.",
+            opts = listOf(
+                "Restoran sinemanın karşısında.",
+                "Restoran sinemanın arkasında.",
+                "Restoran sinemanın yanında.",
+                "Restoran sinemanın içinde."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The bus stop is near my school.",
+            res = R.drawable.bus_stop,
+            ansEnglish = "Otobüs durağı okulumun yakınında.",
+            opts = listOf(
+                "Otobüs durağı okulumun yakınında.",
+                "Otobüs durağı okulumun arkasında.",
+                "Otobüs durağı okulumun karşısında.",
+                "Otobüs durağı okulumun içinde."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Places in Town - 5",
+            image = R.drawable.cat_logo,
+            pairs = "post office,bus stop,restaurant,police station,across from,on the corner of",
+            turkishOptions = listOf(
+                "postane",
+                "otobüs durağı",
+                "restoran",
+                "polis karakolu",
+                "karşısında",
+                "köşesinde"
+            )
+        )
+    )
+}
+
+    fun getQuiz161(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "otobüs durağı",
+            imageRes = R.drawable.bus_stop,
+            correctAnswer = "bus stop",
+            options = listOf("post office", "bus stop", "restaurant", "police station")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "The bus stop is across from the bank.",
+            res = R.drawable.bus_stop,
+            ansEnglish = "Otobüs durağı bankanın karşısında.",
+            opts = listOf(
+                "Otobüs durağı bankanın karşısında.",
+                "Otobüs durağı bankanın arkasında.",
+                "Otobüs durağı bankanın yanında.",
+                "Otobüs durağı bankanın yakınında."
+            )
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "postane",
+            imageRes = R.drawable.post_office,
+            correctAnswer = "post office",
+            options = listOf("restaurant", "post office", "library", "cinema")
+        ),
+
+        createListening(
+            id = 4,
+            qTurkish = "I send a letter at the post office.",
+            res = R.drawable.post_office,
+            ansEnglish = "Postanede mektup gönderirim.",
+            opts = listOf(
+                "Postanede mektup gönderirim.",
+                "Restoranda yemek yerim.",
+                "Sinemada film izlerim.",
+                "Parkta yürürüm."
+            )
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "restoran",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "restaurant",
+            options = listOf("bank", "restaurant", "museum", "pharmacy")
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "The restaurant is on the corner.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Restoran köşede.",
+            opts = listOf(
+                "Restoran köşede.",
+                "Restoran hastanede.",
+                "Restoran bankada.",
+                "Restoran kütüphanede."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "polis karakolu",
+            imageRes = R.drawable.police_station,
+            correctAnswer = "police station",
+            options = listOf("police station", "hospital", "supermarket", "park")
+        ),
+
+        createListening(
+            id = 8,
+            qTurkish = "The police station is near the hospital.",
+            res = R.drawable.police_station,
+            ansEnglish = "Polis karakolu hastanenin yakınında.",
+            opts = listOf(
+                "Polis karakolu hastanenin yakınında.",
+                "Polis karakolu parkın içinde.",
+                "Polis karakolu bankanın arkasında.",
+                "Polis karakolu sinemanın yanında."
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "Where is the restaurant?",
+            res = R.drawable.pp1,
+            ansEnglish = "Restoran nerede?",
+            opts = listOf(
+                "Restoran nerede?",
+                "Postane açık mı?",
+                "Otobüs durağı büyük mü?",
+                "Polis karakolu nerede değil?"
+            )
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The post office is next to the library.",
+            res = R.drawable.post_office,
+            ansEnglish = "Postane kütüphanenin yanında.",
+            opts = listOf(
+                "Postane kütüphanenin yanında.",
+                "Postane bankanın karşısında.",
+                "Postane parkın arkasında.",
+                "Postane sinemanın içinde."
+            )
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "The bus stop is on the corner.",
+            res = R.drawable.bus_stop,
+            ansEnglish = "Otobüs durağı köşede.",
+            opts = listOf(
+                "Otobüs durağı köşede.",
+                "Otobüs durağı müzede.",
+                "Otobüs durağı hastanede.",
+                "Otobüs durağı eczanede."
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "Let's eat at the restaurant.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Restoranda yemek yiyelim.",
+            opts = listOf(
+                "Restoranda yemek yiyelim.",
+                "Postanede bekleyelim.",
+                "Kütüphanede uyuyalım.",
+                "Bankada film izleyelim."
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "The bank is across from the police station.",
+            res = R.drawable.bank,
+            ansEnglish = "Banka polis karakolunun karşısında.",
+            opts = listOf(
+                "Banka polis karakolunun karşısında.",
+                "Banka polis karakolunun arkasında.",
+                "Banka polis karakolunun yanında.",
+                "Banka polis karakolunun içinde."
+            )
+        ),
+
+        createListening(
+            id = 14,
+            qTurkish = "I wait at the bus stop after school.",
+            res = R.drawable.bus_stop,
+            ansEnglish = "Okuldan sonra otobüs durağında beklerim.",
+            opts = listOf(
+                "Okuldan sonra otobüs durağında beklerim.",
+                "Okuldan sonra restoranda yemek yerim.",
+                "Okuldan sonra postanede çalışırım.",
+                "Okuldan sonra müzeye giderim."
+            )
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The restaurant is across from the cinema.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Restoran sinemanın karşısında.",
+            opts = listOf(
+                "Restoran sinemanın karşısında.",
+                "Restoran sinemanın arkasında.",
+                "Restoran sinemanın yanında.",
+                "Restoran sinemanın yakınında."
+            )
+        ),
+
+        createMatching(
+            id = 16,
+            questionText = "Places in Town Review 3",
+            image = R.drawable.cat_logo,
+            pairs = "post office,bus stop,restaurant,police station,across from,on the corner of",
+            turkishOptions = listOf(
+                "postane",
+                "otobüs durağı",
+                "restoran",
+                "polis karakolu",
+                "karşısında",
+                "köşesinde"
+            )
+        )
+    )
+}
+
+    fun getQuiz162(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "park",
+            imageRes = R.drawable.park,
+            correctAnswer = "park",
+            options = listOf("park", "bank", "library", "hospital")
+        ),
+
+        createVisual(
+            id = 2,
+            questionTurkish = "hastane",
+            imageRes = R.drawable.hospital,
+            correctAnswer = "hospital",
+            options = listOf("cinema", "hospital", "museum", "pharmacy")
+        ),
+
+        createVisual(
+            id = 3,
+            questionTurkish = "kütüphane",
+            imageRes = R.drawable.library,
+            correctAnswer = "library",
+            options = listOf("library", "supermarket", "bank", "restaurant")
+        ),
+
+        createVisual(
+            id = 4,
+            questionTurkish = "banka",
+            imageRes = R.drawable.bank,
+            correctAnswer = "bank",
+            options = listOf("pharmacy", "bank", "park", "bus stop")
+        ),
+
+        createListening(
+            id = 5,
+            qTurkish = "The bank is next to the park.",
+            res = R.drawable.bank,
+            ansEnglish = "Banka parkın yanında.",
+            opts = listOf(
+                "Banka parkın yanında.",
+                "Banka hastanenin arkasında.",
+                "Banka müzenin karşısında.",
+                "Banka süpermarketin yakınında."
+            )
+        ),
+
+        createVisual(
+            id = 6,
+            questionTurkish = "süpermarket",
+            imageRes = R.drawable.supermarkets,
+            correctAnswer = "supermarket",
+            options = listOf("supermarket", "museum", "cinema", "library")
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "eczane",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "pharmacy",
+            options = listOf("hospital", "pharmacy", "post office", "restaurant")
+        ),
+
+        createVisual(
+            id = 8,
+            questionTurkish = "müze",
+            imageRes = R.drawable.museum,
+            correctAnswer = "museum",
+            options = listOf("museum", "bank", "bus stop", "police station")
+        ),
+
+        createVisual(
+            id = 9,
+            questionTurkish = "sinema",
+            imageRes = R.drawable.cinema,
+            correctAnswer = "cinema",
+            options = listOf("restaurant", "cinema", "library", "pharmacy")
+        ),
+
+        createListening(
+            id = 10,
+            qTurkish = "The cinema is across from the museum.",
+            res = R.drawable.cinema,
+            ansEnglish = "Sinema müzenin karşısında.",
+            opts = listOf(
+                "Sinema müzenin karşısında.",
+                "Sinema bankanın yanında.",
+                "Sinema parkın arkasında.",
+                "Sinema hastanenin yakınında."
+            )
+        ),
+
+        createVisual(
+            id = 11,
+            questionTurkish = "postane",
+            imageRes = R.drawable.post_office,
+            correctAnswer = "post office",
+            options = listOf("post office", "hospital", "supermarket", "park")
+        ),
+
+        createVisual(
+            id = 12,
+            questionTurkish = "otobüs durağı",
+            imageRes = R.drawable.bus_stop,
+            correctAnswer = "bus stop",
+            options = listOf("museum", "bus stop", "bank", "cinema")
+        ),
+
+        createVisual(
+            id = 13,
+            questionTurkish = "restoran",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "restaurant",
+            options = listOf("pharmacy", "restaurant", "police station", "library")
+        ),
+
+        createVisual(
+            id = 14,
+            questionTurkish = "polis karakolu",
+            imageRes = R.drawable.police_station,
+            correctAnswer = "police station",
+            options = listOf("police station", "post office", "cinema", "supermarket")
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The bus stop is near the school.",
+            res = R.drawable.bus_stop,
+            ansEnglish = "Otobüs durağı okulun yakınında.",
+            opts = listOf(
+                "Otobüs durağı okulun yakınında.",
+                "Otobüs durağı bankanın içinde.",
+                "Otobüs durağı müzenin arkasında.",
+                "Otobüs durağı parkın karşısında."
+            )
+        ),
+
+        createListening(
+            id = 16,
+            qTurkish = "I buy food at the supermarket.",
+            res = R.drawable.supermarkets,
+            ansEnglish = "Süpermarketten yiyecek alırım.",
+            opts = listOf(
+                "Süpermarketten yiyecek alırım.",
+                "Eczaneden ilaç alırım.",
+                "Kütüphanede kitap okurum.",
+                "Sinemada film izlerim."
+            )
+        ),
+
+        createListening(
+            id = 17,
+            qTurkish = "My mother buys medicine at the pharmacy.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Annem eczaneden ilaç alır.",
+            opts = listOf(
+                "Annem eczaneden ilaç alır.",
+                "Annem postanede bekler.",
+                "Annem restoranda yemek yer.",
+                "Annem parkta yürür."
+            )
+        ),
+
+        createListening(
+            id = 18,
+            qTurkish = "The restaurant is on the corner.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Restoran köşede.",
+            opts = listOf(
+                "Restoran köşede.",
+                "Restoran müzenin içinde.",
+                "Restoran bankanın arkasında.",
+                "Restoran parkın yakınında."
+            )
+        ),
+
+        createListening(
+            id = 19,
+            qTurkish = "Where is the post office?",
+            res = R.drawable.pp1,
+            ansEnglish = "Postane nerede?",
+            opts = listOf(
+                "Postane nerede?",
+                "Sinema açık mı?",
+                "Park büyük mü?",
+                "Hastane temiz mi?"
+            )
+        ),
+
+        createMatching(
+            id = 20,
+            questionText = "Places in Town Final Review",
+            image = R.drawable.cat_logo,
+            pairs = "park,hospital,library,bank,supermarket,pharmacy",
+            turkishOptions = listOf(
+                "park",
+                "hastane",
+                "kütüphane",
+                "banka",
+                "süpermarket",
+                "eczane"
+            )
+        )
+    )
+}
+
+    fun getQuiz163(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createVisual(
+            id = 1,
+            questionTurkish = "otobüs",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "bus",
+            options = listOf("bus", "car", "taxi", "train")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "take",
+            res = R.drawable.cat_logo,
+            ansEnglish = "binmek / kullanmak",
+            opts = listOf(
+                "binmek / kullanmak",
+                "sürmek",
+                "seyahat etmek",
+                "tercih etmek"
+            )
+        ),
+
+        createListening(
+            id = 3,
+            qTurkish = "I take the bus to school.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Okula otobüsle giderim.",
+            opts = listOf(
+                "Okula otobüsle giderim.",
+                "Okula trenle giderim.",
+                "Evde otururum.",
+                "Parkta yürürüm."
+            )
+        ),
+
+        createVisual(
+            id = 4,
+            questionTurkish = "araba",
+            imageRes = R.drawable.car,
+            correctAnswer = "car",
+            options = listOf("car", "taxi", "train", "bus")
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "sürmek",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "drive",
+            options = listOf(
+                "take",
+                "get in",
+                "drive",
+                "go"
+            )
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "My father drives a car.",
+            res = R.drawable.car,
+            ansEnglish = "Babam araba sürer.",
+            opts = listOf(
+                "Babam araba sürer.",
+                "Babam otobüse biner.",
+                "Babam tren bekler.",
+                "Babam taksi çağırır."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "taksi",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "taxi",
+            options = listOf("train", "bus", "taxi", "car")
+        ),
+
+        createVisual(
+            id = 8,
+            questionTurkish = "seyahat etmek",
+            imageRes = R.drawable.travel,
+            correctAnswer = "seyahat etmek",
+            options = listOf(
+                "travel",
+                "drive",
+                "cook",
+                "prefer"
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "I travel by taxi.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Taksiyle seyahat ederim.",
+            opts = listOf(
+                "Taksiyle seyahat ederim.",
+                "Tren sürerim.",
+                "Otobüs beklerim.",
+                "Evde kalırım."
+            )
+        ),
+
+        createVisual(
+            id = 10,
+            questionTurkish = "tren",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "train",
+            options = listOf("taxi", "train", "bus", "car")
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "prefer",
+            res = R.drawable.cat_logo,
+            ansEnglish = "tercih etmek",
+            opts = listOf(
+                "tercih etmek",
+                "sürmek",
+                "seyahat etmek",
+                "beklemek"
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "which",
+            res = R.drawable.pp2,
+            ansEnglish = "hangisi / hangi",
+            opts = listOf(
+                "hangisi / hangi",
+                "nerede",
+                "ne zaman",
+                "neden"
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Which do you prefer?",
+            res = R.drawable.pp2,
+            ansEnglish = "Hangisini tercih edersin?",
+            opts = listOf(
+                "Hangisini tercih edersin?",
+                "Nerede bekliyorsun?",
+                "Ne zaman gidiyorsun?",
+                "Neden yürüyorsun?"
+            )
+        ),
+
+        createVisual(
+            id = 14,
+            questionTurkish = "hızlı",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "fast",
+            options = listOf("fast", "slow", "bus", "train")
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The train is very fast.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Tren çok hızlı.",
+            opts = listOf(
+                "Tren çok hızlı.",
+                "Tren çok yavaş.",
+                "Taksi çok küçük.",
+                "Otobüs çok eski."
+            )
+        ),
+
+        createListening(
+            id = 16,
+            qTurkish = "I prefer the train.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Treni tercih ederim.",
+            opts = listOf(
+                "Treni tercih ederim.",
+                "Otobüsü beklerim.",
+                "Arabayı sürerim.",
+                "Taksiyle giderim."
+            )
+        ),
+
+        createMatching(
+            id = 17,
+            questionText = "Transportation - 1",
+            image = R.drawable.cat_logo,
+            pairs = "bus,car,taxi,train,prefer,fast",
+            turkishOptions = listOf(
+                "otobüs",
+                "araba",
+                "taksi",
+                "tren",
+                "tercih etmek",
+                "hızlı"
+            )
+        )
+    )
+}
+
+    fun getQuiz164(): List<VocabularyLevelDataQuiz> {
+    return listOf(
+
+        createListening(
+            id = 1,
+            qTurkish = "Body",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Vücut",
+            opts = listOf("Kol", "Bacak", "Vücut", "Ayak")
+        ),
+
+        createListening(
+            id = 2,
+            qTurkish = "Body",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Body",
+            opts = listOf(
+                "Body",
+                "hand",
+                "arm",
+                "leg"
+            )
+        ),
+
+        createListening(
+            id = 3,
+            qTurkish = "I take the bus to school.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Okula otobüsle giderim.",
+            opts = listOf(
+                "Okula otobüsle giderim.",
+                "Okula trenle giderim.",
+                "Evde otururum.",
+                "Parkta yürürüm."
+            )
+        ),
+
+        createVisual(
+            id = 4,
+            questionTurkish = "araba",
+            imageRes = R.drawable.car,
+            correctAnswer = "car",
+            options = listOf("car", "taxi", "train", "bus")
+        ),
+
+        createVisual(
+            id = 5,
+            questionTurkish = "sürmek",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "drive",
+            options = listOf(
+                "take",
+                "get in",
+                "drive",
+                "go"
+            )
+        ),
+
+        createListening(
+            id = 6,
+            qTurkish = "My father drives a car.",
+            res = R.drawable.car,
+            ansEnglish = "Babam araba sürer.",
+            opts = listOf(
+                "Babam araba sürer.",
+                "Babam otobüse biner.",
+                "Babam tren bekler.",
+                "Babam taksi çağırır."
+            )
+        ),
+
+        createVisual(
+            id = 7,
+            questionTurkish = "taksi",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "taxi",
+            options = listOf("train", "bus", "taxi", "car")
+        ),
+
+        createVisual(
+            id = 8,
+            questionTurkish = "seyahat etmek",
+            imageRes = R.drawable.travel,
+            correctAnswer = "seyahat etmek",
+            options = listOf(
+                "travel",
+                "drive",
+                "cook",
+                "prefer"
+            )
+        ),
+
+        createListening(
+            id = 9,
+            qTurkish = "I travel by taxi.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Taksiyle seyahat ederim.",
+            opts = listOf(
+                "Taksiyle seyahat ederim.",
+                "Tren sürerim.",
+                "Otobüs beklerim.",
+                "Evde kalırım."
+            )
+        ),
+
+        createVisual(
+            id = 10,
+            questionTurkish = "tren",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "train",
+            options = listOf("taxi", "train", "bus", "car")
+        ),
+
+        createListening(
+            id = 11,
+            qTurkish = "prefer",
+            res = R.drawable.cat_logo,
+            ansEnglish = "tercih etmek",
+            opts = listOf(
+                "tercih etmek",
+                "sürmek",
+                "seyahat etmek",
+                "beklemek"
+            )
+        ),
+
+        createListening(
+            id = 12,
+            qTurkish = "which",
+            res = R.drawable.pp2,
+            ansEnglish = "hangisi / hangi",
+            opts = listOf(
+                "hangisi / hangi",
+                "nerede",
+                "ne zaman",
+                "neden"
+            )
+        ),
+
+        createListening(
+            id = 13,
+            qTurkish = "Which do you prefer?",
+            res = R.drawable.pp2,
+            ansEnglish = "Hangisini tercih edersin?",
+            opts = listOf(
+                "Hangisini tercih edersin?",
+                "Nerede bekliyorsun?",
+                "Ne zaman gidiyorsun?",
+                "Neden yürüyorsun?"
+            )
+        ),
+
+        createVisual(
+            id = 14,
+            questionTurkish = "hızlı",
+            imageRes = R.drawable.cat_logo,
+            correctAnswer = "fast",
+            options = listOf("fast", "slow", "bus", "train")
+        ),
+
+        createListening(
+            id = 15,
+            qTurkish = "The train is very fast.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Tren çok hızlı.",
+            opts = listOf(
+                "Tren çok hızlı.",
+                "Tren çok yavaş.",
+                "Taksi çok küçük.",
+                "Otobüs çok eski."
+            )
+        ),
+
+        createListening(
+            id = 16,
+            qTurkish = "I prefer the train.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Treni tercih ederim.",
+            opts = listOf(
+                "Treni tercih ederim.",
+                "Otobüsü beklerim.",
+                "Arabayı sürerim.",
+                "Taksiyle giderim."
+            )
+        ),
+
+        createMatching(
+            id = 17,
+            questionText = "Transportation - 1",
+            image = R.drawable.cat_logo,
+            pairs = "bus,car,taxi,train,prefer,fast",
+            turkishOptions = listOf(
+                "otobüs",
+                "araba",
+                "taksi",
+                "tren",
+                "tercih etmek",
+                "hızlı"
+            )
+        )
+    )
+
+
+    fun getQuiz166(): List<VocabularyLevelDataQuiz> {
+    return quizListOf(
+        4, // 👈 Progress ekranına yansıyacak öğrenilmiş kelime sayısı
+
+        // 1. VISUAL (arm -> r.drawable.arm)
+        createVisual(
+            id = 1,
+            questionTurkish = "kol",
+            imageRes = R.drawable.arm,
+            correctAnswer = "arm",
+            options = listOf("arm", "head", "leg", "eye")
+        ),
+
+        // 2. LISTENING (Korelasyon: Eylemler ve yapı tamamen aynı, sadece uzuvlar değişiyor)
+        createListening(
+            id = 2,
+            qTurkish = "Touch your arm.",
+            res = R.drawable.arm,
+            ansEnglish = "Koluna dokun.",
+            opts = listOf("Koluna dokun.", "Başına dokun.", "Bacağına dokun.", "Gözüne dokun.")
+        ),
+
+        // 3. VISUAL (head -> r.drawable.head)
+        createVisual(
+            id = 3,
+            questionTurkish = "baş / kafa",
+            imageRes = R.drawable.head,
+            correctAnswer = "head",
+            options = listOf("head", "arm", "leg", "eye")
+        ),
+
+        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler arasında direkt şık eşleşmesi)
+        createListening(
+            id = 4,
+            qTurkish = "head",
+            res = R.drawable.head,
+            ansEnglish = "baş / kafa",
+            opts = listOf("baş / kafa", "kol", "bacak", "göz")
+        ),
+
+        // 5. VISUAL (leg -> r.drawable.leg)
+        createVisual(
+            id = 5,
+            questionTurkish = "bacak",
+            imageRes = R.drawable.leg,
+            correctAnswer = "leg",
+            options = listOf("leg", "arm", "head", "eye")
+        ),
+
+        // 6. LISTENING (Korelasyon: "This is my ..." kalıbı sabit tutuldu)
+        createListening(
+            id = 6,
+            qTurkish = "This is my leg.",
+            res = R.drawable.leg,
+            ansEnglish = "Bu benim bacağım.",
+            opts = listOf("Bu benim bacağım.", "Bu benim kolum.", "Bu benim başım.", "Bu benim gözüm.")
+        ),
+
+        // 7. VISUAL (eye -> r.drawable.eye)
+        createVisual(
+            id = 7,
+            questionTurkish = "göz",
+            imageRes = R.drawable.eye,
+            correctAnswer = "eye",
+            options = listOf("eye", "arm", "head", "leg")
+        ),
+
+        // 8. LISTENING (Korelasyon: Tekil kelime grubu şıkları)
+        createListening(
+            id = 8,
+            qTurkish = "eye",
+            res = R.drawable.eye,
+            ansEnglish = "göz",
+            opts = listOf("göz", "kol", "bacak", "baş / kafa")
+        ),
+
+        // 9. TRANSLATION_BUILDER
+        VocabularyLevelDataQuiz(
+            id = 9,
+            questionTurkish = "Benim iki gözüm var.",
+            imageRes = R.drawable.eye,
+            correctAnswer = "I have two eyes",
+            questionType = QuestionType.TRANSLATION_BUILDER,
+            options = emptyList(),
+            correctWords = listOf("I", "have", "two", "eyes"),
+            extraWords = listOf("arm", "leg", "head"),
+            fullAnswerTurkish = "Benim iki gözüm var."
+        ),
+
+        // 10. LISTENING (Korelasyon: "Look at my ..." kalıbı sabit)
+        createListening(
+            id = 10,
+            qTurkish = "Look at my head.",
+            res = R.drawable.head,
+            ansEnglish = "Başıma bak.",
+            opts = listOf("Başıma bak.", "Koluma bak.", "Bacağıma bak.", "Gözüme bak.")
+        ),
+
+        // 11. SPEAKING
+        VocabularyLevelDataQuiz(
+            id = 11,
+            questionTurkish = "This is my arm.",
+            imageRes = R.drawable.arm,
+            correctAnswer = "This is my arm",
+            options = emptyList(),
+            questionType = QuestionType.SPEAKING,
+            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
+            speakingSentence = "This is my arm",
+            speakingCharacterRes = R.drawable.cat_logo
+        ),
+
+        // 12. LISTENING (Korelasyon: "He has long ..." kalıbı sabit)
+        createListening(
+            id = 12,
+            qTurkish = "He has long legs.",
+            res = R.drawable.leg,
+            ansEnglish = "Onun uzun bacakları var.",
+            opts = listOf("Onun uzun bacakları var.", "Onun uzun kolları var.", "Onun uzun saçları var.", "Onun uzun parmakları var.")
+        ),
+
+        // 13. LISTENING (Korelasyon: "Close your ..." kalıbı sabit)
+        createListening(
+            id = 13,
+            qTurkish = "Close your eyes.",
+            res = R.drawable.eye,
+            ansEnglish = "Gözlerini kapat.",
+            opts = listOf("Gözlerini kapat.", "Kollarını kapat.", "Bacaklarını kapat.", "Başını kapat.")
+        ),
+
+        // 14. PATTERN
+        VocabularyLevelDataQuiz(
+            id = 14,
+            questionTurkish = "I have a head.",
+            imageRes = R.drawable.pp1,
+            correctAnswer = "have",
+            options = listOf("have", "has", "having", "is"),
+            questionType = QuestionType.PATTERN,
+            patternTitle = "Have / Has Got (Sahiplik Yapısı)",
+            patternExampleOne = "I have an arm.",
+            patternHighlightOne = "have",
+            patternExampleTwo = "He has a leg.",
+            patternHighlightTwo = "has"
+        ),
+
+        // 15. MATCHING (Kapanış)
+        createMatching(
+            id = 15,
+            questionText = "Body Parts Summary",
+            image = R.drawable.pp2,
+            pairs = "arm,head,leg,eye",
+            turkishOptions = listOf("kol", "baş / kafa", "bacak", "göz")
+        )
+    )
+    fun getQuiz167(): List<VocabularyLevelDataQuiz> {
+    return quizListOf(
+        2, // 👈 Eklenen yeni kelimeler (point, hurt) sebebiyle öğrenilmiş kelime sayısı 2 olarak işaretlendi
+
+        // 1. VISUAL (Yeni Kelime: point -> r.drawable.point)
+        createVisual(
+            id = 1,
+            questionTurkish = "işaret etmek",
+            imageRes = R.drawable.point,
+            correctAnswer = "point",
+            options = listOf("point", "hurt", "arm", "head")
+        ),
+
+        // 2. LISTENING (Korelasyon: "He hurt his ..." kalıbı sabit)
+        createListening(
+            id = 2,
+            qTurkish = "He hurt his arm.",
+            res = R.drawable.arm,
+            ansEnglish = "O kolunu incitti.",
+            opts = listOf("O kolunu incitti.", "O başını incitti.", "O bacağını incitti.", "O gözünü incitti.")
+        ),
+
+        // 3. VISUAL (Yeni Kelime: hurt -> r.drawable.hurt)
+        createVisual(
+            id = 3,
+            questionTurkish = "incitmek / ağrımak",
+            imageRes = R.drawable.hurt,
+            correctAnswer = "hurt",
+            options = listOf("hurt", "point", "leg", "eye")
+        ),
+
+        // 4. LISTENING (Korelasyon: Tekil kelime grubu şıkları)
+        createListening(
+            id = 4,
+            qTurkish = "head",
+            res = R.drawable.head,
+            ansEnglish = "baş / kafa",
+            opts = listOf("baş / kafa", "kol", "bacak", "göz")
+        ),
+
+        // 5. VISUAL (leg -> r.drawable.leg)
+        createVisual(
+            id = 5,
+            questionTurkish = "bacak",
+            imageRes = R.drawable.leg,
+            correctAnswer = "leg",
+            options = listOf("leg", "arm", "head", "eye")
+        ),
+
+        // 6. LISTENING (Korelasyon: "This is a ..." kalıbı sabit)
+        createListening(
+            id = 6,
+            qTurkish = "This is a leg.",
+            res = R.drawable.leg,
+            ansEnglish = "Bu bir bacak.",
+            opts = listOf("Bu bir bacak.", "Bu bir kol.", "Bu bir baş.", "Bu bir göz.")
+        ),
+
+        // 7. VISUAL (eye -> r.drawable.eye)
+        createVisual(
+            id = 7,
+            questionTurkish = "göz",
+            imageRes = R.drawable.eye,
+            correctAnswer = "eye",
+            options = listOf("eye", "arm", "head", "leg")
+        ),
+
+        // 8. LISTENING (Korelasyon: Tekil kelime grubu şıkları)
+        createListening(
+            id = 8,
+            qTurkish = "eye",
+            res = R.drawable.eye,
+            ansEnglish = "göz",
+            opts = listOf("göz", "kol", "bacak", "baş / kafa")
+        ),
+
+        // 9. TRANSLATION_BUILDER
+        VocabularyLevelDataQuiz(
+            id = 9,
+            questionTurkish = "Kedinin dört bacağı var.",
+            imageRes = R.drawable.cat,
+            correctAnswer = "cat has four legs",
+            questionType = QuestionType.TRANSLATION_BUILDER,
+            options = emptyList(),
+            correctWords = listOf("Cat", "has", "four", "legs"),
+            extraWords = listOf("arms", "eyes", "head"),
+            fullAnswerTurkish = "Kedinin dört bacağı var."
+        ),
+
+        // 10. LISTENING (Korelasyon: "Point to your ..." kalıbı sabit)
+        createListening(
+            id = 10,
+            qTurkish = "Point to your head.",
+            res = R.drawable.head,
+            ansEnglish = "Başını göster.",
+            opts = listOf("Başını göster.", "Kolunu göster.", "Bacağını göster.", "Gözünü göster.")
+        ),
+
+        // 11. SPEAKING
+        VocabularyLevelDataQuiz(
+            id = 11,
+            questionTurkish = "I see with my eyes.",
+            imageRes = R.drawable.eye,
+            correctAnswer = "I see with my eyes",
+            options = emptyList(),
+            questionType = QuestionType.SPEAKING,
+            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
+            speakingSentence = "I see with my eyes",
+            speakingCharacterRes = R.drawable.cat_logo
+        ),
+
+        // 12. LISTENING (Korelasyon: "My ... hurts." kalıbı sabit)
+        createListening(
+            id = 12,
+            qTurkish = "My leg hurts.",
+            res = R.drawable.leg,
+            ansEnglish = "Bacağım ağrıyor.",
+            opts = listOf("Bacağım ağrıyor.", "Kolum ağrıyor.", "Başım ağrıyor.", "Gözüm ağrıyor.")
+        ),
+
+        // 13. LISTENING (Korelasyon: "Open your ..." kalıbı sabit)
+        createListening(
+            id = 13,
+            qTurkish = "Open your eyes.",
+            res = R.drawable.eye,
+            ansEnglish = "Gözlerini aç.",
+            opts = listOf("Gözlerini aç.", "Kollarını aç.", "Bacaklarını aç.", "Başını aç.")
+        ),
+
+        // 14. PATTERN (Gramer Öğretimi)
+        VocabularyLevelDataQuiz(
+            id = 14,
+            questionTurkish = "He has a leg.",
+            imageRes = R.drawable.pp1,
+            correctAnswer = "has",
+            options = listOf("has", "have", "having", "is"),
+            questionType = QuestionType.PATTERN,
+            patternTitle = "Have / Has Got (Sahiplik Yapısı)",
+            patternExampleOne = "He has a leg.",
+            patternHighlightOne = "has",
+            patternExampleTwo = "I have an arm.",
+            patternHighlightTwo = "have"
+        ),
+
+        // 15. MATCHING (Kapanış)
+        createMatching(
+            id = 15,
+            questionText = "Body Parts Review",
+            image = R.drawable.pp2,
+            pairs = "arm,head,leg,eye",
+            turkishOptions = listOf("kol", "baş / kafa", "bacak", "göz")
+        )
+    )
+    fun getQuiz168(): List<VocabularyLevelDataQuiz> {
+    return quizListOf(
+        0, // 👈 Mevcut kelimeleri mantıklı cümlelerle pekiştirdiğimiz için sıfır olarak kalıyor
+
+        // 1. VISUAL (head -> r.drawable.head)
+        createVisual(
+            id = 1,
+            questionTurkish = "baş / kafa",
+            imageRes = R.drawable.head,
+            correctAnswer = "head",
+            options = listOf("head", "arm", "leg", "eye")
+        ),
+
+        // 2. LISTENING (Korelasyon: "Protect your ..." kalıbı sabit - Mantıklı günlük cümle)
+        createListening(
+            id = 2,
+            qTurkish = "Protect your head.",
+            res = R.drawable.head,
+            ansEnglish = "Başını koru.",
+            opts = listOf("Başını koru.", "Kolunu koru.", "Bacağını koru.", "Gözünü koru.")
+        ),
+
+        // 3. VISUAL (arm -> r.drawable.arm)
+        createVisual(
+            id = 3,
+            questionTurkish = "kol",
+            imageRes = R.drawable.arm,
+            correctAnswer = "arm",
+            options = listOf("arm", "head", "leg", "eye")
+        ),
+
+        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 4,
+            qTurkish = "arm",
+            res = R.drawable.arm,
+            ansEnglish = "kol",
+            opts = listOf("kol", "baş / kafa", "bacak", "göz")
+        ),
+
+        // 5. VISUAL (leg -> r.drawable.leg)
+        createVisual(
+            id = 5,
+            questionTurkish = "bacak",
+            imageRes = R.drawable.leg,
+            correctAnswer = "leg",
+            options = listOf("leg", "arm", "head", "eye")
+        ),
+
+        // 6. LISTENING (Korelasyon: "Don't move your ..." kalıbı sabit)
+        createListening(
+            id = 6,
+            qTurkish = "Don't move your leg.",
+            res = R.drawable.leg,
+            ansEnglish = "Bacağını kımıldatma.",
+            opts = listOf("Bacağını kımıldatma.", "Kolunu kımıldatma.", "Başını kımıldatma.", "Gözünü kımıldatma.")
+        ),
+
+        // 7. VISUAL (eye -> r.drawable.eye)
+        createVisual(
+            id = 7,
+            questionTurkish = "göz",
+            imageRes = R.drawable.eye,
+            correctAnswer = "eye",
+            options = listOf("eye", "arm", "head", "leg")
+        ),
+
+        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 8,
+            qTurkish = "eye",
+            res = R.drawable.eye,
+            ansEnglish = "göz",
+            opts = listOf("göz", "kol", "bacak", "baş / kafa")
+        ),
+
+        // 9. TRANSLATION_BUILDER (Mantıklı cümle: "Gözlerini hemen aç.")
+        VocabularyLevelDataQuiz(
+            id = 9,
+            questionTurkish = "Gözlerini hemen aç.",
+            imageRes = R.drawable.eye,
+            correctAnswer = "Open your eyes now",
+            questionType = QuestionType.TRANSLATION_BUILDER,
+            options = emptyList(),
+            correctWords = listOf("Open", "your", "eyes", "now"),
+            extraWords = listOf("head", "hurt", "point"),
+            fullAnswerTurkish = "Gözlerini hemen aç."
+        ),
+
+        // 10. LISTENING (Korelasyon: "I point to the ..." kalıbı sabit)
+        createListening(
+            id = 10,
+            qTurkish = "I point to the head.",
+            res = R.drawable.head,
+            ansEnglish = "Başı işaret ederim.",
+            opts = listOf("Başı işaret ederim.", "Kolu işaret ederim.", "Bacağı işaret ederim.", "Gözü işaret ederim.")
+        ),
+
+        // 11. SPEAKING (Mantıklı ve günlük kullanım: "Bacağım çok ağrıyor.")
+        VocabularyLevelDataQuiz(
+            id = 11,
+            questionTurkish = "Bacağım çok ağrıyor.",
+            imageRes = R.drawable.leg,
+            correctAnswer = "My leg hurts a lot",
+            options = emptyList(),
+            questionType = QuestionType.SPEAKING,
+            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
+            speakingSentence = "My leg hurts a lot",
+            speakingCharacterRes = R.drawable.cat_logo
+        ),
+
+        // 12. LISTENING (Korelasyon: "Is your ... hurt?" kalıbı sabit)
+        createListening(
+            id = 12,
+            qTurkish = "Is your arm hurt?",
+            res = R.drawable.arm,
+            ansEnglish = "Kolun mu ağrıyor?",
+            opts = listOf("Kolun mu ağrıyor?", "Başın mu ağrıyor?", "Bacağın mu ağrıyor?", "Gözün mü ağrıyor?")
+        ),
+
+        // 13. LISTENING (Korelasyon: "He points to his ..." kalıbı sabit)
+        createListening(
+            id = 13,
+            qTurkish = "He points to his eye.",
+            res = R.drawable.eye,
+            ansEnglish = "Gözünü işaret ediyor.",
+            opts = listOf("Gözünü işaret ediyor.", "Kolunu işaret ediyor.", "Başını işaret ediyor.", "Bacağını işaret ediyor.")
+        ),
+
+        // 14. PATTERN (Gramer Öğretimi - Emir Cümleleri ve Fiil Kullanımı)
+        VocabularyLevelDataQuiz(
+            id = 14,
+            questionTurkish = "Don't point your finger.",
+            imageRes = R.drawable.pp1,
+            correctAnswer = "Don't point",
+            options = listOf("Don't point", "Not point", "No point", "Point not"),
+            questionType = QuestionType.PATTERN,
+            patternTitle = "Imperatives (Olumsuz Emir Cümleleri)",
+            patternExampleOne = "Don't hurt the cat.",
+            patternHighlightOne = "Don't hurt",
+            patternExampleTwo = "Don't move your head.",
+            patternHighlightTwo = "Don't move"
+        ),
+
+        // 15. MATCHING (Kapanış)
+        createMatching(
+            id = 15,
+            questionText = "Body & Action Summary",
+            image = R.drawable.pp2,
+            pairs = "arm,head,leg,eye,point,hurt",
+            turkishOptions = listOf("kol", "baş / kafa", "bacak", "göz", "işaret etmek", "incitmek / ağrımak")
+        )
+    )
+    fun getQuiz168(): List<VocabularyLevelDataQuiz> {
+    return quizListOf(
+        0, // 👈 Mevcut kelimeleri mantıklı cümlelerle pekiştirdiğimiz için sıfır olarak kalıyor
+
+        // 1. VISUAL (head -> r.drawable.head)
+        createVisual(
+            id = 1,
+            questionTurkish = "baş / kafa",
+            imageRes = R.drawable.head,
+            correctAnswer = "head",
+            options = listOf("head", "arm", "leg", "eye")
+        ),
+
+        // 2. LISTENING (Korelasyon: "Protect your ..." kalıbı sabit - Mantıklı günlük cümle)
+        createListening(
+            id = 2,
+            qTurkish = "Protect your head.",
+            res = R.drawable.head,
+            ansEnglish = "Başını koru.",
+            opts = listOf("Başını koru.", "Kolunu koru.", "Bacağını koru.", "Gözünü koru.")
+        ),
+
+        // 3. VISUAL (arm -> r.drawable.arm)
+        createVisual(
+            id = 3,
+            questionTurkish = "kol",
+            imageRes = R.drawable.arm,
+            correctAnswer = "arm",
+            options = listOf("arm", "head", "leg", "eye")
+        ),
+
+        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 4,
+            qTurkish = "arm",
+            res = R.drawable.arm,
+            ansEnglish = "kol",
+            opts = listOf("kol", "baş / kafa", "bacak", "göz")
+        ),
+
+        // 5. VISUAL (leg -> r.drawable.leg)
+        createVisual(
+            id = 5,
+            questionTurkish = "bacak",
+            imageRes = R.drawable.leg,
+            correctAnswer = "leg",
+            options = listOf("leg", "arm", "head", "eye")
+        ),
+
+        // 6. LISTENING (Korelasyon: "Don't move your ..." kalıbı sabit)
+        createListening(
+            id = 6,
+            qTurkish = "Don't move your leg.",
+            res = R.drawable.leg,
+            ansEnglish = "Bacağını kımıldatma.",
+            opts = listOf("Bacağını kımıldatma.", "Kolunu kımıldatma.", "Başını kımıldatma.", "Gözünü kımıldatma.")
+        ),
+
+        // 7. VISUAL (eye -> r.drawable.eye)
+        createVisual(
+            id = 7,
+            questionTurkish = "göz",
+            imageRes = R.drawable.eye,
+            correctAnswer = "eye",
+            options = listOf("eye", "arm", "head", "leg")
+        ),
+
+        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 8,
+            qTurkish = "eye",
+            res = R.drawable.eye,
+            ansEnglish = "göz",
+            opts = listOf("göz", "kol", "bacak", "baş / kafa")
+        ),
+
+        // 9. TRANSLATION_BUILDER (Mantıklı cümle: "Gözlerini hemen aç.")
+        VocabularyLevelDataQuiz(
+            id = 9,
+            questionTurkish = "Gözlerini hemen aç.",
+            imageRes = R.drawable.eye,
+            correctAnswer = "Open your eyes now",
+            questionType = QuestionType.TRANSLATION_BUILDER,
+            options = emptyList(),
+            correctWords = listOf("Open", "your", "eyes", "now"),
+            extraWords = listOf("head", "hurt", "point"),
+            fullAnswerTurkish = "Gözlerini hemen aç."
+        ),
+
+        // 10. LISTENING (Korelasyon: "I point to the ..." kalıbı sabit)
+        createListening(
+            id = 10,
+            qTurkish = "I point to the head.",
+            res = R.drawable.head,
+            ansEnglish = "Başı işaret ederim.",
+            opts = listOf("Başı işaret ederim.", "Kolu işaret ederim.", "Bacağı işaret ederim.", "Gözü işaret ederim.")
+        ),
+
+        // 11. SPEAKING (Mantıklı ve günlük kullanım: "Bacağım çok ağrıyor.")
+        VocabularyLevelDataQuiz(
+            id = 11,
+            questionTurkish = "Bacağım çok ağrıyor.",
+            imageRes = R.drawable.leg,
+            correctAnswer = "My leg hurts a lot",
+            options = emptyList(),
+            questionType = QuestionType.SPEAKING,
+            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
+            speakingSentence = "My leg hurts a lot",
+            speakingCharacterRes = R.drawable.cat_logo
+        ),
+
+        // 12. LISTENING (Korelasyon: "Is your ... hurt?" kalıbı sabit)
+        createListening(
+            id = 12,
+            qTurkish = "Is your arm hurt?",
+            res = R.drawable.arm,
+            ansEnglish = "Kolun mu ağrıyor?",
+            opts = listOf("Kolun mu ağrıyor?", "Başın mu ağrıyor?", "Bacağın mu ağrıyor?", "Gözün mü ağrıyor?")
+        ),
+
+        // 13. LISTENING (Korelasyon: "He points to his ..." kalıbı sabit)
+        createListening(
+            id = 13,
+            qTurkish = "He points to his eye.",
+            res = R.drawable.eye,
+            ansEnglish = "Gözünü işaret ediyor.",
+            opts = listOf("Gözünü işaret ediyor.", "Kolunu işaret ediyor.", "Başını işaret ediyor.", "Bacağını işaret ediyor.")
+        ),
+
+        // 14. PATTERN (Gramer Öğretimi - Emir Cümleleri ve Fiil Kullanımı)
+        VocabularyLevelDataQuiz(
+            id = 14,
+            questionTurkish = "Don't point your finger.",
+            imageRes = R.drawable.pp1,
+            correctAnswer = "Don't point",
+            options = listOf("Don't point", "Not point", "No point", "Point not"),
+            questionType = QuestionType.PATTERN,
+            patternTitle = "Imperatives (Olumsuz Emir Cümleleri)",
+            patternExampleOne = "Don't hurt the cat.",
+            patternHighlightOne = "Don't hurt",
+            patternExampleTwo = "Don't move your head.",
+            patternHighlightTwo = "Don't move"
+        ),
+
+        // 15. MATCHING (Kapanış)
+        createMatching(
+            id = 15,
+            questionText = "Body & Action Summary",
+            image = R.drawable.pp2,
+            pairs = "arm,head,leg,eye,point,hurt",
+            turkishOptions = listOf("kol", "baş / kafa", "bacak", "göz", "işaret etmek", "incitmek / ağrımak")
+        )
+    )
+    fun getQuiz169(): List<VocabularyLevelDataQuiz> {
+    return quizListOf(
+        0, // 👈 Tekrar ve pekiştirme quizi olduğu için sıfır olarak kalıyor
+
+        // 1. VISUAL (leg -> r.drawable.leg)
+        createVisual(
+            id = 1,
+            questionTurkish = "bacak",
+            imageRes = R.drawable.leg,
+            correctAnswer = "leg",
+            options = listOf("leg", "arm", "head", "eye")
+        ),
+
+        // 2. LISTENING (Korelasyon: "He broke his ..." kalıbı sabit - Mantıklı günlük cümle)
+        createListening(
+            id = 2,
+            qTurkish = "He broke his leg.",
+            res = R.drawable.leg,
+            ansEnglish = "O bacağını kırdı.",
+            opts = listOf("O bacağını kırdı.", "O kolunu kırdı.", "O başını kırdı.", "O gözünü kırdı.")
+        ),
+
+        // 3. VISUAL (eye -> r.drawable.eye)
+        createVisual(
+            id = 3,
+            questionTurkish = "göz",
+            imageRes = R.drawable.eye,
+            correctAnswer = "eye",
+            options = listOf("eye", "arm", "head", "leg")
+        ),
+
+        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 4,
+            qTurkish = "eye",
+            res = R.drawable.eye,
+            ansEnglish = "göz",
+            opts = listOf("göz", "kol", "bacak", "baş / kafa")
+        ),
+
+        // 5. VISUAL (arm -> r.drawable.arm)
+        createVisual(
+            id = 5,
+            questionTurkish = "kol",
+            imageRes = R.drawable.arm,
+            correctAnswer = "arm",
+            options = listOf("arm", "head", "leg", "eye")
+        ),
+
+        // 6. LISTENING (Korelasyon: "Raise your ..." kalıbı sabit - Sınıf/Günlük dili)
+        createListening(
+            id = 6,
+            qTurkish = "Raise your arm.",
+            res = R.drawable.arm,
+            ansEnglish = "Kolunu kaldır.",
+            opts = listOf("Kolunu kaldır.", "Başını kaldır.", "Bacağını kaldır.", "Gözünü kaldır.")
+        ),
+
+        // 7. VISUAL (head -> r.drawable.head)
+        createVisual(
+            id = 7,
+            questionTurkish = "baş / kafa",
+            imageRes = R.drawable.head,
+            correctAnswer = "head",
+            options = listOf("head", "arm", "leg", "eye")
+        ),
+
+        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 8,
+            qTurkish = "head",
+            res = R.drawable.head,
+            ansEnglish = "baş / kafa",
+            opts = listOf("baş / kafa", "kol", "bacak", "göz")
+        ),
+
+        // 9. TRANSLATION_BUILDER (Mantıklı cümle: "Sol kolum çok ağrıyor.")
+        VocabularyLevelDataQuiz(
+            id = 9,
+            questionTurkish = "Sol kolum çok ağrıyor.",
+            imageRes = R.drawable.arm,
+            correctAnswer = "My left arm hurts a lot",
+            questionType = QuestionType.TRANSLATION_BUILDER,
+            options = emptyList(),
+            correctWords = listOf("My", "left", "arm", "hurts", "a", "lot"),
+            extraWords = listOf("head", "eye", "point"),
+            fullAnswerTurkish = "Sol kolum çok ağrıyor."
+        ),
+
+        // 10. LISTENING (Korelasyon: "Don't point at the ..." kalıbı sabit)
+        createListening(
+            id = 10,
+            qTurkish = "Don't point at the cat.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kediyi işaret etme.",
+            opts = listOf("Kediyi işaret etme.", "Kediyi incitme.", "Kediye bakma.", "Kediyi kovalama.")
+        ),
+
+        // 11. SPEAKING (Günlük kullanım: "Lütfen gözlerini kapat.")
+        VocabularyLevelDataQuiz(
+            id = 11,
+            questionTurkish = "Lütfen gözlerini kapat.",
+            imageRes = R.drawable.eye,
+            correctAnswer = "Please close your eyes",
+            options = emptyList(),
+            questionType = QuestionType.SPEAKING,
+            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
+            speakingSentence = "Please close your eyes",
+            speakingCharacterRes = R.drawable.cat_logo
+        ),
+
+        // 12. LISTENING (Korelasyon: "Where is your ... ?" kalıbı sabit)
+        createListening(
+            id = 12,
+            qTurkish = "Where is your head?",
+            res = R.drawable.head,
+            ansEnglish = "Başın nerede?",
+            opts = listOf("Başın nerede?", "Kolun nerede?", "Bacağın nerede?", "Gözün nerede?")
+        ),
+
+        // 13. LISTENING (Korelasyon: "My ... is fine." kalıbı sabit)
+        createListening(
+            id = 13,
+            qTurkish = "My arm is fine.",
+            res = R.drawable.arm,
+            ansEnglish = "Kolum iyi.",
+            opts = listOf("Kolum iyi.", "Başım iyi.", "Bacağım iyi.", "Gözüm iyi.")
+        ),
+
+        // 14. PATTERN (Gramer Öğretimi - Geniş Zaman Olumsuz Fiil Kullanımı)
+        VocabularyLevelDataQuiz(
+            id = 14,
+            questionTurkish = "It doesn't hurt.",
+            imageRes = R.drawable.pp1,
+            correctAnswer = "doesn't hurt",
+            options = listOf("doesn't hurt", "don't hurt", "not hurt", "isn't hurt"),
+            questionType = QuestionType.PATTERN,
+            patternTitle = "Simple Present Negative (Geniş Zaman Olumsuz)",
+            patternExampleOne = "My arm doesn't hurt.",
+            patternHighlightOne = "doesn't hurt",
+            patternExampleTwo = "He doesn't point.",
+            patternHighlightTwo = "doesn't point"
+        ),
+
+        // 15. MATCHING (Kapanış)
+        createMatching(
+            id = 15,
+            questionText = "Body Review Master",
+            image = R.drawable.pp2,
+            pairs = "arm,head,leg,eye,point,hurt",
+            turkishOptions = listOf("kol", "baş / kafa", "bacak", "göz", "işaret etmek", "incitmek / ağrımak")
+        )
+    )
+    fun getQuiz169(): List<VocabularyLevelDataQuiz> {
+    return quizListOf(
+        0, // 👈 Tekrar ve pekiştirme quizi olduğu için sıfır olarak kalıyor
+
+        // 1. VISUAL (leg -> r.drawable.leg)
+        createVisual(
+            id = 1,
+            questionTurkish = "bacak",
+            imageRes = R.drawable.leg,
+            correctAnswer = "leg",
+            options = listOf("leg", "arm", "head", "eye")
+        ),
+
+        // 2. LISTENING (Korelasyon: "He broke his ..." kalıbı sabit - Mantıklı günlük cümle)
+        createListening(
+            id = 2,
+            qTurkish = "He broke his leg.",
+            res = R.drawable.leg,
+            ansEnglish = "O bacağını kırdı.",
+            opts = listOf("O bacağını kırdı.", "O kolunu kırdı.", "O başını kırdı.", "O gözünü kırdı.")
+        ),
+
+        // 3. VISUAL (eye -> r.drawable.eye)
+        createVisual(
+            id = 3,
+            questionTurkish = "göz",
+            imageRes = R.drawable.eye,
+            correctAnswer = "eye",
+            options = listOf("eye", "arm", "head", "leg")
+        ),
+
+        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 4,
+            qTurkish = "eye",
+            res = R.drawable.eye,
+            ansEnglish = "göz",
+            opts = listOf("göz", "kol", "bacak", "baş / kafa")
+        ),
+
+        // 5. VISUAL (arm -> r.drawable.arm)
+        createVisual(
+            id = 5,
+            questionTurkish = "kol",
+            imageRes = R.drawable.arm,
+            correctAnswer = "arm",
+            options = listOf("arm", "head", "leg", "eye")
+        ),
+
+        // 6. LISTENING (Korelasyon: "Raise your ..." kalıbı sabit - Sınıf/Günlük dili)
+        createListening(
+            id = 6,
+            qTurkish = "Raise your arm.",
+            res = R.drawable.arm,
+            ansEnglish = "Kolunu kaldır.",
+            opts = listOf("Kolunu kaldır.", "Başını kaldır.", "Bacağını kaldır.", "Gözünü kaldır.")
+        ),
+
+        // 7. VISUAL (head -> r.drawable.head)
+        createVisual(
+            id = 7,
+            questionTurkish = "baş / kafa",
+            imageRes = R.drawable.head,
+            correctAnswer = "head",
+            options = listOf("head", "arm", "leg", "eye")
+        ),
+
+        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 8,
+            qTurkish = "head",
+            res = R.drawable.head,
+            ansEnglish = "baş / kafa",
+            opts = listOf("baş / kafa", "kol", "bacak", "göz")
+        ),
+
+        // 9. TRANSLATION_BUILDER (Mantıklı cümle: "Sol kolum çok ağrıyor.")
+        VocabularyLevelDataQuiz(
+            id = 9,
+            questionTurkish = "Sol kolum çok ağrıyor.",
+            imageRes = R.drawable.arm,
+            correctAnswer = "My left arm hurts a lot",
+            questionType = QuestionType.TRANSLATION_BUILDER,
+            options = emptyList(),
+            correctWords = listOf("My", "left", "arm", "hurts", "a", "lot"),
+            extraWords = listOf("head", "eye", "point"),
+            fullAnswerTurkish = "Sol kolum çok ağrıyor."
+        ),
+
+        // 10. LISTENING (Korelasyon: "Don't point at the ..." kalıbı sabit)
+        createListening(
+            id = 10,
+            qTurkish = "Don't point at the cat.",
+            res = R.drawable.cat_logo,
+            ansEnglish = "Kediyi işaret etme.",
+            opts = listOf("Kediyi işaret etme.", "Kediyi incitme.", "Kediye bakma.", "Kediyi kovalama.")
+        ),
+
+        // 11. SPEAKING (Günlük kullanım: "Lütfen gözlerini kapat.")
+        VocabularyLevelDataQuiz(
+            id = 11,
+            questionTurkish = "Lütfen gözlerini kapat.",
+            imageRes = R.drawable.eye,
+            correctAnswer = "Please close your eyes",
+            options = emptyList(),
+            questionType = QuestionType.SPEAKING,
+            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
+            speakingSentence = "Please close your eyes",
+            speakingCharacterRes = R.drawable.cat_logo
+        ),
+
+        // 12. LISTENING (Korelasyon: "Where is your ... ?" kalıbı sabit)
+        createListening(
+            id = 12,
+            qTurkish = "Where is your head?",
+            res = R.drawable.head,
+            ansEnglish = "Başın nerede?",
+            opts = listOf("Başın nerede?", "Kolun nerede?", "Bacağın nerede?", "Gözün nerede?")
+        ),
+
+        // 13. LISTENING (Korelasyon: "My ... is fine." kalıbı sabit)
+        createListening(
+            id = 13,
+            qTurkish = "My arm is fine.",
+            res = R.drawable.arm,
+            ansEnglish = "Kolum iyi.",
+            opts = listOf("Kolum iyi.", "Başım iyi.", "Bacağım iyi.", "Gözüm iyi.")
+        ),
+
+        // 14. PATTERN (Gramer Öğretimi - Geniş Zaman Olumsuz Fiil Kullanımı)
+        VocabularyLevelDataQuiz(
+            id = 14,
+            questionTurkish = "It doesn't hurt.",
+            imageRes = R.drawable.pp1,
+            correctAnswer = "doesn't hurt",
+            options = listOf("doesn't hurt", "don't hurt", "not hurt", "isn't hurt"),
+            questionType = QuestionType.PATTERN,
+            patternTitle = "Simple Present Negative (Geniş Zaman Olumsuz)",
+            patternExampleOne = "My arm doesn't hurt.",
+            patternHighlightOne = "doesn't hurt",
+            patternExampleTwo = "He doesn't point.",
+            patternHighlightTwo = "doesn't point"
+        ),
+
+        // 15. MATCHING (Kapanış)
+        createMatching(
+            id = 15,
+            questionText = "Body Review Master",
+            image = R.drawable.pp2,
+            pairs = "arm,head,leg,eye,point,hurt",
+            turkishOptions = listOf("kol", "baş / kafa", "bacak", "göz", "işaret etmek", "incitmek / ağrımak")
+        )
+    )
+    fun getQuiz170(): List<VocabularyLevelDataQuiz> {
+    return quizListOf(
+        4, // 👈 Yeni eklenen hedef kelimeler (hand, hair, ear, mouth) için öğrenilmiş kelime sayısı
+
+        // 1. VISUAL (hand -> r.drawable.hand | Çeldiricilerde en fazla 1 eski kelime: head)
+        createVisual(
+            id = 1,
+            questionTurkish = "el",
+            imageRes = R.drawable.hand,
+            correctAnswer = "hand",
+            options = listOf("hand", "hair", "ear", "head")
+        ),
+
+        // 2. LISTENING (Korelasyon: "Wash your ..." kalıbı sabit - Mantıklı günlük cümle)
+        createListening(
+            id = 2,
+            qTurkish = "Wash your hands.",
+            res = R.drawable.hand,
+            ansEnglish = "Ellerini yıka.",
+            opts = listOf("Ellerini yıka.", "Saçını yıka.", "Kulaklarını yıka.", "Ağzını yıka.")
+        ),
+
+        // 3. VISUAL (hair -> r.drawable.hair | Çeldiricilerde en fazla 1 eski kelime: arm)
+        createVisual(
+            id = 3,
+            questionTurkish = "saç",
+            imageRes = R.drawable.hair,
+            correctAnswer = "hair",
+            options = listOf("hair", "hand", "ear", "arm")
+        ),
+
+        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 4,
+            qTurkish = "hair",
+            res = R.drawable.hair,
+            ansEnglish = "saç",
+            opts = listOf("saç", "el", "kulak", "ağız")
+        ),
+
+        // 5. VISUAL (ear -> r.drawable.ear | Çeldiricilerde en fazla 1 eski kelime: eye)
+        createVisual(
+            id = 5,
+            questionTurkish = "kulak",
+            imageRes = R.drawable.ear,
+            correctAnswer = "ear",
+            options = listOf("ear", "hand", "hair", "eye")
+        ),
+
+        // 6. LISTENING (Korelasyon: "Listen with your ...s" kalıbı sabit)
+        createListening(
+            id = 6,
+            qTurkish = "Listen with your ears.",
+            res = R.drawable.ear,
+            ansEnglish = "Kulaklarınla dinle.",
+            opts = listOf("Kulaklarınla dinle.", "Ellerini kullan.", "Saçını tara.", "Ağzını kapat.")
+        ),
+
+        // 7. VISUAL (mouth -> r.drawable.mouth | Çeldiricilerde en fazla 1 eski kelime: leg)
+        createVisual(
+            id = 7,
+            questionTurkish = "ağız",
+            imageRes = R.drawable.mouth,
+            correctAnswer = "mouth",
+            options = listOf("mouth", "hand", "hair", "leg")
+        ),
+
+        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 8,
+            qTurkish = "mouth",
+            res = R.drawable.mouth,
+            ansEnglish = "ağız",
+            opts = listOf("ağız", "el", "saç", "kulak")
+        ),
+
+        // 9. TRANSLATION_BUILDER (Eski ve yeni kelimeler bir arada mantıklı cümle)
+        VocabularyLevelDataQuiz(
+            id = 9,
+            questionTurkish = "Elini ağzına koy.",
+            imageRes = R.drawable.hand,
+            correctAnswer = "Put your hand on your mouth",
+            questionType = QuestionType.TRANSLATION_BUILDER,
+            options = emptyList(),
+            correctWords = listOf("Put", "your", "hand", "on", "your", "mouth"),
+            extraWords = listOf("hair", "ear", "hurt"),
+            fullAnswerTurkish = "Elini ağzına koy."
+        ),
+
+        // 10. LISTENING (Korelasyon: Eski kelimelerden "hurt" ile yeni kelimelerin birleşimi)
+        createListening(
+            id = 10,
+            qTurkish = "My ear hurts.",
+            res = R.drawable.ear,
+            ansEnglish = "Kulağım ağrıyor.",
+            opts = listOf("Kulağım ağrıyor.", "Elim ağrıyor.", "Ağzım ağrıyor.", "Başım ağrıyor.")
+        ),
+
+        // 11. SPEAKING (Günlük mantıklı cümle)
+        VocabularyLevelDataQuiz(
+            id = 11,
+            questionTurkish = "He has long hair.",
+            imageRes = R.drawable.hair,
+            correctAnswer = "He has long hair",
+            options = emptyList(),
+            questionType = QuestionType.SPEAKING,
+            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
+            speakingSentence = "He has long hair",
+            speakingCharacterRes = R.drawable.cat_logo
+        ),
+
+        // 12. LISTENING (Korelasyon: Eski kelimelerden "point" ile yeni kelimelerin birleşimi)
+        createListening(
+            id = 12,
+            qTurkish = "Point to your mouth.",
+            res = R.drawable.mouth,
+            ansEnglish = "Ağzını göster.",
+            opts = listOf("Ağzını göster.", "Elini göster.", "Saçını göster.", "Kulağını göster.")
+        ),
+
+        // 13. LISTENING (Korelasyon: "Open your ..." kalıbı sabit)
+        createListening(
+            id = 13,
+            qTurkish = "Open your mouth.",
+            res = R.drawable.mouth,
+            ansEnglish = "Ağzını aç.",
+            opts = listOf("Ağzını aç.", "Elini aç.", "Gözünü aç.", "Kulağını aç.")
+        ),
+
+        // 14. PATTERN (Gramer Öğretimi - Sahiplik Yapısında Üçüncü Tekil Şahıs)
+        VocabularyLevelDataQuiz(
+            id = 14,
+            questionTurkish = "She has blond hair.",
+            imageRes = R.drawable.pp1,
+            correctAnswer = "has",
+            options = listOf("has", "have", "having", "is"),
+            questionType = QuestionType.PATTERN,
+            patternTitle = "Have / Has Got (Üçüncü Tekil Şahıs Sahiplik)",
+            patternExampleOne = "She has a small hand.",
+            patternHighlightOne = "has",
+            patternExampleTwo = "He has big ears.",
+            patternHighlightTwo = "has"
+        ),
+
+        // 15. MATCHING (Yeni kelimelerin kapanış özeti)
+        createMatching(
+            id = 15,
+            questionText = "New Body Parts Summary",
+            image = R.drawable.pp2,
+            pairs = "hand,hair,ear,mouth",
+            turkishOptions = listOf("el", "saç", "kulak", "ağız")
+        )
+    )
+    fun getQuiz171(): List<VocabularyLevelDataQuiz> {
+    return quizListOf(
+        0, // 👈 Mevcut kelimeleri günlük hayata uygun mantıklı cümlelerle pekiştirdiğimiz için sıfır kalıyor
+
+        // 1. VISUAL (hair -> r.drawable.hair | Çeldiricilerde en fazla 1 eski kelime: head)
+        createVisual(
+            id = 1,
+            questionTurkish = "saç",
+            imageRes = R.drawable.hair,
+            correctAnswer = "hair",
+            options = listOf("hair", "hand", "ear", "head")
+        ),
+
+        // 2. LISTENING (Korelasyon: "Comb your ..." kalıbı sabit - Mantıklı günlük cümle)
+        createListening(
+            id = 2,
+            qTurkish = "Comb your hair.",
+            res = R.drawable.hair,
+            ansEnglish = "Saçını tara.",
+            opts = listOf("Saçını tara.", "Ellerini yıka.", "Kulaklarını temizle.", "Ağzını kurula.")
+        ),
+
+        // 3. VISUAL (hand -> r.drawable.hand | Çeldiricilerde en fazla 1 eski kelime: arm)
+        createVisual(
+            id = 3,
+            questionTurkish = "el",
+            imageRes = R.drawable.hand,
+            correctAnswer = "hand",
+            options = listOf("hand", "hair", "mouth", "arm")
+        ),
+
+        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 4,
+            qTurkish = "hand",
+            res = R.drawable.hand,
+            ansEnglish = "el",
+            opts = listOf("el", "saç", "kulak", "ağız")
+        ),
+
+        // 5. VISUAL (ear -> r.drawable.ear | Çeldiricilerde en fazla 1 eski kelime: eye)
+        createVisual(
+            id = 5,
+            questionTurkish = "kulak",
+            imageRes = R.drawable.ear,
+            correctAnswer = "ear",
+            options = listOf("ear", "mouth", "hand", "eye")
+        ),
+
+        // 6. LISTENING (Korelasyon: "He covered his ...s" kalıbı sabit - Gürültü/Soğuk bağlamı)
+        createListening(
+            id = 6,
+            qTurkish = "He covered his ears.",
+            res = R.drawable.ear,
+            ansEnglish = "Kulaklarını kapattı.",
+            opts = listOf("Kulaklarını kapattı.", "Ellerini sakladı.", "Saçını kestirdi.", "Ağzını sildi.")
+        ),
+
+        // 7. VISUAL (mouth -> r.drawable.mouth | Çeldiricilerde en fazla 1 eski kelime: leg)
+        createVisual(
+            id = 7,
+            questionTurkish = "ağız",
+            imageRes = R.drawable.mouth,
+            correctAnswer = "mouth",
+            options = listOf("mouth", "ear", "hair", "leg")
+        ),
+
+        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 8,
+            qTurkish = "mouth",
+            res = R.drawable.mouth,
+            ansEnglish = "ağız",
+            opts = listOf("ağız", "el", "saç", "kulak")
+        ),
+
+        // 9. TRANSLATION_BUILDER (Mantıklı günlük cümle: "Lütfen elini uzat.")
+        VocabularyLevelDataQuiz(
+            id = 9,
+            questionTurkish = "Lütfen elini uzat.",
+            imageRes = R.drawable.hand,
+            correctAnswer = "Please give your hand",
+            questionType = QuestionType.TRANSLATION_BUILDER,
+            options = emptyList(),
+            correctWords = listOf("Please", "give", "your", "hand"),
+            extraWords = listOf("hair", "mouth", "hurt"),
+            fullAnswerTurkish = "Lütfen elini uzat."
+        ),
+
+        // 10. LISTENING (Korelasyon: Eski kelimelerden "hurt" ile yeni uzuvların birleşimi)
+        createListening(
+            id = 10,
+            qTurkish = "My hand hurts.",
+            res = R.drawable.hand,
+            ansEnglish = "Elim ağrıyor.",
+            opts = listOf("Elim ağrıyor.", "Saçım acıyor.", "Kulağım ağrıyor.", "Ağzım acıyor.")
+        ),
+
+        // 11. SPEAKING (Günlük mantıklı cümle)
+        VocabularyLevelDataQuiz(
+            id = 11,
+            questionTurkish = "Don't speak with your mouth full.",
+            imageRes = R.drawable.mouth,
+            correctAnswer = "Don't speak with your mouth full",
+            options = emptyList(),
+            questionType = QuestionType.SPEAKING,
+            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
+            speakingSentence = "Don't speak with your mouth full",
+            speakingCharacterRes = R.drawable.cat_logo
+        ),
+
+        // 12. LISTENING (Korelasyon: Eski kelimelerden "point" ile yeni kelimelerin birleşimi)
+        createListening(
+            id = 12,
+            qTurkish = "He points to his ear.",
+            res = R.drawable.ear,
+            ansEnglish = "Kulağını işaret ediyor.",
+            opts = listOf("Kulağını işaret ediyor.", "Elini işaret ediyor.", "Saçını işaret ediyor.", "Ağzını işaret ediyor.")
+        ),
+
+        // 13. LISTENING (Korelasyon: "Dry your ..." kalıbı sabit - Banyodan/Yemekten sonra)
+        createListening(
+            id = 13,
+            qTurkish = "Dry your hands.",
+            res = R.drawable.hand,
+            ansEnglish = "Ellerini kurula.",
+            opts = listOf("Ellerini kurula.", "Saçını kurula.", "Kulaklarını kurula.", "Ağzını kurula.")
+        ),
+
+        // 14. PATTERN (Gramer Öğretimi - Sahiplik Yapısında Soru Kalıbı)
+        VocabularyLevelDataQuiz(
+            id = 14,
+            questionTurkish = "Do you have short hair?",
+            imageRes = R.drawable.pp1,
+            correctAnswer = "Do you have",
+            options = listOf("Do you have", "Have you", "Does you have", "Are you have"),
+            questionType = QuestionType.PATTERN,
+            patternTitle = "Have Got Questions (Sahiplik Soru Kalıbı)",
+            patternExampleOne = "Do you have big ears?",
+            patternHighlightOne = "Do you have",
+            patternExampleTwo = "Does he have clean hands?",
+            patternHighlightTwo = "Does he have"
+        ),
+
+        // 15. MATCHING (Kapanış özeti)
+        createMatching(
+            id = 15,
+            questionText = "Body Parts Practice",
+            image = R.drawable.pp2,
+            pairs = "hand,hair,ear,mouth,point,hurt",
+            turkishOptions = listOf("el", "saç", "kulak", "ağız", "işaret etmek", "incitmek / ağrımak")
+        )
+    )
+    fun getQuiz172(): List<VocabularyLevelDataQuiz> {
+    return quizListOf(
+        2, // 👈 Havuza eklenen yeni fiiller (touch, wash) sebebiyle öğrenilmiş kelime sayısı 2 olarak işaretlendi
+
+        // 1. VISUAL (Yeni Fiil 1: touch -> r.drawable.touch | Diğer şıklar sadece point ve hurt)
+        createVisual(
+            id = 1,
+            questionTurkish = "dokunmak",
+            imageRes = R.drawable.touch,
+            correctAnswer = "touch",
+            options = listOf("touch", "point", "hurt")
+        ),
+
+        // 2. LISTENING (Korelasyon: "Don't touch your ..." kalıbı sabit - Mantıklı günlük cümle)
+        createListening(
+            id = 2,
+            qTurkish = "Don't touch your ears.",
+            res = R.drawable.ear,
+            ansEnglish = "Kulaklarına dokunma.",
+            opts = listOf("Kulaklarına dokunma.", "Kulaklarını işaret etme.", "Kulaklarını incitme.", "Kulaklarını yıkama.")
+        ),
+
+        // 3. VISUAL (Yeni Fiil 2: wash -> r.drawable.wash | Diğer şıklar sadece point ve hurt)
+        createVisual(
+            id = 3,
+            questionTurkish = "yıkamak",
+            imageRes = R.drawable.wash,
+            correctAnswer = "wash",
+            options = listOf("wash", "point", "hurt")
+        ),
+
+        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 4,
+            qTurkish = "wash",
+            res = R.drawable.wash,
+            ansEnglish = "yıkamak",
+            opts = listOf("yıkamak", "işaret etmek", "incitmek / ağrımak", "dokunmak")
+        ),
+
+        // 5. VISUAL (hand -> r.drawable.hand | Çeldiricilerde en fazla 1 eski kelime: arm)
+        createVisual(
+            id = 5,
+            questionTurkish = "el",
+            imageRes = R.drawable.hand,
+            correctAnswer = "hand",
+            options = listOf("hand", "hair", "mouth", "arm")
+        ),
+
+        // 6. LISTENING (Korelasyon: "He is washing his ..." kalıbı sabit - Şimdiki zaman kullanımı)
+        createListening(
+            id = 6,
+            qTurkish = "He is washing his hands.",
+            res = R.drawable.hand,
+            ansEnglish = "O ellerini yıkıyor.",
+            opts = listOf("O ellerini yıkıyor.", "O saçını tarıyor.", "O kulağını temizliyor.", "O ağzını siliyor.")
+        ),
+
+        // 7. VISUAL (hair -> r.drawable.hair | Çeldiricilerde en fazla 1 eski kelime: head)
+        createVisual(
+            id = 7,
+            questionTurkish = "saç",
+            imageRes = R.drawable.hair,
+            correctAnswer = "hair",
+            options = listOf("hair", "hand", "ear", "head")
+        ),
+
+        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 8,
+            qTurkish = "hair",
+            res = R.drawable.hair,
+            ansEnglish = "saç",
+            opts = listOf("saç", "el", "kulak", "ağız")
+        ),
+
+        // 9. TRANSLATION_BUILDER (Mantıklı günlük cümle)
+        VocabularyLevelDataQuiz(
+            id = 9,
+            questionTurkish = "Lütfen sıcak suyla ellerini yıka.",
+            imageRes = R.drawable.wash,
+            correctAnswer = "Please wash your hands with warm water",
+            questionType = QuestionType.TRANSLATION_BUILDER,
+            options = emptyList(),
+            correctWords = listOf("Please", "wash", "your", "hands", "with", "warm", "water"),
+            extraWords = listOf("hair", "mouth", "hurt"),
+            fullAnswerTurkish = "Lütfen sıcak suyla ellerini yıka."
+        ),
+
+        // 10. LISTENING (Korelasyon: "Touch your ..." kalıbı sabit)
+        createListening(
+            id = 10,
+            qTurkish = "Touch your mouth.",
+            res = R.drawable.mouth,
+            ansEnglish = "Ağzına dokun.",
+            opts = listOf("Ağzına dokun.", "Elini yıka.", "Saçını tara.", "Kulağını kapat.")
+        ),
+
+        // 11. SPEAKING (Günlük mantıklı cümle)
+        VocabularyLevelDataQuiz(
+            id = 11,
+            questionTurkish = "Don't touch my hair.",
+            imageRes = R.drawable.hair,
+            correctAnswer = "Don't touch my hair",
+            options = emptyList(),
+            questionType = QuestionType.SPEAKING,
+            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
+            speakingSentence = "Don't touch my hair",
+            speakingCharacterRes = R.drawable.cat_logo
+        ),
+
+        // 12. LISTENING (Korelasyon: Eski kelimelerden "hurt" ile yeni eylemlerin birleşimi)
+        createListening(
+            id = 12,
+            qTurkish = "It hurts when I touch it.",
+            res = R.drawable.hurt,
+            ansEnglish = "Dokunduğumda acıyor.",
+            opts = listOf("Dokunduğumda acıyor.", "Yıkadığımda acıyor.", "İşaret ettiğimde acıyor.", "Baktığımda acıyor.")
+        ),
+
+        // 13. LISTENING (Korelasyon: "He washes his ..." kalıbı sabit)
+        createListening(
+            id = 13,
+            qTurkish = "He washes his face.",
+            res = R.drawable.pp3,
+            ansEnglish = "Yüzünü yıkar.",
+            opts = listOf("Yüzünü yıkar.", "Saçını tarar.", "Kulağını temizler.", "Elini sallar.")
+        ),
+
+        // 14. PATTERN (Gramer Öğretimi - Şimdiki Zaman Olumsuz Yapısı)
+        VocabularyLevelDataQuiz(
+            id = 14,
+            questionTurkish = "She is not washing her hair.",
+            imageRes = R.drawable.pp1,
+            correctAnswer = "is not washing",
+            options = listOf("is not washing", "not washing", "doesn't washing", "isn't wash"),
+            questionType = QuestionType.PATTERN,
+            patternTitle = "Present Continuous Negative (Şimdiki Zaman Olumsuz)",
+            patternExampleOne = "I am not touching the wall.",
+            patternHighlightOne = "am not touching",
+            patternExampleTwo = "He is not washing his hands.",
+            patternHighlightTwo = "is not washing"
+        ),
+
+        // 15. MATCHING (Kapanış özeti)
+        createMatching(
+            id = 15,
+            questionText = "Actions & Body Parts",
+            image = R.drawable.pp2,
+            pairs = "hand,hair,ear,mouth,touch,wash",
+            turkishOptions = listOf("el", "saç", "kulak", "ağız", "dokunmak", "yıkamak")
+        )
+    )
+    fun getQuiz172(): List<VocabularyLevelDataQuiz> {
+    return quizListOf(
+        2, // 👈 Havuza eklenen yeni fiiller (touch, wash) sebebiyle öğrenilmiş kelime sayısı 2 olarak işaretlendi
+
+        // 1. VISUAL (Yeni Fiil 1: touch -> r.drawable.touch | Diğer şıklar sadece point ve hurt)
+        createVisual(
+            id = 1,
+            questionTurkish = "dokunmak",
+            imageRes = R.drawable.touch,
+            correctAnswer = "touch",
+            options = listOf("touch", "point", "hurt")
+        ),
+
+        // 2. LISTENING (Korelasyon: "Don't touch your ..." kalıbı sabit - Mantıklı günlük cümle)
+        createListening(
+            id = 2,
+            qTurkish = "Don't touch your ears.",
+            res = R.drawable.ear,
+            ansEnglish = "Kulaklarına dokunma.",
+            opts = listOf("Kulaklarına dokunma.", "Kulaklarını işaret etme.", "Kulaklarını incitme.", "Kulaklarını yıkama.")
+        ),
+
+        // 3. VISUAL (Yeni Fiil 2: wash -> r.drawable.wash | Diğer şıklar sadece point ve hurt)
+        createVisual(
+            id = 3,
+            questionTurkish = "yıkamak",
+            imageRes = R.drawable.wash,
+            correctAnswer = "wash",
+            options = listOf("wash", "point", "hurt")
+        ),
+
+        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 4,
+            qTurkish = "wash",
+            res = R.drawable.wash,
+            ansEnglish = "yıkamak",
+            opts = listOf("yıkamak", "işaret etmek", "incitmek / ağrımak", "dokunmak")
+        ),
+
+        // 5. VISUAL (hand -> r.drawable.hand | Çeldiricilerde en fazla 1 eski kelime: arm)
+        createVisual(
+            id = 5,
+            questionTurkish = "el",
+            imageRes = R.drawable.hand,
+            correctAnswer = "hand",
+            options = listOf("hand", "hair", "mouth", "arm")
+        ),
+
+        // 6. LISTENING (Korelasyon: "He is washing his ..." kalıbı sabit - Şimdiki zaman kullanımı)
+        createListening(
+            id = 6,
+            qTurkish = "He is washing his hands.",
+            res = R.drawable.hand,
+            ansEnglish = "O ellerini yıkıyor.",
+            opts = listOf("O ellerini yıkıyor.", "O saçını tarıyor.", "O kulağını temizliyor.", "O ağzını siliyor.")
+        ),
+
+        // 7. VISUAL (hair -> r.drawable.hair | Çeldiricilerde en fazla 1 eski kelime: head)
+        createVisual(
+            id = 7,
+            questionTurkish = "saç",
+            imageRes = R.drawable.hair,
+            correctAnswer = "hair",
+            options = listOf("hair", "hand", "ear", "head")
+        ),
+
+        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 8,
+            qTurkish = "hair",
+            res = R.drawable.hair,
+            ansEnglish = "saç",
+            opts = listOf("saç", "el", "kulak", "ağız")
+        ),
+
+        // 9. TRANSLATION_BUILDER (Mantıklı günlük cümle)
+        VocabularyLevelDataQuiz(
+            id = 9,
+            questionTurkish = "Lütfen sıcak suyla ellerini yıka.",
+            imageRes = R.drawable.wash,
+            correctAnswer = "Please wash your hands with warm water",
+            questionType = QuestionType.TRANSLATION_BUILDER,
+            options = emptyList(),
+            correctWords = listOf("Please", "wash", "your", "hands", "with", "warm", "water"),
+            extraWords = listOf("hair", "mouth", "hurt"),
+            fullAnswerTurkish = "Lütfen sıcak suyla ellerini yıka."
+        ),
+
+        // 10. LISTENING (Korelasyon: "Touch your ..." kalıbı sabit)
+        createListening(
+            id = 10,
+            qTurkish = "Touch your mouth.",
+            res = R.drawable.mouth,
+            ansEnglish = "Ağzına dokun.",
+            opts = listOf("Ağzına dokun.", "Elini yıka.", "Saçını tara.", "Kulağını kapat.")
+        ),
+
+        // 11. SPEAKING (Günlük mantıklı cümle)
+        VocabularyLevelDataQuiz(
+            id = 11,
+            questionTurkish = "Don't touch my hair.",
+            imageRes = R.drawable.hair,
+            correctAnswer = "Don't touch my hair",
+            options = emptyList(),
+            questionType = QuestionType.SPEAKING,
+            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
+            speakingSentence = "Don't touch my hair",
+            speakingCharacterRes = R.drawable.cat_logo
+        ),
+
+        // 12. LISTENING (Korelasyon: Eski kelimelerden "hurt" ile yeni eylemlerin birleşimi)
+        createListening(
+            id = 12,
+            qTurkish = "It hurts when I touch it.",
+            res = R.drawable.hurt,
+            ansEnglish = "Dokunduğumda acıyor.",
+            opts = listOf("Dokunduğumda acıyor.", "Yıkadığımda acıyor.", "İşaret ettiğimde acıyor.", "Baktığımda acıyor.")
+        ),
+
+        // 13. LISTENING (Korelasyon: "He washes his ..." kalıbı sabit)
+        createListening(
+            id = 13,
+            qTurkish = "He washes his face.",
+            res = R.drawable.pp3,
+            ansEnglish = "Yüzünü yıkar.",
+            opts = listOf("Yüzünü yıkar.", "Saçını tarar.", "Kulağını temizler.", "Elini sallar.")
+        ),
+
+        // 14. PATTERN (Gramer Öğretimi - Şimdiki Zaman Olumsuz Yapısı)
+        VocabularyLevelDataQuiz(
+            id = 14,
+            questionTurkish = "She is not washing her hair.",
+            imageRes = R.drawable.pp1,
+            correctAnswer = "is not washing",
+            options = listOf("is not washing", "not washing", "doesn't washing", "isn't wash"),
+            questionType = QuestionType.PATTERN,
+            patternTitle = "Present Continuous Negative (Şimdiki Zaman Olumsuz)",
+            patternExampleOne = "I am not touching the wall.",
+            patternHighlightOne = "am not touching",
+            patternExampleTwo = "He is not washing his hands.",
+            patternHighlightTwo = "is not washing"
+        ),
+
+        // 15. MATCHING (Kapanış özeti)
+        createMatching(
+            id = 15,
+            questionText = "Actions & Body Parts",
+            image = R.drawable.pp2,
+            pairs = "hand,hair,ear,mouth,touch,wash",
+            turkishOptions = listOf("el", "saç", "kulak", "ağız", "dokunmak", "yıkamak")
+        )
+    )
+    fun getQuiz173(): List<VocabularyLevelDataQuiz> {
+    return quizListOf(
+        0, // 👈 Mevcut kelimeleri günlük hayata uygun mantıklı cümlelerle pekiştirdiğimiz için sıfır kalıyor
+
+        // 1. VISUAL (touch -> r.drawable.touch | Çeldiricilerde en fazla 1 eski kelime: point)
+        createVisual(
+            id = 1,
+            questionTurkish = "dokunmak",
+            imageRes = R.drawable.touch,
+            correctAnswer = "touch",
+            options = listOf("touch", "wash", "point")
+        ),
+
+        // 2. LISTENING (Korelasyon: "Please touch your ..." kalıbı sabit - Mantıklı günlük cümle)
+        createListening(
+            id = 2,
+            qTurkish = "Please touch your hair.",
+            res = R.drawable.hair,
+            ansEnglish = "Lütfen saçına dokun.",
+            opts = listOf("Lütfen saçına dokun.", "Lütfen eline dokun.", "Lütfen kulağına dokun.", "Lütfen ağzına dokun.")
+        ),
+
+        // 3. VISUAL (wash -> r.drawable.wash | Çeldiricilerde en fazla 1 eski kelime: hurt)
+        createVisual(
+            id = 3,
+            questionTurkish = "yıkamak",
+            imageRes = R.drawable.wash,
+            correctAnswer = "wash",
+            options = listOf("wash", "touch", "hurt")
+        ),
+
+        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 4,
+            qTurkish = "wash",
+            res = R.drawable.wash,
+            ansEnglish = "yıkamak",
+            opts = listOf("yıkamak", "dokunmak", "işaret etmek", "incitmek / ağrımak")
+        ),
+
+        // 5. VISUAL (ear -> r.drawable.ear | Çeldiricilerde en fazla 1 eski kelime: eye)
+        createVisual(
+            id = 5,
+            questionTurkish = "kulak",
+            imageRes = R.drawable.ear,
+            correctAnswer = "ear",
+            options = listOf("ear", "mouth", "hand", "eye")
+        ),
+
+        // 6. LISTENING (Korelasyon: "Clean your ..." kalıbı sabit)
+        createListening(
+            id = 6,
+            qTurkish = "Clean your ears.",
+            res = R.drawable.ear,
+            ansEnglish = "Kulaklarını temizle.",
+            opts = listOf("Kulaklarını temizle.", "Ellerini temizle.", "Saçını temizle.", "Ağzını temizle.")
+        ),
+
+        // 7. VISUAL (hand -> r.drawable.hand | Çeldiricilerde en fazla 1 eski kelime: arm)
+        createVisual(
+            id = 7,
+            questionTurkish = "el",
+            imageRes = R.drawable.hand,
+            correctAnswer = "hand",
+            options = listOf("hand", "hair", "mouth", "arm")
+        ),
+
+        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 8,
+            qTurkish = "hand",
+            res = R.drawable.hand,
+            ansEnglish = "el",
+            opts = listOf("el", "saç", "kulak", "ağız")
+        ),
+
+        // 9. TRANSLATION_BUILDER (Mantıklı günlük cümle: "Yemekten önce ellerini yıka.")
+        VocabularyLevelDataQuiz(
+            id = 9,
+            questionTurkish = "Yemekten önce ellerini yıka.",
+            imageRes = R.drawable.wash,
+            correctAnswer = "Wash your hands before eating",
+            questionType = QuestionType.TRANSLATION_BUILDER,
+            options = emptyList(),
+            correctWords = listOf("Wash", "your", "hands", "before", "eating"),
+            extraWords = listOf("hair", "mouth", "touch"),
+            fullAnswerTurkish = "Yemekten önce ellerini yıka."
+        ),
+
+        // 10. LISTENING (Korelasyon: "Don't wash with ..." kalıbı sabit)
+        createListening(
+            id = 10,
+            qTurkish = "Don't wash with cold water.",
+            res = R.drawable.wash,
+            ansEnglish = "Soğuk suyla yıkama.",
+            opts = listOf("Soğuk suyla yıkama.", "Soğuk suyla dokunma.", "Soğuk suyla ovalama.", "Soğuk suyla durulama.")
+        ),
+
+        // 11. SPEAKING (Günlük mantıklı cümle)
+        VocabularyLevelDataQuiz(
+            id = 11,
+            questionTurkish = "I touch the cat gently.",
+            imageRes = R.drawable.touch,
+            correctAnswer = "I touch the cat gently",
+            options = emptyList(),
+            questionType = QuestionType.SPEAKING,
+            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
+            speakingSentence = "I touch the cat gently",
+            speakingCharacterRes = R.drawable.cat_logo
+        ),
+
+        // 12. LISTENING (Korelasyon: "Your ... are very warm." kalıbı sabit)
+        createListening(
+            id = 12,
+            qTurkish = "Your hands are very warm.",
+            res = R.drawable.hand,
+            ansEnglish = "Ellerin çok sıcak.",
+            opts = listOf("Ellerin çok sıcak.", "Kulakların çok sıcak.", "Saçın çok sıcak.", "Ağzın çok sıcak.")
+        ),
+
+        // 13. LISTENING (Korelasyon: "Keep your ... clean." kalıbı sabit)
+        createListening(
+            id = 13,
+            qTurkish = "Keep your mouth clean.",
+            res = R.drawable.mouth,
+            ansEnglish = "Ağzını temiz tut.",
+            opts = listOf("Ağzını temiz tut.", "Ellerini temiz tut.", "Saçını temiz tut.", "Kulaklarını temiz tut.")
+        ),
+
+        // 14. PATTERN (Gramer Öğretimi - Soru Cümlelerinde Şimdiki Zaman Kullanımı)
+        VocabularyLevelDataQuiz(
+            id = 14,
+            questionTurkish = "Are you washing your hands?",
+            imageRes = R.drawable.pp1,
+            correctAnswer = "Are you washing",
+            options = listOf("Are you washing", "Do you washing", "Is you washing", "You washing"),
+            questionType = QuestionType.PATTERN,
+            patternTitle = "Present Continuous Questions (Şimdiki Zaman Soru Yapısı)",
+            patternExampleOne = "Are you touching the dog?",
+            patternHighlightOne = "Are you touching",
+            patternExampleTwo = "Is he washing his hair?",
+            patternHighlightTwo = "Is he washing"
+        ),
+
+        // 15. MATCHING (Kapanış özeti)
+        createMatching(
+            id = 15,
+            questionText = "Body & Actions Master Review",
+            image = R.drawable.pp2,
+            pairs = "hand,hair,ear,mouth,touch,wash",
+            turkishOptions = listOf("el", "saç", "kulak", "ağız", "dokunmak", "yıkamak")
+        )
+    )
+    fun getQuiz174(): List<VocabularyLevelDataQuiz> {
+    return quizListOf(
+        2, // 👈 Yeni eklenen hedef kelimeler (chest, shoulder) için öğrenilmiş kelime sayısı
+
+        // 1. VISUAL (chest -> r.drawable.chest | Çeldiricilerde en fazla 1 eski kelime: hand)
+        createVisual(
+            id = 1,
+            questionTurkish = "göğüs",
+            imageRes = R.drawable.chest,
+            correctAnswer = "chest",
+            options = listOf("chest", "shoulder", "hair", "hand")
+        ),
+
+        // 2. LISTENING (Düzeltme: cross yerine point kullanıldı)
+        createListening(
+            id = 2,
+            qTurkish = "Point to your chest.",
+            res = R.drawable.chest,
+            ansEnglish = "Göğsünü işaret et.",
+            opts = listOf(
+                "Göğsünü işaret et.",
+                "Omzunu işaret et.",
+                "Saçını işaret et.",
+                "Ağzını işaret et."
+            )
+        ),
+
+        // 3. VISUAL (shoulder -> r.drawable.shoulder | Çeldiricilerde en fazla 1 eski kelime: ear)
+        createVisual(
+            id = 3,
+            questionTurkish = "omuz",
+            imageRes = R.drawable.shoulder,
+            correctAnswer = "shoulder",
+            options = listOf("shoulder", "chest", "mouth", "ear")
+        ),
+
+        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 4,
+            qTurkish = "shoulder",
+            res = R.drawable.shoulder,
+            ansEnglish = "omuz",
+            opts = listOf("omuz", "göğüs", "saç", "ağız")
+        ),
+
+        // 5. VISUAL (hair -> r.drawable.hair | Çeldiricilerde en fazla 1 eski kelime: head)
+        createVisual(
+            id = 5,
+            questionTurkish = "saç",
+            imageRes = R.drawable.hair,
+            correctAnswer = "hair",
+            options = listOf("hair", "chest", "shoulder", "head")
+        ),
+
+        // 6. LISTENING (Düzeltme: pain yerine hurt kullanıldı)
+        createListening(
+            id = 6,
+            qTurkish = "My shoulder hurts.",
+            res = R.drawable.shoulder,
+            ansEnglish = "Omzum ağrıyor.",
+            opts = listOf(
+                "Omzum ağrıyor.",
+                "Göğsüm ağrıyor.",
+                "Saçım ağrıyor.",
+                "Ağzım ağrıyor."
+            )
+        ),
+
+        // 7. VISUAL (mouth -> r.drawable.mouth | Çeldiricilerde en fazla 1 eski kelime: arm)
+        createVisual(
+            id = 7,
+            questionTurkish = "ağız",
+            imageRes = R.drawable.mouth,
+            correctAnswer = "mouth",
+            options = listOf("mouth", "chest", "shoulder", "arm")
+        ),
+
+        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 8,
+            qTurkish = "mouth",
+            res = R.drawable.mouth,
+            ansEnglish = "ağız",
+            opts = listOf("ağız", "göğüs", "omuz", "saç")
+        ),
+
+        // 9. TRANSLATION_BUILDER (Düzeltme: wash yerine shoulder eklendi, r.drawable.shoulder yapıldı)
+        VocabularyLevelDataQuiz(
+            id = 9,
+            questionTurkish = "Lütfen omzuna dokun.",
+            imageRes = R.drawable.shoulder,
+            correctAnswer = "Please touch your shoulder",
+            questionType = QuestionType.TRANSLATION_BUILDER,
+            options = emptyList(),
+            correctWords = listOf("Please", "touch", "your", "shoulder"),
+            extraWords = listOf("chest", "mouth", "hair"),
+            fullAnswerTurkish = "Lütfen omzuna dokun."
+        ),
+
+        // 10. LISTENING (Korelasyon: Eski kelimelerden "touch" kullanımı)
+        createListening(
+            id = 10,
+            qTurkish = "Don't touch my shoulder.",
+            res = R.drawable.shoulder,
+            ansEnglish = "Omzuma dokunma.",
+            opts = listOf("Omzuma dokunma.", "Göğsüme dokunma.", "Saçıma dokunma.", "Ağzıma dokunma.")
+        ),
+
+        // 11. SPEAKING (Günlük mantıklı cümle)
+        VocabularyLevelDataQuiz(
+            id = 11,
+            questionTurkish = "My chest hurts a lot.",
+            imageRes = R.drawable.chest,
+            correctAnswer = "My chest hurts a lot",
+            options = emptyList(),
+            questionType = QuestionType.SPEAKING,
+            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
+            speakingSentence = "My chest hurts a lot",
+            speakingCharacterRes = R.drawable.cat_logo
+        ),
+
+        // 12. LISTENING (Korelasyon: Eski kelimelerden "hurt" kullanımı)
+        createListening(
+            id = 12,
+            qTurkish = "Does your shoulder hurt?",
+            res = R.drawable.shoulder,
+            ansEnglish = "Omuzun mu ağrıyor?",
+            opts = listOf("Omuzun mu ağrıyor?", "Göğsün mü ağrıyor?", "Ağzın mı ağrıyor?", "Başın mı ağrıyor?")
+        ),
+
+        // 13. LISTENING (Korelasyon: Eski kelimelerden "point" kullanımı)
+        createListening(
+            id = 13,
+            qTurkish = "He points to his chest.",
+            res = R.drawable.chest,
+            ansEnglish = "Göğsünü işaret ediyor.",
+            opts = listOf(
+                "Göğsünü işaret ediyor.",
+                "Omzunu işaret ediyor.",
+                "Saçını işaret ediyor.",
+                "Ağzını işaret ediyor."
+            )
+        ),
+
+        // 14. PATTERN (Gramer Öğretimi - Sahiplik Yapısında Çoğul ve Tekil Farkı)
+        VocabularyLevelDataQuiz(
+            id = 14,
+            questionTurkish = "I have two shoulders.",
+            imageRes = R.drawable.pp1,
+            correctAnswer = "shoulders",
+            options = listOf("shoulders", "shoulder", "chest", "chests"),
+            questionType = QuestionType.PATTERN,
+            patternTitle = "Plural Nouns (Çoğul İsimler)",
+            patternExampleOne = "I have one chest.",
+            patternHighlightOne = "chest",
+            patternExampleTwo = "He has two shoulders.",
+            patternHighlightTwo = "shoulders"
+        ),
+
+        // 15. MATCHING (Kapanış özeti)
+        createMatching(
+            id = 15,
+            questionText = "Chest & Shoulder Review",
+            image = R.drawable.pp2,
+            pairs = "chest,shoulder,hair,mouth,touch,wash",
+            turkishOptions = listOf("göğüs", "omuz", "saç", "ağız", "dokunmak", "yıkamak")
+        )
+    )
+    fun getQuiz175(): List<VocabularyLevelDataQuiz> {
+    return quizListOf(
+        3, // 👈 Yeni eklenen kelimeler (scratch, finger, cheek) için öğrenilmiş kelime sayısı
+
+        // 1. VISUAL (Düzeltme: İlk sırada scratch yer alıyor | Çeldiricilerde en fazla 1 eski kelime: head)
+        createVisual(
+            id = 1,
+            questionTurkish = "çizik / kaşımak",
+            imageRes = R.drawable.scratch,
+            correctAnswer = "scratch",
+            options = listOf("scratch", "finger", "cheek", "head")
+        ),
+
+        // 2. LISTENING (Düzeltme: Doğrudan scratch görselinden hemen sonraya taşındı)
+        createListening(
+            id = 2,
+            qTurkish = "He has a scratch on his arm.",
+            res = R.drawable.scratch,
+            ansEnglish = "Onun kolunda bir çizik var.",
+            opts = listOf(
+                "Onun kolunda bir çizik var.",
+                "Onun parmağında bir çizik var.",
+                "Onun yanağında bir çizik var.",
+                "Onun göğsünde bir çizik var."
+            )
+        ),
+
+        // 3. VISUAL (finger -> r.drawable.finger | Çeldiricilerde en fazla 1 eski kelime: hand)
+        createVisual(
+            id = 3,
+            questionTurkish = "parmak",
+            imageRes = R.drawable.finger,
+            correctAnswer = "finger",
+            options = listOf("finger", "cheek", "scratch", "hand")
+        ),
+
+        // 4. LISTENING (Korelasyon: "Point with your ..." kalıbı sabit)
+        createListening(
+            id = 4,
+            qTurkish = "Point with your finger.",
+            res = R.drawable.finger,
+            ansEnglish = "Parmağınla işaret et.",
+            opts = listOf(
+                "Parmağınla işaret et.",
+                "Yanağınla işaret et.",
+                "Saçınla işaret et.",
+                "Ağzınla işaret et."
+            )
+        ),
+
+        // 5. VISUAL (cheek -> r.drawable.cheek | Çeldiricilerde en fazla 1 eski kelime: ear)
+        createVisual(
+            id = 5,
+            questionTurkish = "yanak",
+            imageRes = R.drawable.cheek,
+            correctAnswer = "cheek",
+            options = listOf("cheek", "finger", "scratch", "ear")
+        ),
+
+        // 6. LISTENING (Korelasyon: "Don't scratch your ..." kalıbı sabit)
+        createListening(
+            id = 6,
+            qTurkish = "Don't scratch your cheek.",
+            res = R.drawable.cheek,
+            ansEnglish = "Yanağını kaşıma.",
+            opts = listOf(
+                "Yanağını kaşıma.",
+                "Parmağını kaşıma.",
+                "Saçını kaşıma.",
+                "Ağzını kaşıma."
+            )
+        ),
+
+        // 7. VISUAL (mouth -> r.drawable.mouth | Çeldiricilerde en fazla 1 eski kelime: chest)
+        createVisual(
+            id = 7,
+            questionTurkish = "ağız",
+            imageRes = R.drawable.mouth,
+            correctAnswer = "mouth",
+            options = listOf("mouth", "finger", "cheek", "chest")
+        ),
+
+        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 8,
+            qTurkish = "mouth",
+            res = R.drawable.mouth,
+            ansEnglish = "ağız",
+            opts = listOf("ağız", "parmak", "yanak", "saç")
+        ),
+
+        // 9. TRANSLATION_BUILDER (Eski ve yeni kelimelerin birleştiği mantıklı cümle)
+        VocabularyLevelDataQuiz(
+            id = 9,
+            questionTurkish = "Lütfen yanağına dokun.",
+            imageRes = R.drawable.cheek,
+            correctAnswer = "Please touch your cheek",
+            questionType = QuestionType.TRANSLATION_BUILDER,
+            options = emptyList(),
+            correctWords = listOf("Please", "touch", "your", "cheek"),
+            extraWords = listOf("finger", "mouth", "scratch"),
+            fullAnswerTurkish = "Lütfen yanağına dokun."
+        ),
+
+        // 10. LISTENING (Korelasyon: Eski kelimelerden "wash" kullanımı)
+        createListening(
+            id = 10,
+            qTurkish = "Wash your fingers.",
+            res = R.drawable.finger,
+            ansEnglish = "Parmaklarını yıka.",
+            opts = listOf("Parmaklarını yıka.", "Yanaklarını yıka.", "Saçını yıka.", "Ağzını yıka.")
+        ),
+
+        // 11. SPEAKING (Günlük mantıklı cümle)
+        VocabularyLevelDataQuiz(
+            id = 11,
+            questionTurkish = "My finger hurts a lot.",
+            imageRes = R.drawable.finger,
+            correctAnswer = "My finger hurts a lot",
+            options = emptyList(),
+            questionType = QuestionType.SPEAKING,
+            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
+            speakingSentence = "My finger hurts a lot",
+            speakingCharacterRes = R.drawable.cat_logo
+        ),
+
+        // 12. LISTENING (Korelasyon: Eski kelimelerden "hurt" kullanımı)
+        createListening(
+            id = 12,
+            qTurkish = "Does your cheek hurt?",
+            res = R.drawable.cheek,
+            ansEnglish = "Yanağın mı ağrıyor?",
+            opts = listOf("Yanağın mı ağrıyor?", "Parmağın mı ağrıyor?", "Ağzın mı ağrıyor?", "Omzun mu ağrıyor?")
+        ),
+
+        // 13. LISTENING (Korelasyon: Eski kelimelerden "point" kullanımı)
+        createListening(
+            id = 13,
+            qTurkish = "He points to his finger.",
+            res = R.drawable.finger,
+            ansEnglish = "Parmağını işaret ediyor.",
+            opts = listOf(
+                "Parmağını işaret ediyor.",
+                "Yanağını işaret ediyor.",
+                "Saçını işaret ediyor.",
+                "Ağzını işaret ediyor."
+            )
+        ),
+
+        // 14. PATTERN (Gramer Öğretimi - Çoğul Yapılarda Özel Sayılar)
+        VocabularyLevelDataQuiz(
+            id = 14,
+            questionTurkish = "I have ten fingers.",
+            imageRes = R.drawable.pp1,
+            correctAnswer = "fingers",
+            options = listOf("fingers", "finger", "cheek", "cheeks"),
+            questionType = QuestionType.PATTERN,
+            patternTitle = "Plural Nouns (Çoğul Nesneler)",
+            patternExampleOne = "I have two cheeks.",
+            patternHighlightOne = "cheeks",
+            patternExampleTwo = "He has ten fingers.",
+            patternHighlightTwo = "fingers"
+        ),
+
+        // 15. MATCHING (Kapanış özeti)
+        createMatching(
+            id = 15,
+            questionText = "Finger & Cheek Review",
+            image = R.drawable.pp2,
+            pairs = "finger,cheek,scratch,hair,mouth,touch",
+            turkishOptions = listOf("parmak", "yanak", "çizik", "saç", "ağız", "dokunmak")
+        )
+    )
+    fun getQuiz176(): List<VocabularyLevelDataQuiz> {
+    return quizListOf(
+        0, // 👈 Mevcut kelimeleri günlük hayata uygun mantıklı cümlelerle pekiştirdiğimiz için sıfır kalıyor
+
+        // 1. VISUAL (scratch -> r.drawable.scratch | Çeldiricilerde en fazla 1 eski kelime: hurt)
+        createVisual(
+            id = 1,
+            questionTurkish = "çizik / kaşımak",
+            imageRes = R.drawable.scratch,
+            correctAnswer = "scratch",
+            options = listOf("scratch", "finger", "cheek", "hurt")
+        ),
+
+        // 2. LISTENING (Korelasyon: "Don't scratch your ..." kalıbı sabit - Mantıklı günlük cümle)
+        createListening(
+            id = 2,
+            qTurkish = "Don't scratch your chest.",
+            res = R.drawable.chest,
+            ansEnglish = "Göğsünü kaşıma.",
+            opts = listOf("Göğsünü kaşıma.", "Yanağını kaşıma.", "Parmağını kaşıma.", "Omzunu kaşıma.")
+        ),
+
+        // 3. VISUAL (finger -> r.drawable.finger | Çeldiricilerde en fazla 1 eski kelime: hand)
+        createVisual(
+            id = 3,
+            questionTurkish = "parmak",
+            imageRes = R.drawable.finger,
+            correctAnswer = "finger",
+            options = listOf("finger", "cheek", "scratch", "hand")
+        ),
+
+        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 4,
+            qTurkish = "finger",
+            res = R.drawable.finger,
+            ansEnglish = "parmak",
+            opts = listOf("parmak", "yanak", "çizik", "omuz")
+        ),
+
+        // 5. VISUAL (cheek -> r.drawable.cheek | Çeldiricilerde en fazla 1 eski kelime: mouth)
+        createVisual(
+            id = 5,
+            questionTurkish = "yanak",
+            imageRes = R.drawable.cheek,
+            correctAnswer = "cheek",
+            options = listOf("cheek", "finger", "scratch", "mouth")
+        ),
+
+        // 6. LISTENING (Korelasyon: "He kissed her on the ..." kalıbı sabit - Mantıklı günlük cümle)
+        createListening(
+            id = 6,
+            qTurkish = "He kissed her on the cheek.",
+            res = R.drawable.cheek,
+            ansEnglish = "Onu yanağından öptü.",
+            opts = listOf("Onu yanağından öptü.", "Onu parmağından öptü.", "Onu omzundan öptü.", "Onu kolundan öptü.")
+        ),
+
+        // 7. VISUAL (mouth -> r.drawable.mouth | Çeldiricilerde en fazla 1 eski kelime: chest)
+        createVisual(
+            id = 7,
+            questionTurkish = "ağız",
+            imageRes = R.drawable.mouth,
+            correctAnswer = "mouth",
+            options = listOf("mouth", "finger", "cheek", "chest")
+        ),
+
+        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 8,
+            qTurkish = "mouth",
+            res = R.drawable.mouth,
+            ansEnglish = "ağız",
+            opts = listOf("ağız", "yanak", "parmak", "göğüs")
+        ),
+
+        // 9. TRANSLATION_BUILDER (Eski ve yeni kelimelerle mantıklı cümle)
+        VocabularyLevelDataQuiz(
+            id = 9,
+            questionTurkish = "Parmağında küçük bir çizik var.",
+            imageRes = R.drawable.scratch,
+            correctAnswer = "There is a small scratch on your finger",
+            questionType = QuestionType.TRANSLATION_BUILDER,
+            options = emptyList(),
+            correctWords = listOf("There", "is", "a", "small", "scratch", "on", "your", "finger"),
+            extraWords = listOf("cheek", "shoulder", "wash"),
+            fullAnswerTurkish = "Parmağında küçük bir çizik var."
+        ),
+
+        // 10. LISTENING (Korelasyon: Eski kelimelerden "wash" kullanımı)
+        createListening(
+            id = 10,
+            qTurkish = "Wash your face and cheeks.",
+            res = R.drawable.cheek,
+            ansEnglish = "Yüzünü ve yanaklarını yıka.",
+            opts = listOf("Yüzünü ve yanaklarını yıka.", "Yüzünü ve parmaklarını yıka.", "Yüzünü ve göğsünü yıka.", "Yüzünü ve omzunu yıka.")
+        ),
+
+        // 11. SPEAKING (Eski kelimelerle zenginleştirilmiş günlük cümle)
+        VocabularyLevelDataQuiz(
+            id = 11,
+            questionTurkish = "My shoulder and my chest hurt.",
+            imageRes = R.drawable.shoulder,
+            correctAnswer = "My shoulder and my chest hurt",
+            options = emptyList(),
+            questionType = QuestionType.SPEAKING,
+            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
+            speakingSentence = "My shoulder and my chest hurt",
+            speakingCharacterRes = R.drawable.cat_logo
+        ),
+
+        // 12. LISTENING (Korelasyon: Eski kelimelerden "touch" kullanımı)
+        createListening(
+            id = 12,
+            qTurkish = "Don't touch that scratch.",
+            res = R.drawable.scratch,
+            ansEnglish = "O çiziğe dokunma.",
+            opts = listOf("O çiziğe dokunma.", "O yanağa dokunma.", "O parmağa dokunma.", "O omuza dokunma.")
+        ),
+
+        // 13. LISTENING (Korelasyon: Eski kelimelerden "point" kullanımı)
+        createListening(
+            id = 13,
+            qTurkish = "He points to his pinky finger.",
+            res = R.drawable.finger,
+            ansEnglish = "Serçe parmağını işaret ediyor.",
+            opts = listOf("Serçe parmağını işaret ediyor.", "Yanağını işaret ediyor.", "Göğsünü işaret ediyor.", "Omzunu işaret ediyor.")
+        ),
+
+        // 14. PATTERN (Gramer Öğretimi - Şimdiki Zaman Olumlu Fiil Kullanımı)
+        VocabularyLevelDataQuiz(
+            id = 14,
+            questionTurkish = "She is scratching her arm.",
+            imageRes = R.drawable.pp1,
+            correctAnswer = "is scratching",
+            options = listOf("is scratching", "scratches", "scratching", "are scratching"),
+            questionType = QuestionType.PATTERN,
+            patternTitle = "Present Continuous (Şimdiki Zaman Eylem Kullanımı)",
+            patternExampleOne = "He is touching his cheek.",
+            patternHighlightOne = "is touching",
+            patternExampleTwo = "I am washing my fingers.",
+            patternHighlightTwo = "am washing"
+        ),
+
+        // 15. MATCHING (Kapanış özeti)
+        createMatching(
+            id = 15,
+            questionText = "Body Master Review",
+            image = R.drawable.pp2,
+            pairs = "scratch,finger,cheek,chest,shoulder,arm",
+            turkishOptions = listOf("çizik / kaşımak", "parmak", "yanak", "göğüs", "omuz", "kol")
+        )
+    )
+    fun getQuiz177(): List<VocabularyLevelDataQuiz> {
+    return quizListOf(
+        0, // 👈 Tamamen pekiştirme ve tekrar quizi olduğu için sıfır olarak işaretlendi
+
+        // 1. VISUAL (finger -> r.drawable.finger | Çeldiricilerde en fazla 1 eski kelime: hand)
+        createVisual(
+            id = 1,
+            questionTurkish = "parmak",
+            imageRes = R.drawable.finger,
+            correctAnswer = "finger",
+            options = listOf("finger", "cheek", "scratch", "hand")
+        ),
+
+        // 2. LISTENING (Korelasyon: "He bit his ..." kalıbı sabit - Mantıklı günlük cümle)
+        createListening(
+            id = 2,
+            qTurkish = "He bit his finger.",
+            res = R.drawable.finger,
+            ansEnglish = "O parmağını ısırdı.",
+            opts = listOf("O parmağını ısırdı.", "O yanağını ısırdı.", "O kolunu ısırdı.", "O ağzını ısırdı.")
+        ),
+
+        // 3. VISUAL (cheek -> r.drawable.cheek | Çeldiricilerde en fazla 1 eski kelime: ear)
+        createVisual(
+            id = 3,
+            questionTurkish = "yanak",
+            imageRes = R.drawable.cheek,
+            correctAnswer = "cheek",
+            options = listOf("cheek", "finger", "scratch", "ear")
+        ),
+
+        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 4,
+            qTurkish = "cheek",
+            res = R.drawable.cheek,
+            ansEnglish = "yanak",
+            opts = listOf("yanak", "parmak", "çizik", "göğüs")
+        ),
+
+        // 5. VISUAL (scratch -> r.drawable.scratch | Çeldiricilerde en fazla 1 eski kelime: head)
+        createVisual(
+            id = 5,
+            questionTurkish = "çizik / kaşımak",
+            imageRes = R.drawable.scratch,
+            correctAnswer = "scratch",
+            options = listOf("scratch", "finger", "cheek", "head")
+        ),
+
+        // 6. LISTENING (Korelasyon: "She has a pink ..." kalıbı sabit)
+        createListening(
+            id = 6,
+            qTurkish = "She has a pink cheek.",
+            res = R.drawable.cheek,
+            ansEnglish = "Onun pembe bir yanağı var.",
+            opts = listOf("Onun pembe bir yanağı var.", "Onun pembe bir parmağı var.", "Onun pembe bir omzu var.", "Onun pembe bir ağzi var.")
+        ),
+
+        // 7. VISUAL (mouth -> r.drawable.mouth | Çeldiricilerde en fazla 1 eski kelime: chest)
+        createVisual(
+            id = 7,
+            questionTurkish = "ağız",
+            imageRes = R.drawable.mouth,
+            correctAnswer = "mouth",
+            options = listOf("mouth", "finger", "cheek", "chest")
+        ),
+
+        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
+        createListening(
+            id = 8,
+            qTurkish = "mouth",
+            res = R.drawable.mouth,
+            ansEnglish = "ağız",
+            opts = listOf("ağız", "parmak", "yanak", "çizik")
+        ),
+
+        // 9. TRANSLATION_BUILDER (Düzeltme: Tamamen geniş zaman yapısında kurgulandı)
+        VocabularyLevelDataQuiz(
+            id = 9,
+            questionTurkish = "Kedi senin omzunu kaşır.",
+            imageRes = R.drawable.scratch,
+            correctAnswer = "The cat scratches your shoulder",
+            questionType = QuestionType.TRANSLATION_BUILDER,
+            options = emptyList(),
+            correctWords = listOf("The", "cat", "scratches", "your", "shoulder"),
+            extraWords = listOf("finger", "cheek", "wash"),
+            fullAnswerTurkish = "Kedi senin omzunu kaşır."
+        ),
+
+        // 10. LISTENING (Korelasyon: Eski kelimelerden "wash" kullanımı)
+        createListening(
+            id = 10,
+            qTurkish = "Wash your chest and shoulders.",
+            res = R.drawable.chest,
+            ansEnglish = "Göğsünü ve omuzlarını yıka.",
+            opts = listOf("Göğsünü ve omuzlarını yıka.", "Göğsünü ve parmaklarını yıka.", "Göğsünü ve yanaklarını yıka.", "Göğsünü ve kollarını yıka.")
+        ),
+
+        // 11. SPEAKING (Günlük mantıklı cümle)
+        VocabularyLevelDataQuiz(
+            id = 11,
+            questionTurkish = "Don't touch that dirty scratch.",
+            imageRes = R.drawable.scratch,
+            correctAnswer = "Don't touch that dirty scratch",
+            options = emptyList(),
+            questionType = QuestionType.SPEAKING,
+            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
+            speakingSentence = "Don't touch that dirty scratch",
+            speakingCharacterRes = R.drawable.cat_logo
+        ),
+
+        // 12. LISTENING (Korelasyon: Eski kelimelerden "hurt" kullanımı)
+        createListening(
+            id = 12,
+            qTurkish = "My left shoulder hurts.",
+            res = R.drawable.shoulder,
+            ansEnglish = "Sol omzum ağrıyor.",
+            opts = listOf("Sol omzum ağrıyor.", "Sol göğsüm ağrıyor.", "Sol kolum ağrıyor.", "Sol parmağım ağrıyor.")
+        ),
+
+        // 13. LISTENING (Korelasyon: Eski kelimelerden "point" kullanımı)
+        createListening(
+            id = 13,
+            qTurkish = "He points to his scratch.",
+            res = R.drawable.scratch,
+            ansEnglish = "Çiziğini işaret ediyor.",
+            opts = listOf("Çiziğini işaret ediyor.", "Yanağını işaret ediyor.", "Parmağını işaret ediyor.", "Omzunu işaret ediyor.")
+        ),
+
+        // 14. PATTERN (Gramer Öğretimi)
+        VocabularyLevelDataQuiz(
+            id = 14,
+            questionTurkish = "Why are you scratching your neck?",
+            imageRes = R.drawable.pp1,
+            correctAnswer = "Why are you scratching",
+            options = listOf("Why are you scratching", "Why do you scratching", "Why you scratching", "Why is you scratching"),
+            questionType = QuestionType.PATTERN,
+            patternTitle = "Present Continuous Wh- Questions (Şimdiki Zaman Soru Kalıbı)",
+            patternExampleOne = "Why are you touching your cheek?",
+            patternHighlightOne = "Why are you touching",
+            patternExampleTwo = "Why is he washing his fingers?",
+            patternHighlightTwo = "Why is he washing"
+        ),
+
+        // 15. MATCHING (Kapanış özeti)
+        createMatching(
+            id = 15,
+            questionText = "Body Review Deluxe",
+            image = R.drawable.pp2,
+            pairs = "scratch,finger,cheek,chest,shoulder,mouth",
+            turkishOptions = listOf("çizik / kaşımak", "parmak", "yanak", "göğüs", "omuz", "ağız")
+        )
+    )
+
+
+
+
+
+
+
+
+
+}
+
+
+
+}
+
 
 
 
@@ -9666,9 +32959,11 @@ fun LearningPathPaws(
 
 @Composable
 fun AnimatedResourceTag(
-    composition: LottieComposition?, // Import hatası buradan düzelir
+    composition: LottieComposition?,
     value: String,
-    iconColor: Color = Color.Unspecified // ✅ YAMA: Varsayılan değer ekleyerek hatayı çözüyoruz
+    iconColor: Color = Color.Unspecified,
+    showPlus: Boolean = false,
+    iterations: Int = LottieConstants.IterateForever
 ) {
     Surface(
         shape = RoundedCornerShape(20.dp),
@@ -9681,7 +32976,7 @@ fun AnimatedResourceTag(
         ) {
             LottieAnimation(
                 composition = composition,
-                iterations = LottieConstants.IterateForever,
+                iterations = iterations,
                 modifier = Modifier.size(24.dp)
             )
             Spacer(modifier = Modifier.width(6.dp))
@@ -9693,12 +32988,80 @@ fun AnimatedResourceTag(
                     color = Color(0xFF1E293B)
                 )
             )
-            // Görseldeki şık artı butonu
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                text = "+",
-                style = TextStyle(fontSize = 14.sp, color = Color.Gray)
-            )
+            if (showPlus) {
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "+",
+                    style = TextStyle(fontSize = 14.sp, color = Color.Gray)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SkipQuizDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val lottieComposition by com.airbnb.lottie.compose.rememberLottieComposition(
+        com.airbnb.lottie.compose.LottieCompositionSpec.RawRes(R.raw.cat_fishing_on_moon)
+    )
+    
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White,
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(24.dp)
+            ) {
+                com.airbnb.lottie.compose.LottieAnimation(
+                    composition = lottieComposition,
+                    iterations = com.airbnb.lottie.compose.LottieConstants.IterateForever,
+                    modifier = Modifier.size(150.dp)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "Bu quizi atlamak istiyor musun?",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = Color.Black,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Diğer konuları atlamak istiyorsanız evet tuşuna basınız",
+                    fontSize = 14.sp,
+                    color = Color.Gray,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Button(
+                        onClick = onConfirm,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF42A5F5)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Evet", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Button(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF5350)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Hayır", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
         }
     }
 }

@@ -25,6 +25,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 import android.os.Bundle
+import android.os.Build
+import android.Manifest
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -89,6 +91,14 @@ class MainActivity : ComponentActivity() {
 
         // ✅ Kullanıcıyı yormadan paketi kontrol et ve yoksa yönlendir
         speechAssistant.checkAndDownloadTurkish(this)
+        AppDictionary.initialize(this)
+        WordStorage.loadFromDisk(this)
+        MistakeJarStore.load(this)
+        AppNotificationRouter.pendingRoute = intent?.getStringExtra(AppNotificationRouter.EXTRA_ROUTE)
+
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 710)
+        }
 
         setContent {
             AppRootScreen(speechAssistant = speechAssistant)
@@ -101,6 +111,12 @@ class MainActivity : ComponentActivity() {
             speechAssistant.shutdown()
         }
         super.onDestroy()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        AppNotificationRouter.pendingRoute = intent.getStringExtra(AppNotificationRouter.EXTRA_ROUTE)
     }
 }
 
@@ -157,6 +173,22 @@ class SpeechAssistant(context: Context) : TextToSpeech.OnInitListener {
             }
     }
 
+    fun speakEnglish(text: String) {
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastSpeakTime < 1000 || !isReady || text.isBlank()) return
+
+        val hasTurkishChar = text.any { it in "çğıöşüÇĞİÖŞÜıİ" }
+        if (hasTurkishChar) return
+
+        languageIdentifier.identifyLanguage(text)
+            .addOnSuccessListener { languageCode ->
+                if (languageCode == "tr") return@addOnSuccessListener
+                lastSpeakTime = currentTime
+                tts?.setLanguage(Locale.US)
+                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "english_$currentTime")
+            }
+    }
+
     fun checkAndDownloadTurkish(context: Context) {
         // 1. Önce motorun dil durumunu sessizce sorgula
         val result = tts?.isLanguageAvailable(Locale("tr", "TR"))
@@ -181,6 +213,10 @@ class SpeechAssistant(context: Context) : TextToSpeech.OnInitListener {
         tts?.stop()
         tts?.shutdown()
     }
+
+    fun stop() {
+        tts?.stop()
+    }
 }
 
 // --- SÖZLÜK OBJESİ (TEK VE EKSİKSİZ HALİ) ---
@@ -194,8 +230,15 @@ object AppDictionary {
                 .bufferedReader()
                 .use { it.readText() }
 
-            val type = object : TypeToken<Map<String, String>>() {}.type
-            words = Gson().fromJson(jsonString, type)
+            val jsonArray = org.json.JSONArray(jsonString)
+            val loadedWords = mutableMapOf<String, String>()
+            for (index in 0 until jsonArray.length()) {
+                val item = jsonArray.getJSONObject(index)
+                val english = item.optString("en").lowercase().trim()
+                val turkish = item.optString("tr").trim()
+                if (english.isNotBlank() && turkish.isNotBlank()) loadedWords[english] = turkish
+            }
+            words = loadedWords
             Log.d("AppDictionary", "Sözlük başarıyla yüklendi: ${words.size} kelime.")
         } catch (e: Exception) {
             Log.e("AppDictionary", "HATA: Sözlük yüklenemedi! Mesaj: ${e.message}")

@@ -48,6 +48,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation("com.google.android.material:material:1.12.0")
     implementation("com.google.mlkit:language-id:17.0.4")
+    implementation("com.google.mlkit:translate:17.0.3")
     implementation("com.airbnb.android:lottie-compose:6.1.0")
 
     // --- JSON & STORAGE (Yerel veri yönetimi için) ---

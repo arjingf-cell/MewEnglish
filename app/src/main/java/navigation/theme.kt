@@ -131,18 +131,27 @@ fun MewEnglishTheme(
 // ✅ İsmi değiştir
 @Composable
 fun AppRootScreen(speechAssistant: SpeechAssistant) {
-    var isDarkModeManual by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("mew_theme_prefs", Context.MODE_PRIVATE) }
+    var isDarkModeManual by remember { mutableStateOf(prefs.getBoolean("dark_mode", false)) }
+    val updateDarkMode: (Boolean) -> Unit = { newValue ->
+        isDarkModeManual = newValue
+        prefs.edit().putBoolean("dark_mode", newValue).apply()
+    }
 
     MewEnglishTheme(darkTheme = isDarkModeManual) {
-        CompositionLocalProvider(LocalIsDarkMode provides isDarkModeManual) {
+        CompositionLocalProvider(
+            LocalIsDarkMode provides isDarkModeManual,
+            LocalAppThemeColors provides MewThemeEngine.colors(isDarkModeManual)
+        ) {
             Surface(
                 modifier = Modifier.fillMaxSize(),
-                color = MaterialTheme.colorScheme.background
+                color = LocalAppThemeColors.current.background
             ) {
                 QuizAppNavigation(
                     speechAssistant = speechAssistant,
                     isDarkMode = isDarkModeManual,
-                    onToggleDarkMode = { isDarkModeManual = !isDarkModeManual }
+                    onThemeChange = updateDarkMode
                 )
             }
         }
@@ -157,7 +166,14 @@ fun DarkEliteHomeScreen(
     isDarkMode: Boolean,
     speechAssistant: SpeechAssistant
 ) {
-    val bgColor = Color(0xFFF8FAFC)
+    val appColors = LocalAppThemeColors.current
+    val bgColor = appColors.background
+    val heroColor = appColors.primarySoft
+    val cardColor = appColors.surface
+    val textColor = appColors.text
+    val mutedColor = appColors.textMuted
+    val primaryColor = appColors.primary
+    val borderColor = appColors.border
 
     // Özellikler için veri modeli ve listesi
     data class FeatureItem(val title: String, val desc: String, val iconRes: Int)
@@ -166,13 +182,13 @@ fun DarkEliteHomeScreen(
         FeatureItem("Mistake Jar", "Fix errors", R.drawable.mistake),
         FeatureItem("Reading", "Magic reading", R.drawable.reading),
         FeatureItem("My Words", "Vocabulary", R.drawable.word),
-        FeatureItem("Grammar", "Master rules", R.drawable.grammar)
+        FeatureItem("Rozetlerim", "Kazandığın Rozetler", R.drawable.kupa)
     )
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(bgColor)
+            .mewScreenBackground()
     ) {
         LazyColumn(
             modifier = Modifier.weight(1f),
@@ -185,8 +201,8 @@ fun DarkEliteHomeScreen(
                     Box(
                         modifier = Modifier
                             .size(74.dp)
-                            .background(Color.White, CircleShape)
-                            .border(3.dp, Color(0xFF1CB0F6), CircleShape),
+                            .background(cardColor, CircleShape)
+                            .border(3.dp, primaryColor, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Image(
@@ -197,9 +213,9 @@ fun DarkEliteHomeScreen(
                     }
                     Spacer(Modifier.width(16.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Good morning", fontSize = 13.sp, color = Color(0xFF94A3B8))
-                        Text("Ready to learn?", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF1E293B))
-                        Text("Let's improve your English today!", fontSize = 12.sp, color = Color(0xFF64748B))
+                        Text("Good morning", fontSize = 13.sp, color = mutedColor)
+                        Text("Ready to learn?", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = textColor)
+                        Text("Let's improve your English today!", fontSize = 12.sp, color = mutedColor)
                     }
                 }
             }
@@ -207,14 +223,17 @@ fun DarkEliteHomeScreen(
             // 🔹 WORD OF THE DAY
             item {
                 Card(
-                    modifier = Modifier.fillMaxWidth().height(180.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp)
+                        .clickable { navController.navigate("reading_screen") },
                     shape = RoundedCornerShape(32.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE0F2FE))
+                    colors = CardDefaults.cardColors(containerColor = heroColor)
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         Box(modifier = Modifier.fillMaxWidth(0.6f).fillMaxHeight().align(Alignment.CenterEnd)) {
                             Image(
-                                painter = painterResource(id = R.drawable.daily_word),
+                                painter = painterResource(id = R.drawable.icecat),
                                 contentDescription = null,
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -223,7 +242,7 @@ fun DarkEliteHomeScreen(
                                         drawContent()
                                         drawRect(
                                             brush = Brush.horizontalGradient(
-                                                colors = listOf(Color.Transparent, Color(0xFFE0F2FE)),
+                                                colors = listOf(Color.Transparent, heroColor),
                                                 startX = 0f,
                                                 endX = size.width * 0.7f
                                             ),
@@ -239,14 +258,14 @@ fun DarkEliteHomeScreen(
                             modifier = Modifier.fillMaxHeight().fillMaxWidth(0.5f).padding(start = 24.dp),
                             verticalArrangement = Arrangement.Center
                         ) {
-                            Text("Word of the Day ✨", color = Color(0xFF3B82F6), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text("Okuma Parçaları", color = primaryColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(2.dp))
-                            Text("Serendipity", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF1E293B), softWrap = false)
+                            Text("Reading", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = textColor, softWrap = false)
                             Spacer(Modifier.height(4.dp))
-                            Text("The occurrence of events by chance in a happy way.", fontSize = 10.sp, color = Color(0xFF64748B), lineHeight = 14.sp, maxLines = 3)
+                            Text("Seviyeni seç, kısa okuma parçalarıyla pratik yap.", fontSize = 10.sp, color = mutedColor, lineHeight = 14.sp, maxLines = 3)
                             Spacer(Modifier.height(10.dp))
-                            Button(onClick = {}, shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6)), modifier = Modifier.height(28.dp), contentPadding = PaddingValues(horizontal = 12.dp)) {
-                                Text("Learn more", fontSize = 10.sp, color = Color.White)
+                            Button(onClick = { navController.navigate("reading_screen") }, shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = primaryColor), modifier = Modifier.height(28.dp), contentPadding = PaddingValues(horizontal = 12.dp)) {
+                                Text("Okumaya başla", fontSize = 10.sp, color = Color.White)
                             }
                         }
                     }
@@ -264,11 +283,13 @@ fun DarkEliteHomeScreen(
                             modifier = Modifier
                                 .size(width = 140.dp, height = 180.dp)
                                 .clickable {
-                                    if (feature.title == "My Words") navController.navigate("words_screen")
+                                    if (feature.title == "My Words" || feature.title == "My Word") navController.navigate("words_screen")
                                     else if (feature.title == "Mistake Jar") navController.navigate("mistake_jar")
+                                    else if (feature.title == "Reading") navController.navigate("reading_screen")
+                                    else if (feature.title == "Rozetlerim") navController.navigate("badges_screen")
                                 },
                             shape = RoundedCornerShape(24.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            colors = CardDefaults.cardColors(containerColor = cardColor),
                             elevation = CardDefaults.cardElevation(2.dp)
                         ) {
                             Column(
@@ -301,12 +322,12 @@ fun DarkEliteHomeScreen(
                                         text = feature.title,
                                         fontWeight = FontWeight.ExtraBold,
                                         fontSize = 14.sp,
-                                        color = Color(0xFF1E293B)
+                                        color = textColor
                                     )
                                     Text(
                                         text = feature.desc,
                                         fontSize = 10.sp,
-                                        color = Color(0xFF94A3B8)
+                                        color = mutedColor
                                     )
                                 }
                             }
@@ -323,7 +344,7 @@ fun DarkEliteHomeScreen(
                         .fillMaxWidth()
                         .height(180.dp),
                     shape = RoundedCornerShape(32.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE0F2FE)) // Açık mavi arka plan
+                    colors = CardDefaults.cardColors(containerColor = heroColor) // Açık mavi arka plan
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
 
@@ -346,7 +367,7 @@ fun DarkEliteHomeScreen(
                                             brush = Brush.horizontalGradient(
                                                 colors = listOf(
                                                     Color.Transparent, // Sol taraf tamamen şeffaf
-                                                    Color(0xFFE0F2FE)  // Sağ taraf net (kartın rengi)
+                                                    heroColor  // Sağ taraf net (kartın rengi)
                                                 ),
                                                 startX = 0f,
                                                 endX = size.width * 0.4f // %40'a kadar solma efekti
@@ -369,7 +390,7 @@ fun DarkEliteHomeScreen(
                         ) {
                             Text(
                                 text = "Today's Mission",
-                                color = Color(0xFF3B82F6), // Açık mavi (Primary Blue)
+                                color = primaryColor, // Açık mavi (Primary Blue)
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -380,7 +401,7 @@ fun DarkEliteHomeScreen(
                                 text = "Learn 15\nnew words", // \n ile "new words" alt satıra atıldı
                                 fontSize = 22.sp,
                                 fontWeight = FontWeight.Black, // Kalın siyah yazı
-                                color = Color(0xFF000000), // Tam siyah
+                                color = textColor, // Tam siyah
                                 lineHeight = 26.sp
                             )
 
@@ -394,15 +415,15 @@ fun DarkEliteHomeScreen(
                                         .fillMaxWidth()
                                         .height(8.dp)
                                         .clip(CircleShape),
-                                    color = Color(0xFF3B82F6),
-                                    trackColor = Color(0xFFE2E8F0).copy(alpha = 0.5f)
+                                    color = primaryColor,
+                                    trackColor = borderColor.copy(alpha = 0.5f)
                                 )
                                 Spacer(Modifier.height(6.dp))
                                 Text(
                                     text = "7 / 15",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF1E293B),
+                                    color = textColor,
                                     modifier = Modifier.align(Alignment.End)
                                 )
                             }
@@ -416,14 +437,14 @@ fun DarkEliteHomeScreen(
                 Column {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("⭐ Keep Going", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = Color(0xFF1E293B))
-                        Text("See All", color = Color(0xFF3B82F6), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text("See All", color = primaryColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.height(16.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         repeat(5) {
-                            Card(modifier = Modifier.size(62.dp), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Color.White), elevation = CardDefaults.cardElevation(2.dp)) {
+                            Card(modifier = Modifier.size(62.dp), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = cardColor), elevation = CardDefaults.cardElevation(2.dp)) {
                                 Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                    Text("60%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3B82F6))
+                                    Text("60%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = primaryColor)
                                 }
                             }
                         }
@@ -449,7 +470,7 @@ fun FeatureSection() {
         FeatureItem("Reading", "Magic reading", R.drawable.reading),
         FeatureItem("My Words", "Vocabulary", R.drawable.word),
         FeatureItem("Daily Idiom", "Special phrases", R.drawable.daily_idiom),
-        FeatureItem("Grammar", "Master rules", R.drawable.grammar)
+        FeatureItem("Rozetlerim", "Kazandığın Rozetler", R.drawable.kupa)
     )
 
     LazyRow(
@@ -540,12 +561,13 @@ fun HeaderSection() {
     }
 }
 @Composable
-fun WordOfDayCard() {
+fun WordOfDayCard(onClick: () -> Unit = {}) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(180.dp) // Kart yüksekliğini sabitledik
-            .padding(16.dp),
+            .height(180.dp)
+            .padding(16.dp)
+            .clickable { onClick() },
         shape = RoundedCornerShape(32.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFFE0F2FE))
     ) {
@@ -553,7 +575,7 @@ fun WordOfDayCard() {
 
             // 1. Sağdaki Fotoğraf (Sağa doğru solarak arka planla birleşir)
             Image(
-                painter = painterResource(id = R.drawable.daily_word), // daily_word olarak yüklediğin resim
+                painter = painterResource(id = R.drawable.icecat),
                 contentDescription = null,
                 modifier = Modifier
                     .align(Alignment.BottomEnd) // Sağ alta sabitle
@@ -572,7 +594,7 @@ fun WordOfDayCard() {
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Word of the Day",
+                        text = "Okuma Parçaları",
                         color = Color(0xFF3B82F6),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
@@ -590,7 +612,7 @@ fun WordOfDayCard() {
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Serendipity",
+                        text = "Reading",
                         fontSize = 22.sp,
                         fontWeight = FontWeight.ExtraBold,
                         color = Color(0xFF1E293B)
@@ -608,7 +630,7 @@ fun WordOfDayCard() {
                 Spacer(Modifier.height(8.dp))
 
                 Text(
-                    text = "The occurrence and development of events by chance in a happy or beneficial way.",
+                    text = "Seviyeni seç, kısa okuma parçalarıyla pratik yap.",
                     fontSize = 12.sp,
                     color = Color(0xFF64748B),
                     lineHeight = 16.sp,
@@ -619,13 +641,13 @@ fun WordOfDayCard() {
 
                 // Learn More Butonu
                 Button(
-                    onClick = { /* Git */ },
+                    onClick = { onClick() },
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6)),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
                     modifier = Modifier.height(32.dp)
                 ) {
-                    Text("Learn more →", fontSize = 11.sp, color = Color.White)
+                    Text("Okumaya başla", fontSize = 11.sp, color = Color.White)
                 }
             }
         }
@@ -637,7 +659,7 @@ fun FeatureCardsRow(navController: NavHostController) {
         FeatureItem("Mistake Jar", "Fix errors", R.drawable.mistake),
         FeatureItem("Reading", "Stories", R.drawable.reading),
         FeatureItem("My Word", "Vocabulary", R.drawable.word),
-        FeatureItem("Grammar", "Rules", R.drawable.grammar)
+        FeatureItem("Rozetlerim", "Rozetler", R.drawable.kupa)
     )
 
     LazyRow(
@@ -649,8 +671,10 @@ fun FeatureCardsRow(navController: NavHostController) {
                 modifier = Modifier
                     .size(width = 140.dp, height = 180.dp)
                     .clickable {
-                        if (item.title == "My Word") navController.navigate("words_screen")
+                        if (item.title == "My Word" || item.title == "My Words") navController.navigate("words_screen")
                         else if (item.title == "Mistake Jar") navController.navigate("mistake_jar")
+                        else if (item.title == "Reading") navController.navigate("reading_screen")
+                        else if (item.title == "Rozetlerim") navController.navigate("badges_screen")
                     },
                 shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -697,6 +721,7 @@ fun FeatureCardsRow(navController: NavHostController) {
         }
     }
 }
+
 @Composable
 fun MissionCard() {
     Card(

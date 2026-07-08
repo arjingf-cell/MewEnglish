@@ -68,15 +68,18 @@ fun VisualQuizUI(
         Spacer(modifier = Modifier.height(30.dp))
 
         // Şıklar Listesi
+        val shuffledOptions = androidx.compose.runtime.remember(data) {
+            val zipped = data.options.zip(data.optionImages.ifEmpty { List(data.options.size) { null } })
+            zipped.shuffled()
+        }
+
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            data.options.forEachIndexed { index, option ->
-
-                // Eğer modelinde her şık için resim varsa (optionImages) onu al,
-                // yoksa ana resmi kullanma (çünkü hepsi aynı olur), şimdilik ikon gösterelim.
-                val optionIcon = if (data.optionImages.isNotEmpty()) data.optionImages[index] else null
+            shuffledOptions.forEachIndexed { index, pair ->
+                val option = pair.first
+                val optionIcon = pair.second
 
                 Button(
                     onClick = {
