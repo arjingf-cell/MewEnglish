@@ -49,7 +49,6 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("com.google.mlkit:language-id:17.0.4")
     implementation("com.google.mlkit:translate:17.0.3")
-    implementation("com.airbnb.android:lottie-compose:6.1.0")
 
     // --- JSON & STORAGE (Yerel veri yönetimi için) ---
     implementation("com.google.code.gson:gson:2.10.1")
@@ -66,10 +65,16 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended:1.6.0")
     implementation("androidx.compose.material:material-icons-extended")
 
-
     // --- TEST VE DEBUG ---
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    // --- SUPABASE & KTOR CLIENT ---
+    implementation(platform(libs.supabase.bom))
+    implementation(libs.postgrest.kt)
+    implementation(libs.ktor.client.android)
+    implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.serialization.kotlinx.json)
 }

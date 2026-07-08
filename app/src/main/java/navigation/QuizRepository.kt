@@ -30361,6 +30361,7 @@ object QuizRepository {
     )
 
 
+    }
     fun getQuiz166(): List<VocabularyLevelDataQuiz> {
     return quizListOf(
         4, // 👈 Progress ekranına yansıyacak öğrenilmiş kelime sayısı
@@ -30369,7 +30370,7 @@ object QuizRepository {
         createVisual(
             id = 1,
             questionTurkish = "kol",
-            imageRes = R.drawable.arm,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "arm",
             options = listOf("arm", "head", "leg", "eye")
         ),
@@ -30378,7 +30379,7 @@ object QuizRepository {
         createListening(
             id = 2,
             qTurkish = "Touch your arm.",
-            res = R.drawable.arm,
+            res = R.drawable.cat_logo,
             ansEnglish = "Koluna dokun.",
             opts = listOf("Koluna dokun.", "Başına dokun.", "Bacağına dokun.", "Gözüne dokun.")
         ),
@@ -30387,7 +30388,7 @@ object QuizRepository {
         createVisual(
             id = 3,
             questionTurkish = "baş / kafa",
-            imageRes = R.drawable.head,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "head",
             options = listOf("head", "arm", "leg", "eye")
         ),
@@ -30396,7 +30397,7 @@ object QuizRepository {
         createListening(
             id = 4,
             qTurkish = "head",
-            res = R.drawable.head,
+            res = R.drawable.cat_logo,
             ansEnglish = "baş / kafa",
             opts = listOf("baş / kafa", "kol", "bacak", "göz")
         ),
@@ -30405,7 +30406,7 @@ object QuizRepository {
         createVisual(
             id = 5,
             questionTurkish = "bacak",
-            imageRes = R.drawable.leg,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "leg",
             options = listOf("leg", "arm", "head", "eye")
         ),
@@ -30414,7 +30415,7 @@ object QuizRepository {
         createListening(
             id = 6,
             qTurkish = "This is my leg.",
-            res = R.drawable.leg,
+            res = R.drawable.cat_logo,
             ansEnglish = "Bu benim bacağım.",
             opts = listOf("Bu benim bacağım.", "Bu benim kolum.", "Bu benim başım.", "Bu benim gözüm.")
         ),
@@ -30423,7 +30424,7 @@ object QuizRepository {
         createVisual(
             id = 7,
             questionTurkish = "göz",
-            imageRes = R.drawable.eye,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "eye",
             options = listOf("eye", "arm", "head", "leg")
         ),
@@ -30432,7 +30433,7 @@ object QuizRepository {
         createListening(
             id = 8,
             qTurkish = "eye",
-            res = R.drawable.eye,
+            res = R.drawable.cat_logo,
             ansEnglish = "göz",
             opts = listOf("göz", "kol", "bacak", "baş / kafa")
         ),
@@ -30441,7 +30442,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 9,
             questionTurkish = "Benim iki gözüm var.",
-            imageRes = R.drawable.eye,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "I have two eyes",
             questionType = QuestionType.TRANSLATION_BUILDER,
             options = emptyList(),
@@ -30454,7 +30455,7 @@ object QuizRepository {
         createListening(
             id = 10,
             qTurkish = "Look at my head.",
-            res = R.drawable.head,
+            res = R.drawable.cat_logo,
             ansEnglish = "Başıma bak.",
             opts = listOf("Başıma bak.", "Koluma bak.", "Bacağıma bak.", "Gözüme bak.")
         ),
@@ -30463,7 +30464,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 11,
             questionTurkish = "This is my arm.",
-            imageRes = R.drawable.arm,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "This is my arm",
             options = emptyList(),
             questionType = QuestionType.SPEAKING,
@@ -30476,7 +30477,7 @@ object QuizRepository {
         createListening(
             id = 12,
             qTurkish = "He has long legs.",
-            res = R.drawable.leg,
+            res = R.drawable.cat_logo,
             ansEnglish = "Onun uzun bacakları var.",
             opts = listOf("Onun uzun bacakları var.", "Onun uzun kolları var.", "Onun uzun saçları var.", "Onun uzun parmakları var.")
         ),
@@ -30485,7 +30486,7 @@ object QuizRepository {
         createListening(
             id = 13,
             qTurkish = "Close your eyes.",
-            res = R.drawable.eye,
+            res = R.drawable.cat_logo,
             ansEnglish = "Gözlerini kapat.",
             opts = listOf("Gözlerini kapat.", "Kollarını kapat.", "Bacaklarını kapat.", "Başını kapat.")
         ),
@@ -30514,6 +30515,7 @@ object QuizRepository {
             turkishOptions = listOf("kol", "baş / kafa", "bacak", "göz")
         )
     )
+    }
     fun getQuiz167(): List<VocabularyLevelDataQuiz> {
     return quizListOf(
         2, // 👈 Eklenen yeni kelimeler (point, hurt) sebebiyle öğrenilmiş kelime sayısı 2 olarak işaretlendi
@@ -30522,7 +30524,7 @@ object QuizRepository {
         createVisual(
             id = 1,
             questionTurkish = "işaret etmek",
-            imageRes = R.drawable.point,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "point",
             options = listOf("point", "hurt", "arm", "head")
         ),
@@ -30531,7 +30533,7 @@ object QuizRepository {
         createListening(
             id = 2,
             qTurkish = "He hurt his arm.",
-            res = R.drawable.arm,
+            res = R.drawable.cat_logo,
             ansEnglish = "O kolunu incitti.",
             opts = listOf("O kolunu incitti.", "O başını incitti.", "O bacağını incitti.", "O gözünü incitti.")
         ),
@@ -30540,7 +30542,7 @@ object QuizRepository {
         createVisual(
             id = 3,
             questionTurkish = "incitmek / ağrımak",
-            imageRes = R.drawable.hurt,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "hurt",
             options = listOf("hurt", "point", "leg", "eye")
         ),
@@ -30549,7 +30551,7 @@ object QuizRepository {
         createListening(
             id = 4,
             qTurkish = "head",
-            res = R.drawable.head,
+            res = R.drawable.cat_logo,
             ansEnglish = "baş / kafa",
             opts = listOf("baş / kafa", "kol", "bacak", "göz")
         ),
@@ -30558,7 +30560,7 @@ object QuizRepository {
         createVisual(
             id = 5,
             questionTurkish = "bacak",
-            imageRes = R.drawable.leg,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "leg",
             options = listOf("leg", "arm", "head", "eye")
         ),
@@ -30567,7 +30569,7 @@ object QuizRepository {
         createListening(
             id = 6,
             qTurkish = "This is a leg.",
-            res = R.drawable.leg,
+            res = R.drawable.cat_logo,
             ansEnglish = "Bu bir bacak.",
             opts = listOf("Bu bir bacak.", "Bu bir kol.", "Bu bir baş.", "Bu bir göz.")
         ),
@@ -30576,7 +30578,7 @@ object QuizRepository {
         createVisual(
             id = 7,
             questionTurkish = "göz",
-            imageRes = R.drawable.eye,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "eye",
             options = listOf("eye", "arm", "head", "leg")
         ),
@@ -30585,7 +30587,7 @@ object QuizRepository {
         createListening(
             id = 8,
             qTurkish = "eye",
-            res = R.drawable.eye,
+            res = R.drawable.cat_logo,
             ansEnglish = "göz",
             opts = listOf("göz", "kol", "bacak", "baş / kafa")
         ),
@@ -30607,7 +30609,7 @@ object QuizRepository {
         createListening(
             id = 10,
             qTurkish = "Point to your head.",
-            res = R.drawable.head,
+            res = R.drawable.cat_logo,
             ansEnglish = "Başını göster.",
             opts = listOf("Başını göster.", "Kolunu göster.", "Bacağını göster.", "Gözünü göster.")
         ),
@@ -30616,7 +30618,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 11,
             questionTurkish = "I see with my eyes.",
-            imageRes = R.drawable.eye,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "I see with my eyes",
             options = emptyList(),
             questionType = QuestionType.SPEAKING,
@@ -30629,7 +30631,7 @@ object QuizRepository {
         createListening(
             id = 12,
             qTurkish = "My leg hurts.",
-            res = R.drawable.leg,
+            res = R.drawable.cat_logo,
             ansEnglish = "Bacağım ağrıyor.",
             opts = listOf("Bacağım ağrıyor.", "Kolum ağrıyor.", "Başım ağrıyor.", "Gözüm ağrıyor.")
         ),
@@ -30638,7 +30640,7 @@ object QuizRepository {
         createListening(
             id = 13,
             qTurkish = "Open your eyes.",
-            res = R.drawable.eye,
+            res = R.drawable.cat_logo,
             ansEnglish = "Gözlerini aç.",
             opts = listOf("Gözlerini aç.", "Kollarını aç.", "Bacaklarını aç.", "Başını aç.")
         ),
@@ -30667,6 +30669,7 @@ object QuizRepository {
             turkishOptions = listOf("kol", "baş / kafa", "bacak", "göz")
         )
     )
+    }
     fun getQuiz168(): List<VocabularyLevelDataQuiz> {
     return quizListOf(
         0, // 👈 Mevcut kelimeleri mantıklı cümlelerle pekiştirdiğimiz için sıfır olarak kalıyor
@@ -30675,7 +30678,7 @@ object QuizRepository {
         createVisual(
             id = 1,
             questionTurkish = "baş / kafa",
-            imageRes = R.drawable.head,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "head",
             options = listOf("head", "arm", "leg", "eye")
         ),
@@ -30684,7 +30687,7 @@ object QuizRepository {
         createListening(
             id = 2,
             qTurkish = "Protect your head.",
-            res = R.drawable.head,
+            res = R.drawable.cat_logo,
             ansEnglish = "Başını koru.",
             opts = listOf("Başını koru.", "Kolunu koru.", "Bacağını koru.", "Gözünü koru.")
         ),
@@ -30693,7 +30696,7 @@ object QuizRepository {
         createVisual(
             id = 3,
             questionTurkish = "kol",
-            imageRes = R.drawable.arm,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "arm",
             options = listOf("arm", "head", "leg", "eye")
         ),
@@ -30702,7 +30705,7 @@ object QuizRepository {
         createListening(
             id = 4,
             qTurkish = "arm",
-            res = R.drawable.arm,
+            res = R.drawable.cat_logo,
             ansEnglish = "kol",
             opts = listOf("kol", "baş / kafa", "bacak", "göz")
         ),
@@ -30711,7 +30714,7 @@ object QuizRepository {
         createVisual(
             id = 5,
             questionTurkish = "bacak",
-            imageRes = R.drawable.leg,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "leg",
             options = listOf("leg", "arm", "head", "eye")
         ),
@@ -30720,7 +30723,7 @@ object QuizRepository {
         createListening(
             id = 6,
             qTurkish = "Don't move your leg.",
-            res = R.drawable.leg,
+            res = R.drawable.cat_logo,
             ansEnglish = "Bacağını kımıldatma.",
             opts = listOf("Bacağını kımıldatma.", "Kolunu kımıldatma.", "Başını kımıldatma.", "Gözünü kımıldatma.")
         ),
@@ -30729,7 +30732,7 @@ object QuizRepository {
         createVisual(
             id = 7,
             questionTurkish = "göz",
-            imageRes = R.drawable.eye,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "eye",
             options = listOf("eye", "arm", "head", "leg")
         ),
@@ -30738,7 +30741,7 @@ object QuizRepository {
         createListening(
             id = 8,
             qTurkish = "eye",
-            res = R.drawable.eye,
+            res = R.drawable.cat_logo,
             ansEnglish = "göz",
             opts = listOf("göz", "kol", "bacak", "baş / kafa")
         ),
@@ -30747,7 +30750,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 9,
             questionTurkish = "Gözlerini hemen aç.",
-            imageRes = R.drawable.eye,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "Open your eyes now",
             questionType = QuestionType.TRANSLATION_BUILDER,
             options = emptyList(),
@@ -30760,7 +30763,7 @@ object QuizRepository {
         createListening(
             id = 10,
             qTurkish = "I point to the head.",
-            res = R.drawable.head,
+            res = R.drawable.cat_logo,
             ansEnglish = "Başı işaret ederim.",
             opts = listOf("Başı işaret ederim.", "Kolu işaret ederim.", "Bacağı işaret ederim.", "Gözü işaret ederim.")
         ),
@@ -30769,7 +30772,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 11,
             questionTurkish = "Bacağım çok ağrıyor.",
-            imageRes = R.drawable.leg,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "My leg hurts a lot",
             options = emptyList(),
             questionType = QuestionType.SPEAKING,
@@ -30782,7 +30785,7 @@ object QuizRepository {
         createListening(
             id = 12,
             qTurkish = "Is your arm hurt?",
-            res = R.drawable.arm,
+            res = R.drawable.cat_logo,
             ansEnglish = "Kolun mu ağrıyor?",
             opts = listOf("Kolun mu ağrıyor?", "Başın mu ağrıyor?", "Bacağın mu ağrıyor?", "Gözün mü ağrıyor?")
         ),
@@ -30791,7 +30794,7 @@ object QuizRepository {
         createListening(
             id = 13,
             qTurkish = "He points to his eye.",
-            res = R.drawable.eye,
+            res = R.drawable.cat_logo,
             ansEnglish = "Gözünü işaret ediyor.",
             opts = listOf("Gözünü işaret ediyor.", "Kolunu işaret ediyor.", "Başını işaret ediyor.", "Bacağını işaret ediyor.")
         ),
@@ -30820,159 +30823,7 @@ object QuizRepository {
             turkishOptions = listOf("kol", "baş / kafa", "bacak", "göz", "işaret etmek", "incitmek / ağrımak")
         )
     )
-    fun getQuiz168(): List<VocabularyLevelDataQuiz> {
-    return quizListOf(
-        0, // 👈 Mevcut kelimeleri mantıklı cümlelerle pekiştirdiğimiz için sıfır olarak kalıyor
-
-        // 1. VISUAL (head -> r.drawable.head)
-        createVisual(
-            id = 1,
-            questionTurkish = "baş / kafa",
-            imageRes = R.drawable.head,
-            correctAnswer = "head",
-            options = listOf("head", "arm", "leg", "eye")
-        ),
-
-        // 2. LISTENING (Korelasyon: "Protect your ..." kalıbı sabit - Mantıklı günlük cümle)
-        createListening(
-            id = 2,
-            qTurkish = "Protect your head.",
-            res = R.drawable.head,
-            ansEnglish = "Başını koru.",
-            opts = listOf("Başını koru.", "Kolunu koru.", "Bacağını koru.", "Gözünü koru.")
-        ),
-
-        // 3. VISUAL (arm -> r.drawable.arm)
-        createVisual(
-            id = 3,
-            questionTurkish = "kol",
-            imageRes = R.drawable.arm,
-            correctAnswer = "arm",
-            options = listOf("arm", "head", "leg", "eye")
-        ),
-
-        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler)
-        createListening(
-            id = 4,
-            qTurkish = "arm",
-            res = R.drawable.arm,
-            ansEnglish = "kol",
-            opts = listOf("kol", "baş / kafa", "bacak", "göz")
-        ),
-
-        // 5. VISUAL (leg -> r.drawable.leg)
-        createVisual(
-            id = 5,
-            questionTurkish = "bacak",
-            imageRes = R.drawable.leg,
-            correctAnswer = "leg",
-            options = listOf("leg", "arm", "head", "eye")
-        ),
-
-        // 6. LISTENING (Korelasyon: "Don't move your ..." kalıbı sabit)
-        createListening(
-            id = 6,
-            qTurkish = "Don't move your leg.",
-            res = R.drawable.leg,
-            ansEnglish = "Bacağını kımıldatma.",
-            opts = listOf("Bacağını kımıldatma.", "Kolunu kımıldatma.", "Başını kımıldatma.", "Gözünü kımıldatma.")
-        ),
-
-        // 7. VISUAL (eye -> r.drawable.eye)
-        createVisual(
-            id = 7,
-            questionTurkish = "göz",
-            imageRes = R.drawable.eye,
-            correctAnswer = "eye",
-            options = listOf("eye", "arm", "head", "leg")
-        ),
-
-        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
-        createListening(
-            id = 8,
-            qTurkish = "eye",
-            res = R.drawable.eye,
-            ansEnglish = "göz",
-            opts = listOf("göz", "kol", "bacak", "baş / kafa")
-        ),
-
-        // 9. TRANSLATION_BUILDER (Mantıklı cümle: "Gözlerini hemen aç.")
-        VocabularyLevelDataQuiz(
-            id = 9,
-            questionTurkish = "Gözlerini hemen aç.",
-            imageRes = R.drawable.eye,
-            correctAnswer = "Open your eyes now",
-            questionType = QuestionType.TRANSLATION_BUILDER,
-            options = emptyList(),
-            correctWords = listOf("Open", "your", "eyes", "now"),
-            extraWords = listOf("head", "hurt", "point"),
-            fullAnswerTurkish = "Gözlerini hemen aç."
-        ),
-
-        // 10. LISTENING (Korelasyon: "I point to the ..." kalıbı sabit)
-        createListening(
-            id = 10,
-            qTurkish = "I point to the head.",
-            res = R.drawable.head,
-            ansEnglish = "Başı işaret ederim.",
-            opts = listOf("Başı işaret ederim.", "Kolu işaret ederim.", "Bacağı işaret ederim.", "Gözü işaret ederim.")
-        ),
-
-        // 11. SPEAKING (Mantıklı ve günlük kullanım: "Bacağım çok ağrıyor.")
-        VocabularyLevelDataQuiz(
-            id = 11,
-            questionTurkish = "Bacağım çok ağrıyor.",
-            imageRes = R.drawable.leg,
-            correctAnswer = "My leg hurts a lot",
-            options = emptyList(),
-            questionType = QuestionType.SPEAKING,
-            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
-            speakingSentence = "My leg hurts a lot",
-            speakingCharacterRes = R.drawable.cat_logo
-        ),
-
-        // 12. LISTENING (Korelasyon: "Is your ... hurt?" kalıbı sabit)
-        createListening(
-            id = 12,
-            qTurkish = "Is your arm hurt?",
-            res = R.drawable.arm,
-            ansEnglish = "Kolun mu ağrıyor?",
-            opts = listOf("Kolun mu ağrıyor?", "Başın mu ağrıyor?", "Bacağın mu ağrıyor?", "Gözün mü ağrıyor?")
-        ),
-
-        // 13. LISTENING (Korelasyon: "He points to his ..." kalıbı sabit)
-        createListening(
-            id = 13,
-            qTurkish = "He points to his eye.",
-            res = R.drawable.eye,
-            ansEnglish = "Gözünü işaret ediyor.",
-            opts = listOf("Gözünü işaret ediyor.", "Kolunu işaret ediyor.", "Başını işaret ediyor.", "Bacağını işaret ediyor.")
-        ),
-
-        // 14. PATTERN (Gramer Öğretimi - Emir Cümleleri ve Fiil Kullanımı)
-        VocabularyLevelDataQuiz(
-            id = 14,
-            questionTurkish = "Don't point your finger.",
-            imageRes = R.drawable.pp1,
-            correctAnswer = "Don't point",
-            options = listOf("Don't point", "Not point", "No point", "Point not"),
-            questionType = QuestionType.PATTERN,
-            patternTitle = "Imperatives (Olumsuz Emir Cümleleri)",
-            patternExampleOne = "Don't hurt the cat.",
-            patternHighlightOne = "Don't hurt",
-            patternExampleTwo = "Don't move your head.",
-            patternHighlightTwo = "Don't move"
-        ),
-
-        // 15. MATCHING (Kapanış)
-        createMatching(
-            id = 15,
-            questionText = "Body & Action Summary",
-            image = R.drawable.pp2,
-            pairs = "arm,head,leg,eye,point,hurt",
-            turkishOptions = listOf("kol", "baş / kafa", "bacak", "göz", "işaret etmek", "incitmek / ağrımak")
-        )
-    )
+    }
     fun getQuiz169(): List<VocabularyLevelDataQuiz> {
     return quizListOf(
         0, // 👈 Tekrar ve pekiştirme quizi olduğu için sıfır olarak kalıyor
@@ -30981,7 +30832,7 @@ object QuizRepository {
         createVisual(
             id = 1,
             questionTurkish = "bacak",
-            imageRes = R.drawable.leg,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "leg",
             options = listOf("leg", "arm", "head", "eye")
         ),
@@ -30990,7 +30841,7 @@ object QuizRepository {
         createListening(
             id = 2,
             qTurkish = "He broke his leg.",
-            res = R.drawable.leg,
+            res = R.drawable.cat_logo,
             ansEnglish = "O bacağını kırdı.",
             opts = listOf("O bacağını kırdı.", "O kolunu kırdı.", "O başını kırdı.", "O gözünü kırdı.")
         ),
@@ -30999,7 +30850,7 @@ object QuizRepository {
         createVisual(
             id = 3,
             questionTurkish = "göz",
-            imageRes = R.drawable.eye,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "eye",
             options = listOf("eye", "arm", "head", "leg")
         ),
@@ -31008,7 +30859,7 @@ object QuizRepository {
         createListening(
             id = 4,
             qTurkish = "eye",
-            res = R.drawable.eye,
+            res = R.drawable.cat_logo,
             ansEnglish = "göz",
             opts = listOf("göz", "kol", "bacak", "baş / kafa")
         ),
@@ -31017,7 +30868,7 @@ object QuizRepository {
         createVisual(
             id = 5,
             questionTurkish = "kol",
-            imageRes = R.drawable.arm,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "arm",
             options = listOf("arm", "head", "leg", "eye")
         ),
@@ -31026,7 +30877,7 @@ object QuizRepository {
         createListening(
             id = 6,
             qTurkish = "Raise your arm.",
-            res = R.drawable.arm,
+            res = R.drawable.cat_logo,
             ansEnglish = "Kolunu kaldır.",
             opts = listOf("Kolunu kaldır.", "Başını kaldır.", "Bacağını kaldır.", "Gözünü kaldır.")
         ),
@@ -31035,7 +30886,7 @@ object QuizRepository {
         createVisual(
             id = 7,
             questionTurkish = "baş / kafa",
-            imageRes = R.drawable.head,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "head",
             options = listOf("head", "arm", "leg", "eye")
         ),
@@ -31044,7 +30895,7 @@ object QuizRepository {
         createListening(
             id = 8,
             qTurkish = "head",
-            res = R.drawable.head,
+            res = R.drawable.cat_logo,
             ansEnglish = "baş / kafa",
             opts = listOf("baş / kafa", "kol", "bacak", "göz")
         ),
@@ -31053,7 +30904,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 9,
             questionTurkish = "Sol kolum çok ağrıyor.",
-            imageRes = R.drawable.arm,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "My left arm hurts a lot",
             questionType = QuestionType.TRANSLATION_BUILDER,
             options = emptyList(),
@@ -31075,7 +30926,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 11,
             questionTurkish = "Lütfen gözlerini kapat.",
-            imageRes = R.drawable.eye,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "Please close your eyes",
             options = emptyList(),
             questionType = QuestionType.SPEAKING,
@@ -31088,7 +30939,7 @@ object QuizRepository {
         createListening(
             id = 12,
             qTurkish = "Where is your head?",
-            res = R.drawable.head,
+            res = R.drawable.cat_logo,
             ansEnglish = "Başın nerede?",
             opts = listOf("Başın nerede?", "Kolun nerede?", "Bacağın nerede?", "Gözün nerede?")
         ),
@@ -31097,7 +30948,7 @@ object QuizRepository {
         createListening(
             id = 13,
             qTurkish = "My arm is fine.",
-            res = R.drawable.arm,
+            res = R.drawable.cat_logo,
             ansEnglish = "Kolum iyi.",
             opts = listOf("Kolum iyi.", "Başım iyi.", "Bacağım iyi.", "Gözüm iyi.")
         ),
@@ -31126,159 +30977,7 @@ object QuizRepository {
             turkishOptions = listOf("kol", "baş / kafa", "bacak", "göz", "işaret etmek", "incitmek / ağrımak")
         )
     )
-    fun getQuiz169(): List<VocabularyLevelDataQuiz> {
-    return quizListOf(
-        0, // 👈 Tekrar ve pekiştirme quizi olduğu için sıfır olarak kalıyor
-
-        // 1. VISUAL (leg -> r.drawable.leg)
-        createVisual(
-            id = 1,
-            questionTurkish = "bacak",
-            imageRes = R.drawable.leg,
-            correctAnswer = "leg",
-            options = listOf("leg", "arm", "head", "eye")
-        ),
-
-        // 2. LISTENING (Korelasyon: "He broke his ..." kalıbı sabit - Mantıklı günlük cümle)
-        createListening(
-            id = 2,
-            qTurkish = "He broke his leg.",
-            res = R.drawable.leg,
-            ansEnglish = "O bacağını kırdı.",
-            opts = listOf("O bacağını kırdı.", "O kolunu kırdı.", "O başını kırdı.", "O gözünü kırdı.")
-        ),
-
-        // 3. VISUAL (eye -> r.drawable.eye)
-        createVisual(
-            id = 3,
-            questionTurkish = "göz",
-            imageRes = R.drawable.eye,
-            correctAnswer = "eye",
-            options = listOf("eye", "arm", "head", "leg")
-        ),
-
-        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler)
-        createListening(
-            id = 4,
-            qTurkish = "eye",
-            res = R.drawable.eye,
-            ansEnglish = "göz",
-            opts = listOf("göz", "kol", "bacak", "baş / kafa")
-        ),
-
-        // 5. VISUAL (arm -> r.drawable.arm)
-        createVisual(
-            id = 5,
-            questionTurkish = "kol",
-            imageRes = R.drawable.arm,
-            correctAnswer = "arm",
-            options = listOf("arm", "head", "leg", "eye")
-        ),
-
-        // 6. LISTENING (Korelasyon: "Raise your ..." kalıbı sabit - Sınıf/Günlük dili)
-        createListening(
-            id = 6,
-            qTurkish = "Raise your arm.",
-            res = R.drawable.arm,
-            ansEnglish = "Kolunu kaldır.",
-            opts = listOf("Kolunu kaldır.", "Başını kaldır.", "Bacağını kaldır.", "Gözünü kaldır.")
-        ),
-
-        // 7. VISUAL (head -> r.drawable.head)
-        createVisual(
-            id = 7,
-            questionTurkish = "baş / kafa",
-            imageRes = R.drawable.head,
-            correctAnswer = "head",
-            options = listOf("head", "arm", "leg", "eye")
-        ),
-
-        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
-        createListening(
-            id = 8,
-            qTurkish = "head",
-            res = R.drawable.head,
-            ansEnglish = "baş / kafa",
-            opts = listOf("baş / kafa", "kol", "bacak", "göz")
-        ),
-
-        // 9. TRANSLATION_BUILDER (Mantıklı cümle: "Sol kolum çok ağrıyor.")
-        VocabularyLevelDataQuiz(
-            id = 9,
-            questionTurkish = "Sol kolum çok ağrıyor.",
-            imageRes = R.drawable.arm,
-            correctAnswer = "My left arm hurts a lot",
-            questionType = QuestionType.TRANSLATION_BUILDER,
-            options = emptyList(),
-            correctWords = listOf("My", "left", "arm", "hurts", "a", "lot"),
-            extraWords = listOf("head", "eye", "point"),
-            fullAnswerTurkish = "Sol kolum çok ağrıyor."
-        ),
-
-        // 10. LISTENING (Korelasyon: "Don't point at the ..." kalıbı sabit)
-        createListening(
-            id = 10,
-            qTurkish = "Don't point at the cat.",
-            res = R.drawable.cat_logo,
-            ansEnglish = "Kediyi işaret etme.",
-            opts = listOf("Kediyi işaret etme.", "Kediyi incitme.", "Kediye bakma.", "Kediyi kovalama.")
-        ),
-
-        // 11. SPEAKING (Günlük kullanım: "Lütfen gözlerini kapat.")
-        VocabularyLevelDataQuiz(
-            id = 11,
-            questionTurkish = "Lütfen gözlerini kapat.",
-            imageRes = R.drawable.eye,
-            correctAnswer = "Please close your eyes",
-            options = emptyList(),
-            questionType = QuestionType.SPEAKING,
-            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
-            speakingSentence = "Please close your eyes",
-            speakingCharacterRes = R.drawable.cat_logo
-        ),
-
-        // 12. LISTENING (Korelasyon: "Where is your ... ?" kalıbı sabit)
-        createListening(
-            id = 12,
-            qTurkish = "Where is your head?",
-            res = R.drawable.head,
-            ansEnglish = "Başın nerede?",
-            opts = listOf("Başın nerede?", "Kolun nerede?", "Bacağın nerede?", "Gözün nerede?")
-        ),
-
-        // 13. LISTENING (Korelasyon: "My ... is fine." kalıbı sabit)
-        createListening(
-            id = 13,
-            qTurkish = "My arm is fine.",
-            res = R.drawable.arm,
-            ansEnglish = "Kolum iyi.",
-            opts = listOf("Kolum iyi.", "Başım iyi.", "Bacağım iyi.", "Gözüm iyi.")
-        ),
-
-        // 14. PATTERN (Gramer Öğretimi - Geniş Zaman Olumsuz Fiil Kullanımı)
-        VocabularyLevelDataQuiz(
-            id = 14,
-            questionTurkish = "It doesn't hurt.",
-            imageRes = R.drawable.pp1,
-            correctAnswer = "doesn't hurt",
-            options = listOf("doesn't hurt", "don't hurt", "not hurt", "isn't hurt"),
-            questionType = QuestionType.PATTERN,
-            patternTitle = "Simple Present Negative (Geniş Zaman Olumsuz)",
-            patternExampleOne = "My arm doesn't hurt.",
-            patternHighlightOne = "doesn't hurt",
-            patternExampleTwo = "He doesn't point.",
-            patternHighlightTwo = "doesn't point"
-        ),
-
-        // 15. MATCHING (Kapanış)
-        createMatching(
-            id = 15,
-            questionText = "Body Review Master",
-            image = R.drawable.pp2,
-            pairs = "arm,head,leg,eye,point,hurt",
-            turkishOptions = listOf("kol", "baş / kafa", "bacak", "göz", "işaret etmek", "incitmek / ağrımak")
-        )
-    )
+    }
     fun getQuiz170(): List<VocabularyLevelDataQuiz> {
     return quizListOf(
         4, // 👈 Yeni eklenen hedef kelimeler (hand, hair, ear, mouth) için öğrenilmiş kelime sayısı
@@ -31287,7 +30986,7 @@ object QuizRepository {
         createVisual(
             id = 1,
             questionTurkish = "el",
-            imageRes = R.drawable.hand,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "hand",
             options = listOf("hand", "hair", "ear", "head")
         ),
@@ -31296,7 +30995,7 @@ object QuizRepository {
         createListening(
             id = 2,
             qTurkish = "Wash your hands.",
-            res = R.drawable.hand,
+            res = R.drawable.cat_logo,
             ansEnglish = "Ellerini yıka.",
             opts = listOf("Ellerini yıka.", "Saçını yıka.", "Kulaklarını yıka.", "Ağzını yıka.")
         ),
@@ -31305,7 +31004,7 @@ object QuizRepository {
         createVisual(
             id = 3,
             questionTurkish = "saç",
-            imageRes = R.drawable.hair,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "hair",
             options = listOf("hair", "hand", "ear", "arm")
         ),
@@ -31314,7 +31013,7 @@ object QuizRepository {
         createListening(
             id = 4,
             qTurkish = "hair",
-            res = R.drawable.hair,
+            res = R.drawable.cat_logo,
             ansEnglish = "saç",
             opts = listOf("saç", "el", "kulak", "ağız")
         ),
@@ -31323,7 +31022,7 @@ object QuizRepository {
         createVisual(
             id = 5,
             questionTurkish = "kulak",
-            imageRes = R.drawable.ear,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "ear",
             options = listOf("ear", "hand", "hair", "eye")
         ),
@@ -31332,7 +31031,7 @@ object QuizRepository {
         createListening(
             id = 6,
             qTurkish = "Listen with your ears.",
-            res = R.drawable.ear,
+            res = R.drawable.cat_logo,
             ansEnglish = "Kulaklarınla dinle.",
             opts = listOf("Kulaklarınla dinle.", "Ellerini kullan.", "Saçını tara.", "Ağzını kapat.")
         ),
@@ -31341,7 +31040,7 @@ object QuizRepository {
         createVisual(
             id = 7,
             questionTurkish = "ağız",
-            imageRes = R.drawable.mouth,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "mouth",
             options = listOf("mouth", "hand", "hair", "leg")
         ),
@@ -31350,7 +31049,7 @@ object QuizRepository {
         createListening(
             id = 8,
             qTurkish = "mouth",
-            res = R.drawable.mouth,
+            res = R.drawable.cat_logo,
             ansEnglish = "ağız",
             opts = listOf("ağız", "el", "saç", "kulak")
         ),
@@ -31359,7 +31058,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 9,
             questionTurkish = "Elini ağzına koy.",
-            imageRes = R.drawable.hand,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "Put your hand on your mouth",
             questionType = QuestionType.TRANSLATION_BUILDER,
             options = emptyList(),
@@ -31372,7 +31071,7 @@ object QuizRepository {
         createListening(
             id = 10,
             qTurkish = "My ear hurts.",
-            res = R.drawable.ear,
+            res = R.drawable.cat_logo,
             ansEnglish = "Kulağım ağrıyor.",
             opts = listOf("Kulağım ağrıyor.", "Elim ağrıyor.", "Ağzım ağrıyor.", "Başım ağrıyor.")
         ),
@@ -31381,7 +31080,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 11,
             questionTurkish = "He has long hair.",
-            imageRes = R.drawable.hair,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "He has long hair",
             options = emptyList(),
             questionType = QuestionType.SPEAKING,
@@ -31394,7 +31093,7 @@ object QuizRepository {
         createListening(
             id = 12,
             qTurkish = "Point to your mouth.",
-            res = R.drawable.mouth,
+            res = R.drawable.cat_logo,
             ansEnglish = "Ağzını göster.",
             opts = listOf("Ağzını göster.", "Elini göster.", "Saçını göster.", "Kulağını göster.")
         ),
@@ -31403,7 +31102,7 @@ object QuizRepository {
         createListening(
             id = 13,
             qTurkish = "Open your mouth.",
-            res = R.drawable.mouth,
+            res = R.drawable.cat_logo,
             ansEnglish = "Ağzını aç.",
             opts = listOf("Ağzını aç.", "Elini aç.", "Gözünü aç.", "Kulağını aç.")
         ),
@@ -31432,6 +31131,7 @@ object QuizRepository {
             turkishOptions = listOf("el", "saç", "kulak", "ağız")
         )
     )
+    }
     fun getQuiz171(): List<VocabularyLevelDataQuiz> {
     return quizListOf(
         0, // 👈 Mevcut kelimeleri günlük hayata uygun mantıklı cümlelerle pekiştirdiğimiz için sıfır kalıyor
@@ -31440,7 +31140,7 @@ object QuizRepository {
         createVisual(
             id = 1,
             questionTurkish = "saç",
-            imageRes = R.drawable.hair,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "hair",
             options = listOf("hair", "hand", "ear", "head")
         ),
@@ -31449,7 +31149,7 @@ object QuizRepository {
         createListening(
             id = 2,
             qTurkish = "Comb your hair.",
-            res = R.drawable.hair,
+            res = R.drawable.cat_logo,
             ansEnglish = "Saçını tara.",
             opts = listOf("Saçını tara.", "Ellerini yıka.", "Kulaklarını temizle.", "Ağzını kurula.")
         ),
@@ -31458,7 +31158,7 @@ object QuizRepository {
         createVisual(
             id = 3,
             questionTurkish = "el",
-            imageRes = R.drawable.hand,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "hand",
             options = listOf("hand", "hair", "mouth", "arm")
         ),
@@ -31467,7 +31167,7 @@ object QuizRepository {
         createListening(
             id = 4,
             qTurkish = "hand",
-            res = R.drawable.hand,
+            res = R.drawable.cat_logo,
             ansEnglish = "el",
             opts = listOf("el", "saç", "kulak", "ağız")
         ),
@@ -31476,7 +31176,7 @@ object QuizRepository {
         createVisual(
             id = 5,
             questionTurkish = "kulak",
-            imageRes = R.drawable.ear,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "ear",
             options = listOf("ear", "mouth", "hand", "eye")
         ),
@@ -31485,7 +31185,7 @@ object QuizRepository {
         createListening(
             id = 6,
             qTurkish = "He covered his ears.",
-            res = R.drawable.ear,
+            res = R.drawable.cat_logo,
             ansEnglish = "Kulaklarını kapattı.",
             opts = listOf("Kulaklarını kapattı.", "Ellerini sakladı.", "Saçını kestirdi.", "Ağzını sildi.")
         ),
@@ -31494,7 +31194,7 @@ object QuizRepository {
         createVisual(
             id = 7,
             questionTurkish = "ağız",
-            imageRes = R.drawable.mouth,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "mouth",
             options = listOf("mouth", "ear", "hair", "leg")
         ),
@@ -31503,7 +31203,7 @@ object QuizRepository {
         createListening(
             id = 8,
             qTurkish = "mouth",
-            res = R.drawable.mouth,
+            res = R.drawable.cat_logo,
             ansEnglish = "ağız",
             opts = listOf("ağız", "el", "saç", "kulak")
         ),
@@ -31512,7 +31212,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 9,
             questionTurkish = "Lütfen elini uzat.",
-            imageRes = R.drawable.hand,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "Please give your hand",
             questionType = QuestionType.TRANSLATION_BUILDER,
             options = emptyList(),
@@ -31525,7 +31225,7 @@ object QuizRepository {
         createListening(
             id = 10,
             qTurkish = "My hand hurts.",
-            res = R.drawable.hand,
+            res = R.drawable.cat_logo,
             ansEnglish = "Elim ağrıyor.",
             opts = listOf("Elim ağrıyor.", "Saçım acıyor.", "Kulağım ağrıyor.", "Ağzım acıyor.")
         ),
@@ -31534,7 +31234,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 11,
             questionTurkish = "Don't speak with your mouth full.",
-            imageRes = R.drawable.mouth,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "Don't speak with your mouth full",
             options = emptyList(),
             questionType = QuestionType.SPEAKING,
@@ -31547,7 +31247,7 @@ object QuizRepository {
         createListening(
             id = 12,
             qTurkish = "He points to his ear.",
-            res = R.drawable.ear,
+            res = R.drawable.cat_logo,
             ansEnglish = "Kulağını işaret ediyor.",
             opts = listOf("Kulağını işaret ediyor.", "Elini işaret ediyor.", "Saçını işaret ediyor.", "Ağzını işaret ediyor.")
         ),
@@ -31556,7 +31256,7 @@ object QuizRepository {
         createListening(
             id = 13,
             qTurkish = "Dry your hands.",
-            res = R.drawable.hand,
+            res = R.drawable.cat_logo,
             ansEnglish = "Ellerini kurula.",
             opts = listOf("Ellerini kurula.", "Saçını kurula.", "Kulaklarını kurula.", "Ağzını kurula.")
         ),
@@ -31585,6 +31285,7 @@ object QuizRepository {
             turkishOptions = listOf("el", "saç", "kulak", "ağız", "işaret etmek", "incitmek / ağrımak")
         )
     )
+    }
     fun getQuiz172(): List<VocabularyLevelDataQuiz> {
     return quizListOf(
         2, // 👈 Havuza eklenen yeni fiiller (touch, wash) sebebiyle öğrenilmiş kelime sayısı 2 olarak işaretlendi
@@ -31593,7 +31294,7 @@ object QuizRepository {
         createVisual(
             id = 1,
             questionTurkish = "dokunmak",
-            imageRes = R.drawable.touch,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "touch",
             options = listOf("touch", "point", "hurt")
         ),
@@ -31602,7 +31303,7 @@ object QuizRepository {
         createListening(
             id = 2,
             qTurkish = "Don't touch your ears.",
-            res = R.drawable.ear,
+            res = R.drawable.cat_logo,
             ansEnglish = "Kulaklarına dokunma.",
             opts = listOf("Kulaklarına dokunma.", "Kulaklarını işaret etme.", "Kulaklarını incitme.", "Kulaklarını yıkama.")
         ),
@@ -31629,7 +31330,7 @@ object QuizRepository {
         createVisual(
             id = 5,
             questionTurkish = "el",
-            imageRes = R.drawable.hand,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "hand",
             options = listOf("hand", "hair", "mouth", "arm")
         ),
@@ -31638,7 +31339,7 @@ object QuizRepository {
         createListening(
             id = 6,
             qTurkish = "He is washing his hands.",
-            res = R.drawable.hand,
+            res = R.drawable.cat_logo,
             ansEnglish = "O ellerini yıkıyor.",
             opts = listOf("O ellerini yıkıyor.", "O saçını tarıyor.", "O kulağını temizliyor.", "O ağzını siliyor.")
         ),
@@ -31647,7 +31348,7 @@ object QuizRepository {
         createVisual(
             id = 7,
             questionTurkish = "saç",
-            imageRes = R.drawable.hair,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "hair",
             options = listOf("hair", "hand", "ear", "head")
         ),
@@ -31656,7 +31357,7 @@ object QuizRepository {
         createListening(
             id = 8,
             qTurkish = "hair",
-            res = R.drawable.hair,
+            res = R.drawable.cat_logo,
             ansEnglish = "saç",
             opts = listOf("saç", "el", "kulak", "ağız")
         ),
@@ -31678,7 +31379,7 @@ object QuizRepository {
         createListening(
             id = 10,
             qTurkish = "Touch your mouth.",
-            res = R.drawable.mouth,
+            res = R.drawable.cat_logo,
             ansEnglish = "Ağzına dokun.",
             opts = listOf("Ağzına dokun.", "Elini yıka.", "Saçını tara.", "Kulağını kapat.")
         ),
@@ -31687,7 +31388,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 11,
             questionTurkish = "Don't touch my hair.",
-            imageRes = R.drawable.hair,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "Don't touch my hair",
             options = emptyList(),
             questionType = QuestionType.SPEAKING,
@@ -31700,7 +31401,7 @@ object QuizRepository {
         createListening(
             id = 12,
             qTurkish = "It hurts when I touch it.",
-            res = R.drawable.hurt,
+            res = R.drawable.cat_logo,
             ansEnglish = "Dokunduğumda acıyor.",
             opts = listOf("Dokunduğumda acıyor.", "Yıkadığımda acıyor.", "İşaret ettiğimde acıyor.", "Baktığımda acıyor.")
         ),
@@ -31738,159 +31439,7 @@ object QuizRepository {
             turkishOptions = listOf("el", "saç", "kulak", "ağız", "dokunmak", "yıkamak")
         )
     )
-    fun getQuiz172(): List<VocabularyLevelDataQuiz> {
-    return quizListOf(
-        2, // 👈 Havuza eklenen yeni fiiller (touch, wash) sebebiyle öğrenilmiş kelime sayısı 2 olarak işaretlendi
-
-        // 1. VISUAL (Yeni Fiil 1: touch -> r.drawable.touch | Diğer şıklar sadece point ve hurt)
-        createVisual(
-            id = 1,
-            questionTurkish = "dokunmak",
-            imageRes = R.drawable.touch,
-            correctAnswer = "touch",
-            options = listOf("touch", "point", "hurt")
-        ),
-
-        // 2. LISTENING (Korelasyon: "Don't touch your ..." kalıbı sabit - Mantıklı günlük cümle)
-        createListening(
-            id = 2,
-            qTurkish = "Don't touch your ears.",
-            res = R.drawable.ear,
-            ansEnglish = "Kulaklarına dokunma.",
-            opts = listOf("Kulaklarına dokunma.", "Kulaklarını işaret etme.", "Kulaklarını incitme.", "Kulaklarını yıkama.")
-        ),
-
-        // 3. VISUAL (Yeni Fiil 2: wash -> r.drawable.wash | Diğer şıklar sadece point ve hurt)
-        createVisual(
-            id = 3,
-            questionTurkish = "yıkamak",
-            imageRes = R.drawable.wash,
-            correctAnswer = "wash",
-            options = listOf("wash", "point", "hurt")
-        ),
-
-        // 4. LISTENING (Korelasyon: Sadece hedef kelimeler)
-        createListening(
-            id = 4,
-            qTurkish = "wash",
-            res = R.drawable.wash,
-            ansEnglish = "yıkamak",
-            opts = listOf("yıkamak", "işaret etmek", "incitmek / ağrımak", "dokunmak")
-        ),
-
-        // 5. VISUAL (hand -> r.drawable.hand | Çeldiricilerde en fazla 1 eski kelime: arm)
-        createVisual(
-            id = 5,
-            questionTurkish = "el",
-            imageRes = R.drawable.hand,
-            correctAnswer = "hand",
-            options = listOf("hand", "hair", "mouth", "arm")
-        ),
-
-        // 6. LISTENING (Korelasyon: "He is washing his ..." kalıbı sabit - Şimdiki zaman kullanımı)
-        createListening(
-            id = 6,
-            qTurkish = "He is washing his hands.",
-            res = R.drawable.hand,
-            ansEnglish = "O ellerini yıkıyor.",
-            opts = listOf("O ellerini yıkıyor.", "O saçını tarıyor.", "O kulağını temizliyor.", "O ağzını siliyor.")
-        ),
-
-        // 7. VISUAL (hair -> r.drawable.hair | Çeldiricilerde en fazla 1 eski kelime: head)
-        createVisual(
-            id = 7,
-            questionTurkish = "saç",
-            imageRes = R.drawable.hair,
-            correctAnswer = "hair",
-            options = listOf("hair", "hand", "ear", "head")
-        ),
-
-        // 8. LISTENING (Korelasyon: Sadece hedef kelimeler)
-        createListening(
-            id = 8,
-            qTurkish = "hair",
-            res = R.drawable.hair,
-            ansEnglish = "saç",
-            opts = listOf("saç", "el", "kulak", "ağız")
-        ),
-
-        // 9. TRANSLATION_BUILDER (Mantıklı günlük cümle)
-        VocabularyLevelDataQuiz(
-            id = 9,
-            questionTurkish = "Lütfen sıcak suyla ellerini yıka.",
-            imageRes = R.drawable.wash,
-            correctAnswer = "Please wash your hands with warm water",
-            questionType = QuestionType.TRANSLATION_BUILDER,
-            options = emptyList(),
-            correctWords = listOf("Please", "wash", "your", "hands", "with", "warm", "water"),
-            extraWords = listOf("hair", "mouth", "hurt"),
-            fullAnswerTurkish = "Lütfen sıcak suyla ellerini yıka."
-        ),
-
-        // 10. LISTENING (Korelasyon: "Touch your ..." kalıbı sabit)
-        createListening(
-            id = 10,
-            qTurkish = "Touch your mouth.",
-            res = R.drawable.mouth,
-            ansEnglish = "Ağzına dokun.",
-            opts = listOf("Ağzına dokun.", "Elini yıka.", "Saçını tara.", "Kulağını kapat.")
-        ),
-
-        // 11. SPEAKING (Günlük mantıklı cümle)
-        VocabularyLevelDataQuiz(
-            id = 11,
-            questionTurkish = "Don't touch my hair.",
-            imageRes = R.drawable.hair,
-            correctAnswer = "Don't touch my hair",
-            options = emptyList(),
-            questionType = QuestionType.SPEAKING,
-            speakingTitle = "Aşağıdaki cümleyi sesli telaffuz et:",
-            speakingSentence = "Don't touch my hair",
-            speakingCharacterRes = R.drawable.cat_logo
-        ),
-
-        // 12. LISTENING (Korelasyon: Eski kelimelerden "hurt" ile yeni eylemlerin birleşimi)
-        createListening(
-            id = 12,
-            qTurkish = "It hurts when I touch it.",
-            res = R.drawable.hurt,
-            ansEnglish = "Dokunduğumda acıyor.",
-            opts = listOf("Dokunduğumda acıyor.", "Yıkadığımda acıyor.", "İşaret ettiğimde acıyor.", "Baktığımda acıyor.")
-        ),
-
-        // 13. LISTENING (Korelasyon: "He washes his ..." kalıbı sabit)
-        createListening(
-            id = 13,
-            qTurkish = "He washes his face.",
-            res = R.drawable.pp3,
-            ansEnglish = "Yüzünü yıkar.",
-            opts = listOf("Yüzünü yıkar.", "Saçını tarar.", "Kulağını temizler.", "Elini sallar.")
-        ),
-
-        // 14. PATTERN (Gramer Öğretimi - Şimdiki Zaman Olumsuz Yapısı)
-        VocabularyLevelDataQuiz(
-            id = 14,
-            questionTurkish = "She is not washing her hair.",
-            imageRes = R.drawable.pp1,
-            correctAnswer = "is not washing",
-            options = listOf("is not washing", "not washing", "doesn't washing", "isn't wash"),
-            questionType = QuestionType.PATTERN,
-            patternTitle = "Present Continuous Negative (Şimdiki Zaman Olumsuz)",
-            patternExampleOne = "I am not touching the wall.",
-            patternHighlightOne = "am not touching",
-            patternExampleTwo = "He is not washing his hands.",
-            patternHighlightTwo = "is not washing"
-        ),
-
-        // 15. MATCHING (Kapanış özeti)
-        createMatching(
-            id = 15,
-            questionText = "Actions & Body Parts",
-            image = R.drawable.pp2,
-            pairs = "hand,hair,ear,mouth,touch,wash",
-            turkishOptions = listOf("el", "saç", "kulak", "ağız", "dokunmak", "yıkamak")
-        )
-    )
+    }
     fun getQuiz173(): List<VocabularyLevelDataQuiz> {
     return quizListOf(
         0, // 👈 Mevcut kelimeleri günlük hayata uygun mantıklı cümlelerle pekiştirdiğimiz için sıfır kalıyor
@@ -31899,7 +31448,7 @@ object QuizRepository {
         createVisual(
             id = 1,
             questionTurkish = "dokunmak",
-            imageRes = R.drawable.touch,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "touch",
             options = listOf("touch", "wash", "point")
         ),
@@ -31908,7 +31457,7 @@ object QuizRepository {
         createListening(
             id = 2,
             qTurkish = "Please touch your hair.",
-            res = R.drawable.hair,
+            res = R.drawable.cat_logo,
             ansEnglish = "Lütfen saçına dokun.",
             opts = listOf("Lütfen saçına dokun.", "Lütfen eline dokun.", "Lütfen kulağına dokun.", "Lütfen ağzına dokun.")
         ),
@@ -31935,7 +31484,7 @@ object QuizRepository {
         createVisual(
             id = 5,
             questionTurkish = "kulak",
-            imageRes = R.drawable.ear,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "ear",
             options = listOf("ear", "mouth", "hand", "eye")
         ),
@@ -31944,7 +31493,7 @@ object QuizRepository {
         createListening(
             id = 6,
             qTurkish = "Clean your ears.",
-            res = R.drawable.ear,
+            res = R.drawable.cat_logo,
             ansEnglish = "Kulaklarını temizle.",
             opts = listOf("Kulaklarını temizle.", "Ellerini temizle.", "Saçını temizle.", "Ağzını temizle.")
         ),
@@ -31953,7 +31502,7 @@ object QuizRepository {
         createVisual(
             id = 7,
             questionTurkish = "el",
-            imageRes = R.drawable.hand,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "hand",
             options = listOf("hand", "hair", "mouth", "arm")
         ),
@@ -31962,7 +31511,7 @@ object QuizRepository {
         createListening(
             id = 8,
             qTurkish = "hand",
-            res = R.drawable.hand,
+            res = R.drawable.cat_logo,
             ansEnglish = "el",
             opts = listOf("el", "saç", "kulak", "ağız")
         ),
@@ -31993,7 +31542,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 11,
             questionTurkish = "I touch the cat gently.",
-            imageRes = R.drawable.touch,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "I touch the cat gently",
             options = emptyList(),
             questionType = QuestionType.SPEAKING,
@@ -32006,7 +31555,7 @@ object QuizRepository {
         createListening(
             id = 12,
             qTurkish = "Your hands are very warm.",
-            res = R.drawable.hand,
+            res = R.drawable.cat_logo,
             ansEnglish = "Ellerin çok sıcak.",
             opts = listOf("Ellerin çok sıcak.", "Kulakların çok sıcak.", "Saçın çok sıcak.", "Ağzın çok sıcak.")
         ),
@@ -32015,7 +31564,7 @@ object QuizRepository {
         createListening(
             id = 13,
             qTurkish = "Keep your mouth clean.",
-            res = R.drawable.mouth,
+            res = R.drawable.cat_logo,
             ansEnglish = "Ağzını temiz tut.",
             opts = listOf("Ağzını temiz tut.", "Ellerini temiz tut.", "Saçını temiz tut.", "Kulaklarını temiz tut.")
         ),
@@ -32044,6 +31593,7 @@ object QuizRepository {
             turkishOptions = listOf("el", "saç", "kulak", "ağız", "dokunmak", "yıkamak")
         )
     )
+    }
     fun getQuiz174(): List<VocabularyLevelDataQuiz> {
     return quizListOf(
         2, // 👈 Yeni eklenen hedef kelimeler (chest, shoulder) için öğrenilmiş kelime sayısı
@@ -32052,7 +31602,7 @@ object QuizRepository {
         createVisual(
             id = 1,
             questionTurkish = "göğüs",
-            imageRes = R.drawable.chest,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "chest",
             options = listOf("chest", "shoulder", "hair", "hand")
         ),
@@ -32061,7 +31611,7 @@ object QuizRepository {
         createListening(
             id = 2,
             qTurkish = "Point to your chest.",
-            res = R.drawable.chest,
+            res = R.drawable.cat_logo,
             ansEnglish = "Göğsünü işaret et.",
             opts = listOf(
                 "Göğsünü işaret et.",
@@ -32075,7 +31625,7 @@ object QuizRepository {
         createVisual(
             id = 3,
             questionTurkish = "omuz",
-            imageRes = R.drawable.shoulder,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "shoulder",
             options = listOf("shoulder", "chest", "mouth", "ear")
         ),
@@ -32084,7 +31634,7 @@ object QuizRepository {
         createListening(
             id = 4,
             qTurkish = "shoulder",
-            res = R.drawable.shoulder,
+            res = R.drawable.cat_logo,
             ansEnglish = "omuz",
             opts = listOf("omuz", "göğüs", "saç", "ağız")
         ),
@@ -32093,7 +31643,7 @@ object QuizRepository {
         createVisual(
             id = 5,
             questionTurkish = "saç",
-            imageRes = R.drawable.hair,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "hair",
             options = listOf("hair", "chest", "shoulder", "head")
         ),
@@ -32102,7 +31652,7 @@ object QuizRepository {
         createListening(
             id = 6,
             qTurkish = "My shoulder hurts.",
-            res = R.drawable.shoulder,
+            res = R.drawable.cat_logo,
             ansEnglish = "Omzum ağrıyor.",
             opts = listOf(
                 "Omzum ağrıyor.",
@@ -32116,7 +31666,7 @@ object QuizRepository {
         createVisual(
             id = 7,
             questionTurkish = "ağız",
-            imageRes = R.drawable.mouth,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "mouth",
             options = listOf("mouth", "chest", "shoulder", "arm")
         ),
@@ -32125,7 +31675,7 @@ object QuizRepository {
         createListening(
             id = 8,
             qTurkish = "mouth",
-            res = R.drawable.mouth,
+            res = R.drawable.cat_logo,
             ansEnglish = "ağız",
             opts = listOf("ağız", "göğüs", "omuz", "saç")
         ),
@@ -32134,7 +31684,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 9,
             questionTurkish = "Lütfen omzuna dokun.",
-            imageRes = R.drawable.shoulder,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "Please touch your shoulder",
             questionType = QuestionType.TRANSLATION_BUILDER,
             options = emptyList(),
@@ -32147,7 +31697,7 @@ object QuizRepository {
         createListening(
             id = 10,
             qTurkish = "Don't touch my shoulder.",
-            res = R.drawable.shoulder,
+            res = R.drawable.cat_logo,
             ansEnglish = "Omzuma dokunma.",
             opts = listOf("Omzuma dokunma.", "Göğsüme dokunma.", "Saçıma dokunma.", "Ağzıma dokunma.")
         ),
@@ -32156,7 +31706,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 11,
             questionTurkish = "My chest hurts a lot.",
-            imageRes = R.drawable.chest,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "My chest hurts a lot",
             options = emptyList(),
             questionType = QuestionType.SPEAKING,
@@ -32169,7 +31719,7 @@ object QuizRepository {
         createListening(
             id = 12,
             qTurkish = "Does your shoulder hurt?",
-            res = R.drawable.shoulder,
+            res = R.drawable.cat_logo,
             ansEnglish = "Omuzun mu ağrıyor?",
             opts = listOf("Omuzun mu ağrıyor?", "Göğsün mü ağrıyor?", "Ağzın mı ağrıyor?", "Başın mı ağrıyor?")
         ),
@@ -32178,7 +31728,7 @@ object QuizRepository {
         createListening(
             id = 13,
             qTurkish = "He points to his chest.",
-            res = R.drawable.chest,
+            res = R.drawable.cat_logo,
             ansEnglish = "Göğsünü işaret ediyor.",
             opts = listOf(
                 "Göğsünü işaret ediyor.",
@@ -32212,6 +31762,7 @@ object QuizRepository {
             turkishOptions = listOf("göğüs", "omuz", "saç", "ağız", "dokunmak", "yıkamak")
         )
     )
+    }
     fun getQuiz175(): List<VocabularyLevelDataQuiz> {
     return quizListOf(
         3, // 👈 Yeni eklenen kelimeler (scratch, finger, cheek) için öğrenilmiş kelime sayısı
@@ -32220,7 +31771,7 @@ object QuizRepository {
         createVisual(
             id = 1,
             questionTurkish = "çizik / kaşımak",
-            imageRes = R.drawable.scratch,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "scratch",
             options = listOf("scratch", "finger", "cheek", "head")
         ),
@@ -32229,7 +31780,7 @@ object QuizRepository {
         createListening(
             id = 2,
             qTurkish = "He has a scratch on his arm.",
-            res = R.drawable.scratch,
+            res = R.drawable.cat_logo,
             ansEnglish = "Onun kolunda bir çizik var.",
             opts = listOf(
                 "Onun kolunda bir çizik var.",
@@ -32243,7 +31794,7 @@ object QuizRepository {
         createVisual(
             id = 3,
             questionTurkish = "parmak",
-            imageRes = R.drawable.finger,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "finger",
             options = listOf("finger", "cheek", "scratch", "hand")
         ),
@@ -32252,7 +31803,7 @@ object QuizRepository {
         createListening(
             id = 4,
             qTurkish = "Point with your finger.",
-            res = R.drawable.finger,
+            res = R.drawable.cat_logo,
             ansEnglish = "Parmağınla işaret et.",
             opts = listOf(
                 "Parmağınla işaret et.",
@@ -32266,7 +31817,7 @@ object QuizRepository {
         createVisual(
             id = 5,
             questionTurkish = "yanak",
-            imageRes = R.drawable.cheek,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "cheek",
             options = listOf("cheek", "finger", "scratch", "ear")
         ),
@@ -32275,7 +31826,7 @@ object QuizRepository {
         createListening(
             id = 6,
             qTurkish = "Don't scratch your cheek.",
-            res = R.drawable.cheek,
+            res = R.drawable.cat_logo,
             ansEnglish = "Yanağını kaşıma.",
             opts = listOf(
                 "Yanağını kaşıma.",
@@ -32289,7 +31840,7 @@ object QuizRepository {
         createVisual(
             id = 7,
             questionTurkish = "ağız",
-            imageRes = R.drawable.mouth,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "mouth",
             options = listOf("mouth", "finger", "cheek", "chest")
         ),
@@ -32298,7 +31849,7 @@ object QuizRepository {
         createListening(
             id = 8,
             qTurkish = "mouth",
-            res = R.drawable.mouth,
+            res = R.drawable.cat_logo,
             ansEnglish = "ağız",
             opts = listOf("ağız", "parmak", "yanak", "saç")
         ),
@@ -32307,7 +31858,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 9,
             questionTurkish = "Lütfen yanağına dokun.",
-            imageRes = R.drawable.cheek,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "Please touch your cheek",
             questionType = QuestionType.TRANSLATION_BUILDER,
             options = emptyList(),
@@ -32320,7 +31871,7 @@ object QuizRepository {
         createListening(
             id = 10,
             qTurkish = "Wash your fingers.",
-            res = R.drawable.finger,
+            res = R.drawable.cat_logo,
             ansEnglish = "Parmaklarını yıka.",
             opts = listOf("Parmaklarını yıka.", "Yanaklarını yıka.", "Saçını yıka.", "Ağzını yıka.")
         ),
@@ -32329,7 +31880,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 11,
             questionTurkish = "My finger hurts a lot.",
-            imageRes = R.drawable.finger,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "My finger hurts a lot",
             options = emptyList(),
             questionType = QuestionType.SPEAKING,
@@ -32342,7 +31893,7 @@ object QuizRepository {
         createListening(
             id = 12,
             qTurkish = "Does your cheek hurt?",
-            res = R.drawable.cheek,
+            res = R.drawable.cat_logo,
             ansEnglish = "Yanağın mı ağrıyor?",
             opts = listOf("Yanağın mı ağrıyor?", "Parmağın mı ağrıyor?", "Ağzın mı ağrıyor?", "Omzun mu ağrıyor?")
         ),
@@ -32351,7 +31902,7 @@ object QuizRepository {
         createListening(
             id = 13,
             qTurkish = "He points to his finger.",
-            res = R.drawable.finger,
+            res = R.drawable.cat_logo,
             ansEnglish = "Parmağını işaret ediyor.",
             opts = listOf(
                 "Parmağını işaret ediyor.",
@@ -32385,6 +31936,7 @@ object QuizRepository {
             turkishOptions = listOf("parmak", "yanak", "çizik", "saç", "ağız", "dokunmak")
         )
     )
+    }
     fun getQuiz176(): List<VocabularyLevelDataQuiz> {
     return quizListOf(
         0, // 👈 Mevcut kelimeleri günlük hayata uygun mantıklı cümlelerle pekiştirdiğimiz için sıfır kalıyor
@@ -32393,7 +31945,7 @@ object QuizRepository {
         createVisual(
             id = 1,
             questionTurkish = "çizik / kaşımak",
-            imageRes = R.drawable.scratch,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "scratch",
             options = listOf("scratch", "finger", "cheek", "hurt")
         ),
@@ -32402,7 +31954,7 @@ object QuizRepository {
         createListening(
             id = 2,
             qTurkish = "Don't scratch your chest.",
-            res = R.drawable.chest,
+            res = R.drawable.cat_logo,
             ansEnglish = "Göğsünü kaşıma.",
             opts = listOf("Göğsünü kaşıma.", "Yanağını kaşıma.", "Parmağını kaşıma.", "Omzunu kaşıma.")
         ),
@@ -32411,7 +31963,7 @@ object QuizRepository {
         createVisual(
             id = 3,
             questionTurkish = "parmak",
-            imageRes = R.drawable.finger,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "finger",
             options = listOf("finger", "cheek", "scratch", "hand")
         ),
@@ -32420,7 +31972,7 @@ object QuizRepository {
         createListening(
             id = 4,
             qTurkish = "finger",
-            res = R.drawable.finger,
+            res = R.drawable.cat_logo,
             ansEnglish = "parmak",
             opts = listOf("parmak", "yanak", "çizik", "omuz")
         ),
@@ -32429,7 +31981,7 @@ object QuizRepository {
         createVisual(
             id = 5,
             questionTurkish = "yanak",
-            imageRes = R.drawable.cheek,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "cheek",
             options = listOf("cheek", "finger", "scratch", "mouth")
         ),
@@ -32438,7 +31990,7 @@ object QuizRepository {
         createListening(
             id = 6,
             qTurkish = "He kissed her on the cheek.",
-            res = R.drawable.cheek,
+            res = R.drawable.cat_logo,
             ansEnglish = "Onu yanağından öptü.",
             opts = listOf("Onu yanağından öptü.", "Onu parmağından öptü.", "Onu omzundan öptü.", "Onu kolundan öptü.")
         ),
@@ -32447,7 +31999,7 @@ object QuizRepository {
         createVisual(
             id = 7,
             questionTurkish = "ağız",
-            imageRes = R.drawable.mouth,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "mouth",
             options = listOf("mouth", "finger", "cheek", "chest")
         ),
@@ -32456,7 +32008,7 @@ object QuizRepository {
         createListening(
             id = 8,
             qTurkish = "mouth",
-            res = R.drawable.mouth,
+            res = R.drawable.cat_logo,
             ansEnglish = "ağız",
             opts = listOf("ağız", "yanak", "parmak", "göğüs")
         ),
@@ -32465,7 +32017,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 9,
             questionTurkish = "Parmağında küçük bir çizik var.",
-            imageRes = R.drawable.scratch,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "There is a small scratch on your finger",
             questionType = QuestionType.TRANSLATION_BUILDER,
             options = emptyList(),
@@ -32478,7 +32030,7 @@ object QuizRepository {
         createListening(
             id = 10,
             qTurkish = "Wash your face and cheeks.",
-            res = R.drawable.cheek,
+            res = R.drawable.cat_logo,
             ansEnglish = "Yüzünü ve yanaklarını yıka.",
             opts = listOf("Yüzünü ve yanaklarını yıka.", "Yüzünü ve parmaklarını yıka.", "Yüzünü ve göğsünü yıka.", "Yüzünü ve omzunu yıka.")
         ),
@@ -32487,7 +32039,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 11,
             questionTurkish = "My shoulder and my chest hurt.",
-            imageRes = R.drawable.shoulder,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "My shoulder and my chest hurt",
             options = emptyList(),
             questionType = QuestionType.SPEAKING,
@@ -32500,7 +32052,7 @@ object QuizRepository {
         createListening(
             id = 12,
             qTurkish = "Don't touch that scratch.",
-            res = R.drawable.scratch,
+            res = R.drawable.cat_logo,
             ansEnglish = "O çiziğe dokunma.",
             opts = listOf("O çiziğe dokunma.", "O yanağa dokunma.", "O parmağa dokunma.", "O omuza dokunma.")
         ),
@@ -32509,7 +32061,7 @@ object QuizRepository {
         createListening(
             id = 13,
             qTurkish = "He points to his pinky finger.",
-            res = R.drawable.finger,
+            res = R.drawable.cat_logo,
             ansEnglish = "Serçe parmağını işaret ediyor.",
             opts = listOf("Serçe parmağını işaret ediyor.", "Yanağını işaret ediyor.", "Göğsünü işaret ediyor.", "Omzunu işaret ediyor.")
         ),
@@ -32538,6 +32090,7 @@ object QuizRepository {
             turkishOptions = listOf("çizik / kaşımak", "parmak", "yanak", "göğüs", "omuz", "kol")
         )
     )
+    }
     fun getQuiz177(): List<VocabularyLevelDataQuiz> {
     return quizListOf(
         0, // 👈 Tamamen pekiştirme ve tekrar quizi olduğu için sıfır olarak işaretlendi
@@ -32546,7 +32099,7 @@ object QuizRepository {
         createVisual(
             id = 1,
             questionTurkish = "parmak",
-            imageRes = R.drawable.finger,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "finger",
             options = listOf("finger", "cheek", "scratch", "hand")
         ),
@@ -32555,7 +32108,7 @@ object QuizRepository {
         createListening(
             id = 2,
             qTurkish = "He bit his finger.",
-            res = R.drawable.finger,
+            res = R.drawable.cat_logo,
             ansEnglish = "O parmağını ısırdı.",
             opts = listOf("O parmağını ısırdı.", "O yanağını ısırdı.", "O kolunu ısırdı.", "O ağzını ısırdı.")
         ),
@@ -32564,7 +32117,7 @@ object QuizRepository {
         createVisual(
             id = 3,
             questionTurkish = "yanak",
-            imageRes = R.drawable.cheek,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "cheek",
             options = listOf("cheek", "finger", "scratch", "ear")
         ),
@@ -32573,7 +32126,7 @@ object QuizRepository {
         createListening(
             id = 4,
             qTurkish = "cheek",
-            res = R.drawable.cheek,
+            res = R.drawable.cat_logo,
             ansEnglish = "yanak",
             opts = listOf("yanak", "parmak", "çizik", "göğüs")
         ),
@@ -32582,7 +32135,7 @@ object QuizRepository {
         createVisual(
             id = 5,
             questionTurkish = "çizik / kaşımak",
-            imageRes = R.drawable.scratch,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "scratch",
             options = listOf("scratch", "finger", "cheek", "head")
         ),
@@ -32591,7 +32144,7 @@ object QuizRepository {
         createListening(
             id = 6,
             qTurkish = "She has a pink cheek.",
-            res = R.drawable.cheek,
+            res = R.drawable.cat_logo,
             ansEnglish = "Onun pembe bir yanağı var.",
             opts = listOf("Onun pembe bir yanağı var.", "Onun pembe bir parmağı var.", "Onun pembe bir omzu var.", "Onun pembe bir ağzi var.")
         ),
@@ -32600,7 +32153,7 @@ object QuizRepository {
         createVisual(
             id = 7,
             questionTurkish = "ağız",
-            imageRes = R.drawable.mouth,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "mouth",
             options = listOf("mouth", "finger", "cheek", "chest")
         ),
@@ -32609,7 +32162,7 @@ object QuizRepository {
         createListening(
             id = 8,
             qTurkish = "mouth",
-            res = R.drawable.mouth,
+            res = R.drawable.cat_logo,
             ansEnglish = "ağız",
             opts = listOf("ağız", "parmak", "yanak", "çizik")
         ),
@@ -32618,7 +32171,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 9,
             questionTurkish = "Kedi senin omzunu kaşır.",
-            imageRes = R.drawable.scratch,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "The cat scratches your shoulder",
             questionType = QuestionType.TRANSLATION_BUILDER,
             options = emptyList(),
@@ -32631,7 +32184,7 @@ object QuizRepository {
         createListening(
             id = 10,
             qTurkish = "Wash your chest and shoulders.",
-            res = R.drawable.chest,
+            res = R.drawable.cat_logo,
             ansEnglish = "Göğsünü ve omuzlarını yıka.",
             opts = listOf("Göğsünü ve omuzlarını yıka.", "Göğsünü ve parmaklarını yıka.", "Göğsünü ve yanaklarını yıka.", "Göğsünü ve kollarını yıka.")
         ),
@@ -32640,7 +32193,7 @@ object QuizRepository {
         VocabularyLevelDataQuiz(
             id = 11,
             questionTurkish = "Don't touch that dirty scratch.",
-            imageRes = R.drawable.scratch,
+            imageRes = R.drawable.cat_logo,
             correctAnswer = "Don't touch that dirty scratch",
             options = emptyList(),
             questionType = QuestionType.SPEAKING,
@@ -32653,7 +32206,7 @@ object QuizRepository {
         createListening(
             id = 12,
             qTurkish = "My left shoulder hurts.",
-            res = R.drawable.shoulder,
+            res = R.drawable.cat_logo,
             ansEnglish = "Sol omzum ağrıyor.",
             opts = listOf("Sol omzum ağrıyor.", "Sol göğsüm ağrıyor.", "Sol kolum ağrıyor.", "Sol parmağım ağrıyor.")
         ),
@@ -32662,7 +32215,7 @@ object QuizRepository {
         createListening(
             id = 13,
             qTurkish = "He points to his scratch.",
-            res = R.drawable.scratch,
+            res = R.drawable.cat_logo,
             ansEnglish = "Çiziğini işaret ediyor.",
             opts = listOf("Çiziğini işaret ediyor.", "Yanağını işaret ediyor.", "Parmağını işaret ediyor.", "Omzunu işaret ediyor.")
         ),
@@ -32700,11 +32253,9 @@ object QuizRepository {
 
 
 
-}
 
 
 
-}
 
 
 
@@ -32728,6 +32279,7 @@ object QuizRepository {
 
 
     // 🛠️ NORMALİZE: Kelimeyi temizler ve resim anahtarına uygun hale getirir
+    }
     private fun normalize(text: String): String {
         return text
             .lowercase(Locale.ROOT)
