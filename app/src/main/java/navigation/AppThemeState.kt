@@ -8,6 +8,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.background
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 
 val LocalIsDarkMode = compositionLocalOf { false }
 
@@ -65,6 +67,16 @@ val LocalAppThemeColors = compositionLocalOf { MewThemeEngine.Light }
 
 @Composable
 fun Modifier.mewScreenBackground(): Modifier {
+    val context = LocalContext.current
+    val isSpaceTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isSpaceThemeActive(context)
+    }
+    val isKingdomTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isKingdomThemeActive(context)
+    }
+    if (isSpaceTheme || isKingdomTheme) {
+        return background(Color.Transparent)
+    }
     val colors = LocalAppThemeColors.current
     return background(Brush.verticalGradient(listOf(colors.background, colors.backgroundAlt)))
 }

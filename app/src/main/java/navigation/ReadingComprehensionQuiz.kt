@@ -1,6 +1,7 @@
 package com.example.ngilizcequizapp
 
 import android.content.Context
+import navigation.MarketBoostStore
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -27,13 +28,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.airbnb.lottie.compose.LottieAnimation
 import com.airbnb.lottie.compose.LottieCompositionSpec
 import com.airbnb.lottie.compose.rememberLottieComposition
 
-private data class ReadingQuizQuestion(val prompt: String, val correctAnswer: String, val options: List<String>)
+data class ReadingQuizQuestion(val prompt: String, val correctAnswer: String, val options: List<String>)
 
 object ReadingProgressStore {
     private const val PREFS = "reading_quiz_rewards"
@@ -69,8 +71,10 @@ object ReadingProgressStore {
             return 0 to 0
         }
         
-        val xp = correct * 5
-        val coins = correct * 10
+        val xpMul = MarketBoostStore.getXpMultiplier(context)
+        val coinMul = MarketBoostStore.getCoinMultiplier(context)
+        val xp = correct * 5 * xpMul
+        val coins = correct * 10 * coinMul
         QuizTreeProgressStore.addXp(context, xp)
         QuizTreeProgressStore.addCoins(context, coins)
         
@@ -79,6 +83,7 @@ object ReadingProgressStore {
             .putInt("${key(title)}_coins", coins)
             .apply()
             
+        MissionManager.onReadingCompleted(context)
         return xp to coins
     }
 
@@ -92,10 +97,35 @@ object ReadingProgressStore {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("${key(title)}_coins", 0)
 }
 
+fun normalizeAndShuffleQuestion(raw: ReadingQuizQuestion): ReadingQuizQuestion {
+    val cleanPrompt = raw.prompt.trim()
+    val cleanCorrect = raw.correctAnswer.trim()
+    val cleanOptions = raw.options
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinctBy { it.lowercase(java.util.Locale.ROOT) }
+        .toMutableList()
+
+    if (cleanOptions.none { it.equals(cleanCorrect, ignoreCase = true) }) {
+        cleanOptions.add(cleanCorrect)
+    }
+
+    val shuffled = cleanOptions.shuffled()
+    val matchedCorrect = shuffled.firstOrNull { it.equals(cleanCorrect, ignoreCase = true) } ?: cleanCorrect
+
+    return ReadingQuizQuestion(
+        prompt = cleanPrompt,
+        correctAnswer = matchedCorrect,
+        options = shuffled
+    )
+}
+
 @Composable
 fun ReadingComprehensionQuiz(title: String, storyText: String, ttsHelper: SpeechAssistant, onClose: () -> Unit) {
     val context = LocalContext.current
-    val questions = remember(title, storyText) { buildReadingQuestions(title, storyText) }
+    val questions = remember(title, storyText) {
+        buildReadingQuestions(title, storyText).map { normalizeAndShuffleQuestion(it) }
+    }
     var index by remember { mutableIntStateOf(0) }
     var selected by remember { mutableStateOf<String?>(null) }
     var checked by remember { mutableStateOf(false) }
@@ -105,7 +135,7 @@ fun ReadingComprehensionQuiz(title: String, storyText: String, ttsHelper: Speech
     var finished by remember { mutableStateOf(false) }
     var confirmExit by remember { mutableStateOf(false) }
     val question = questions[index]
-    val isCorrect = selected == question.correctAnswer
+    val isCorrect = selected?.trim()?.equals(question.correctAnswer.trim(), ignoreCase = true) == true
     val solvedQuestions = (index + if (checked) 1 else 0).coerceIn(0, questions.size)
     val quizProgress = if (questions.isNotEmpty()) solvedQuestions.toFloat() / questions.size else 0f
     val animatedQuizProgress by animateFloatAsState(
@@ -113,13 +143,52 @@ fun ReadingComprehensionQuiz(title: String, storyText: String, ttsHelper: Speech
         animationSpec = tween(durationMillis = 650),
         label = "readingQuizProgress"
     )
+
+    val isKingdomTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isKingdomThemeActive(context)
+    }
+    val isSpaceTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isSpaceThemeActive(context)
+    }
+    val isDark = LocalIsDarkMode.current
+
     val appColors = LocalAppThemeColors.current
-    val accentBlue = appColors.primary
-    val navy = appColors.text
-    val muted = appColors.textMuted
-    val paleBlue = appColors.primarySoft
-    val screenBackground = appColors.background
-    val cardColor = appColors.surface
+    val accentBlue = when {
+        isKingdomTheme -> Color(0xFFFFD700)
+        isSpaceTheme -> Color(0xFF8B5CF6)
+        else -> appColors.primary
+    }
+    val navy = when {
+        isKingdomTheme -> Color(0xFFFFF7D6)
+        isSpaceTheme -> Color(0xFFF8FAFC)
+        else -> appColors.text
+    }
+    val muted = when {
+        isKingdomTheme -> Color(0xFFD4AF37)
+        isSpaceTheme -> Color(0xFF94A3B8)
+        else -> appColors.textMuted
+    }
+    val paleBlue = when {
+        isKingdomTheme -> Color(0xFFFFD700).copy(alpha = 0.15f)
+        isSpaceTheme -> Color(0xFF8B5CF6).copy(alpha = 0.20f)
+        else -> appColors.primarySoft
+    }
+    val screenBackground = when {
+        isKingdomTheme -> Color(0xFF070F26)
+        isSpaceTheme -> Color(0xFF0C132C)
+        else -> appColors.background
+    }
+    val cardColor = when {
+        isKingdomTheme -> Color(0xFF0F1A3A)
+        isSpaceTheme -> Color(0xFF131B3B)
+        else -> appColors.surface
+    }
+    val themeBorder = when {
+        isKingdomTheme -> Color(0xFFFFD700).copy(alpha = 0.35f)
+        isSpaceTheme -> Color(0xFF8B5CF6).copy(alpha = 0.35f)
+        else -> appColors.border
+    }
+
     val quizCatName = remember(title) {
         if (kotlin.random.Random.nextBoolean()) "readingcat2" else "readingcat3"
     }
@@ -130,45 +199,83 @@ fun ReadingComprehensionQuiz(title: String, storyText: String, ttsHelper: Speech
     Scaffold(
         containerColor = screenBackground,
         topBar = {
-            Surface(color = cardColor, shadowElevation = 3.dp) {
-                Row(Modifier.fillMaxWidth().statusBarsPadding().height(78.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { if (finished) onClose() else confirmExit = true }) { Icon(Icons.Default.Close, "Kapat", tint = navy) }
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(paleBlue),
-                        contentAlignment = Alignment.Center
+            Surface(
+                color = cardColor,
+                shadowElevation = 3.dp,
+                border = BorderStroke(1.dp, themeBorder.copy(alpha = 0.2f))
+            ) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Image(
-                            painter = painterResource(quizCatImage),
-                            contentDescription = null,
-                            modifier = Modifier.size(42.dp),
-                            contentScale = ContentScale.Fit
+                        IconButton(onClick = { if (finished) onClose() else confirmExit = true }) {
+                            Icon(Icons.Default.Close, "Kapat", tint = navy)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(paleBlue),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                painter = painterResource(quizCatImage),
+                                contentDescription = null,
+                                modifier = Modifier.size(32.dp),
+                                contentScale = ContentScale.Fit
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(title, fontWeight = FontWeight.Black, color = navy, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 15.sp)
+                            Text("Okuduğunu anlama", fontSize = 11.sp, color = muted, maxLines = 1)
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        CartoonEnergyBadge()
+                        Spacer(Modifier.width(4.dp))
+                        IconButton(onClick = { ttsHelper.speakEnglish(storyText) }, modifier = Modifier.size(38.dp)) {
+                            Icon(Icons.Default.Headphones, "Metni dinle", tint = accentBlue)
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        LinearProgressIndicator(
+                            progress = { animatedQuizProgress },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = accentBlue,
+                            trackColor = paleBlue
                         )
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(title, fontWeight = FontWeight.Black, color = navy, maxLines = 1)
-                        Text("Okuduğunu anlama", fontSize = 12.sp, color = muted)
-                    }
-                    ReadingQuizProgressPie(
-                        progress = animatedQuizProgress,
-                        solved = solvedQuestions,
-                        total = questions.size,
-                        accentColor = accentBlue,
-                        trackColor = paleBlue,
-                        textColor = navy
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    IconButton(onClick = { ttsHelper.speakEnglish(storyText) }) {
-                        Icon(Icons.Default.Headphones, "Metni dinle", tint = accentBlue)
+                        Text(
+                            "$solvedQuestions/${questions.size}",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = navy
+                        )
                     }
                 }
             }
         },
         bottomBar = {
-            if (!finished) Surface(color = Color.White, shadowElevation = 8.dp) {
+            if (!finished) Surface(
+                color = cardColor,
+                shadowElevation = 8.dp,
+                border = BorderStroke(1.dp, themeBorder.copy(alpha = 0.2f))
+            ) {
                 Button(
                     onClick = {
                         if (!checked) {
@@ -188,8 +295,17 @@ fun ReadingComprehensionQuiz(title: String, storyText: String, ttsHelper: Speech
                     enabled = selected != null,
                     modifier = Modifier.fillMaxWidth().padding(16.dp).navigationBarsPadding().height(54.dp),
                     shape = RoundedCornerShape(18.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = accentBlue)
-                ) { Text(if (!checked) "Kontrol Et" else if (index == questions.lastIndex) "Sonucu Gör" else "Sonraki Soru", fontWeight = FontWeight.Bold) }
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accentBlue,
+                        contentColor = if (isKingdomTheme) Color(0xFF070F26) else Color.White
+                    )
+                ) {
+                    Text(
+                        if (!checked) "Kontrol Et" else if (index == questions.lastIndex) "Sonucu Gör" else "Sonraki Soru",
+                        fontWeight = FontWeight.Bold,
+                        color = if (isKingdomTheme) Color(0xFF070F26) else Color.White
+                    )
+                }
             }
         }
     ) { padding ->
@@ -200,7 +316,7 @@ fun ReadingComprehensionQuiz(title: String, storyText: String, ttsHelper: Speech
                 Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .mewScreenBackground(),
+                    .background(screenBackground),
                 contentPadding = PaddingValues(18.dp, 18.dp, 18.dp, 110.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
@@ -208,7 +324,8 @@ fun ReadingComprehensionQuiz(title: String, storyText: String, ttsHelper: Speech
                     Surface(
                         shape = RoundedCornerShape(24.dp),
                         color = cardColor,
-                        shadowElevation = 5.dp
+                        shadowElevation = 5.dp,
+                        border = BorderStroke(1.dp, themeBorder)
                     ) {
                         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
@@ -227,12 +344,12 @@ fun ReadingComprehensionQuiz(title: String, storyText: String, ttsHelper: Speech
                     }
                 }
                 item {
-                    Surface(shape = RoundedCornerShape(22.dp), color = cardColor, border = BorderStroke(1.dp, appColors.border)) {
-                        Text(storyText, Modifier.padding(18.dp), color = Color(0xFF30495E), lineHeight = 25.sp)
+                    Surface(shape = RoundedCornerShape(22.dp), color = cardColor, border = BorderStroke(1.dp, themeBorder)) {
+                        Text(storyText, Modifier.padding(18.dp), color = navy, lineHeight = 25.sp)
                     }
                 }
                 item {
-                    Surface(shape = RoundedCornerShape(22.dp), color = cardColor, shadowElevation = 4.dp) {
+                    Surface(shape = RoundedCornerShape(22.dp), color = cardColor, shadowElevation = 4.dp, border = BorderStroke(1.dp, themeBorder)) {
                         Column(Modifier.padding(18.dp)) {
                             Text("${index + 1} / ${questions.size}", color = accentBlue, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(6.dp))
@@ -242,23 +359,46 @@ fun ReadingComprehensionQuiz(title: String, storyText: String, ttsHelper: Speech
                 }
                 question.options.forEach { option ->
                     item {
-                        val chosen = selected == option
+                        val chosen = selected?.trim()?.equals(option.trim(), ignoreCase = true) == true
+                        val isOptionCorrect = option.trim().equals(question.correctAnswer.trim(), ignoreCase = true)
                         val color = when {
-                            checked && option == question.correctAnswer -> Color(0xFFDDF4E8)
-                            checked && chosen -> Color(0xFFFFE4E4)
-                            chosen -> Color(0xFFE0F3FD)
+                            checked && isOptionCorrect -> if (isKingdomTheme) Color(0xFF163824) else if (isSpaceTheme || isDark) Color(0xFF1E3A2B) else Color(0xFFDDF4E8)
+                            checked && chosen -> if (isKingdomTheme) Color(0xFF451A1A) else if (isSpaceTheme || isDark) Color(0xFF3E1F1F) else Color(0xFFFFE4E4)
+                            chosen -> if (isKingdomTheme) Color(0xFF1F2B48) else if (isSpaceTheme || isDark) cardColor.copy(alpha = 0.9f) else Color(0xFFE0F3FD)
                             else -> cardColor
+                        }
+                        val optionTextColor = when {
+                            checked && isOptionCorrect -> if (isKingdomTheme || isSpaceTheme || isDark) Color(0xFF86EFAC) else Color(0xFF15803D)
+                            checked && chosen -> if (isKingdomTheme || isSpaceTheme || isDark) Color(0xFFFCA5A5) else Color(0xFFB91C1C)
+                            chosen -> accentBlue
+                            else -> navy
                         }
                         Surface(
                             Modifier.fillMaxWidth().clickable(enabled = !checked) { selected = option },
-                            shape = RoundedCornerShape(18.dp), color = color,
+                            shape = RoundedCornerShape(18.dp),
+                            color = color,
                             shadowElevation = if (chosen) 3.dp else 1.dp,
-                            border = BorderStroke(if (chosen) 2.dp else 1.dp, if (chosen) accentBlue else Color(0xFFD3E2EA))
-                        ) { Text(option, Modifier.padding(16.dp), fontWeight = FontWeight.SemiBold, color = Color(0xFF30495E)) }
+                            border = BorderStroke(
+                                width = if (chosen) 2.dp else 1.dp,
+                                color = when {
+                                    checked && isOptionCorrect -> Color(0xFF22C55E)
+                                    checked && chosen -> Color(0xFFEF4444)
+                                    chosen -> accentBlue
+                                    else -> themeBorder
+                                }
+                            )
+                        ) {
+                            Text(
+                                option,
+                                Modifier.padding(16.dp),
+                                fontWeight = FontWeight.SemiBold,
+                                color = optionTextColor
+                            )
+                        }
                     }
                 }
                 if (checked) item {
-                    if (isCorrect) ReadingQuestionReward() else Text("Doğru cevap: ${question.correctAnswer}", color = Color(0xFFC94E4E), fontWeight = FontWeight.Bold)
+                    if (isCorrect) ReadingQuestionReward() else Text("Doğru cevap: ${question.correctAnswer}", color = Color(0xFFE55353), fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -336,16 +476,55 @@ private fun ReadingQuizResult(modifier: Modifier, correct: Int, total: Int, xpAm
     val celebration by rememberLottieComposition(LottieCompositionSpec.RawRes(celebrationRes))
     val coin by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.anim_coin))
     val xp by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.badge))
+    val appColors = LocalAppThemeColors.current
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp, 20.dp, 24.dp, 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         item { LottieAnimation(celebration, iterations = 1, modifier = Modifier.size(220.dp)) }
         item {
-            Text("Reading tamamlandı", fontSize = 28.sp, fontWeight = FontWeight.Black, color = Color(0xFF23415A), textAlign = TextAlign.Center)
+            Text("Reading tamamlandı", fontSize = 28.sp, fontWeight = FontWeight.Black, color = appColors.text, textAlign = TextAlign.Center)
             Spacer(Modifier.height(8.dp))
-            Text("$correct doğru · ${total - correct} yanlış", color = Color(0xFF607D8B), fontWeight = FontWeight.Bold)
+            Text("$correct doğru · ${total - correct} yanlış", color = appColors.textMuted, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(22.dp))
+            val xpMul = MarketBoostStore.getXpMultiplier(context)
+            val coinMul = MarketBoostStore.getCoinMultiplier(context)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                RewardAnimation(coin, "+$coinAmount coin", Color(0xFFE5A400), 90)
-                RewardAnimation(xp, "+$xpAmount XP", Color(0xFF2781B8), 90)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    RewardAnimation(coin, "+$coinAmount coin", Color(0xFFE5A400), 90)
+                    if (coinMul > 1 && coinAmount > 0) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFFFFB300).copy(alpha = 0.18f),
+                            border = BorderStroke(1.dp, Color(0xFFFFB300)),
+                            modifier = Modifier.padding(top = 4.dp)
+                        ) {
+                            Text(
+                                text = "2X BOOST",
+                                color = Color(0xFFFFB300),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Black,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    RewardAnimation(xp, "+$xpAmount XP", Color(0xFF2781B8), 90)
+                    if (xpMul > 1 && xpAmount > 0) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF8B5CF6).copy(alpha = 0.18f),
+                            border = BorderStroke(1.dp, Color(0xFF8B5CF6)),
+                            modifier = Modifier.padding(top = 4.dp)
+                        ) {
+                            Text(
+                                text = "2X BOOST",
+                                color = Color(0xFF8B5CF6),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Black,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
             }
             Spacer(Modifier.height(28.dp))
             Button(onClick = onDone, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(8.dp)) { Text("TAMAM", fontWeight = FontWeight.Bold) }
@@ -355,30 +534,48 @@ private fun ReadingQuizResult(modifier: Modifier, correct: Int, total: Int, xpAm
 
 @Composable
 private fun ReadingExitDialog(onStay: () -> Unit, onExit: () -> Unit) {
+    val appColors = LocalAppThemeColors.current
     val context = LocalContext.current
     val failRes = remember { context.resources.getIdentifier("fail", "raw", context.packageName).takeIf { it != 0 } ?: R.raw.cat_fishing_on_moon }
     val fail by rememberLottieComposition(LottieCompositionSpec.RawRes(failRes))
     AlertDialog(
         onDismissRequest = onStay,
+        containerColor = appColors.surface,
         icon = { LottieAnimation(fail, iterations = 1, modifier = Modifier.size(130.dp)) },
-        title = { Text("Reading'den ayrılmak istiyor musun?", textAlign = TextAlign.Center) },
-        text = { Text("Şimdi ayrılırsan bu turdaki coin ve XP ödülleri hesabına eklenmeyecek. Daha sonra yeniden deneyebilirsin.", textAlign = TextAlign.Center) },
+        title = { Text("Reading'den ayrılmak istiyor musun?", textAlign = TextAlign.Center, color = appColors.text) },
+        text = { Text("Şimdi ayrılırsan bu turdaki coin ve XP ödülleri hesabına eklenmeyecek. Daha sonra yeniden deneyebilirsin.", textAlign = TextAlign.Center, color = appColors.textMuted) },
         confirmButton = { TextButton(onClick = onExit) { Text("AYRIL", color = Color(0xFFD04C4C)) } },
-        dismissButton = { TextButton(onClick = onStay) { Text("DEVAM ET") } }
+        dismissButton = { TextButton(onClick = onStay) { Text("DEVAM ET", color = appColors.primary) } }
     )
 }
 
 private fun buildReadingQuestions(title: String, text: String): List<ReadingQuizQuestion> {
-    val others = allStories.filterKeys { it != title }
+    ReadingDataRepository.getQuestionsFor(title)?.let { return it }
+    val sentences = sentences(text)
     val words = significantWords(text)
-    val word = words.firstOrNull() ?: title.split(" ").first()
-    val distractors = others.values.flatMap(::significantWords).filterNot { it in words }.distinct().take(3)
-    val ending = sentences(text).lastOrNull() ?: text.trim()
-    val otherEndings = others.values.mapNotNull { sentences(it).lastOrNull() }.take(3)
+    val word = words.firstOrNull() ?: "routine"
+    val ending = sentences.lastOrNull() ?: text.trim()
     return listOf(
-        ReadingQuizQuestion("Okuduğun metnin başlığı hangisidir?", title, (listOf(title) + others.keys.take(3)).shuffled()),
-        ReadingQuizQuestion("Aşağıdaki kelimelerden hangisi metinde geçiyor?", word, (listOf(word) + distractors).shuffled()),
-        ReadingQuizQuestion("Metin hangi cümleyle bitiyor?", ending, (listOf(ending) + otherEndings).shuffled())
+        ReadingQuizQuestion(
+            prompt = "Okuduğunuz metnin ana fikri nedir?",
+            correctAnswer = title,
+            options = listOf(title, "Günlük Yaşam ve Alışkanlıklar", "Şehir ve Çevre Gözlemleri", "Gelecek Planları ve Hedefler")
+        ),
+        ReadingQuizQuestion(
+            prompt = "Metinde geçen önemli kavramlardan biri hangisidir?",
+            correctAnswer = word,
+            options = listOf(word, "architecture", "meteorology", "archaeology")
+        ),
+        ReadingQuizQuestion(
+            prompt = "Metin aşağıdaki düşüncelerden hangisiyle tamamlanmaktadır?",
+            correctAnswer = ending,
+            options = listOf(
+                ending,
+                "Everything was ready for the upcoming week.",
+                "The journey ended much earlier than expected.",
+                "They decided to return home immediately."
+            )
+        )
     )
 }
 

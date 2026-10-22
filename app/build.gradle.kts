@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose") version "2.0.21"
     id("org.jetbrains.kotlin.plugin.serialization") version "2.0.21"
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -10,17 +11,18 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.ngilizcequizapp"
+        applicationId = "com.mewenglish.app"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
@@ -33,6 +35,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -71,10 +74,24 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
-    // --- SUPABASE & KTOR CLIENT ---
-    implementation(platform(libs.supabase.bom))
-    implementation(libs.postgrest.kt)
-    implementation(libs.ktor.client.android)
-    implementation(libs.ktor.client.content.negotiation)
-    implementation(libs.ktor.serialization.kotlinx.json)
+
+    // --- FIREBASE FIRESTORE & AUTH ---
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-firestore-ktx")
+    implementation("com.google.firebase:firebase-auth-ktx")
+
+    // --- VIEWMODEL & COMPOSE LIFECYCLE ---
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+
+    // --- GOOGLE SIGN IN & AUTH ---
+    implementation("com.google.android.gms:play-services-auth:21.2.0")
+
+    // --- GOOGLE PLAY IN-APP BILLING ---
+    implementation("com.android.billingclient:billing-ktx:7.1.0")
+
+    // --- GOOGLE MOBILE ADS (ADMOB) ---
+    implementation("com.google.android.gms:play-services-ads:23.6.0")
+
+    // --- SECURITY & ENCRYPTED STORAGE ---
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 }

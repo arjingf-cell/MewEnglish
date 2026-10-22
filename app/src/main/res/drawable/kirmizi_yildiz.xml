@@ -1,0 +1,22 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- Outer Glow Circle -->
+    <path
+        android:fillColor="#33EF4444"
+        android:pathData="M48,48m-44,0a44,44 0,1 1,88 0a44,44 0,1 1,-88 0" />
+    <!-- Crimson Star Backing -->
+    <path
+        android:fillColor="#F87171"
+        android:pathData="M48,10 L58,34 L84,36 L64,54 L70,80 L48,66 L26,80 L32,54 L12,36 L38,34 Z" />
+    <!-- Inner Deep Crimson Star -->
+    <path
+        android:fillColor="#DC2626"
+        android:pathData="M48,16 L56,36 L78,38 L61,53 L66,74 L48,63 L30,74 L35,53 L18,38 L40,36 Z" />
+    <!-- Core Bright Highlight -->
+    <path
+        android:fillColor="#FEE2E2"
+        android:pathData="M48,26 L52,40 L66,42 L55,51 L58,65 L48,58 L38,65 L41,51 L30,42 L44,40 Z" />
+</vector>

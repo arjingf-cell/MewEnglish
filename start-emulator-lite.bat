@@ -1,9 +1,9 @@
 @echo off
 setlocal
 
-set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
-set "ANDROID_SDK_ROOT=%LOCALAPPDATA%\Android\Sdk"
-set "EMULATOR=%LOCALAPPDATA%\Android\Sdk\emulator\emulator.exe"
+set "ANDROID_HOME=%USERPROFILE%\Android\sdk"
+set "ANDROID_SDK_ROOT=%USERPROFILE%\Android\sdk"
+set "EMULATOR=%USERPROFILE%\Android\sdk\emulator\emulator.exe"
 
 start "MewEnglish Lite Emulator" "%EMULATOR%" ^
   -avd Pixel_8 ^

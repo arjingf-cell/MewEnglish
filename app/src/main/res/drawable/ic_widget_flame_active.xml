@@ -1,0 +1,39 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Outer Flame with Orange-Red Gradient -->
+    <path
+        android:pathData="M12,2C11.5,4.2 9.2,6.5 9.2,9C9.2,10.4 10,11.5 11,12C8.2,10.5 7,7.8 7,5.5C4.2,8.8 3.8,13 5.4,16.2C7,19.5 10.2,21.8 13.8,21.9C18.5,22.2 21.8,18.4 21.8,13.8C21.8,8.5 17.5,4.8 15.2,2C15,4.2 13.5,6.2 12.2,7.2C12.5,5.2 12.4,3.4 12,2Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="12"
+                android:startY="2"
+                android:endX="12"
+                android:endY="22"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FF7A00" />
+                <item android:offset="0.5" android:color="#FF4D00" />
+                <item android:offset="1.0" android:color="#E60000" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Inner Flame Core with Bright Gold-Yellow -->
+    <path
+        android:pathData="M13.2,19.5C11,19.5 9.4,17.8 9.8,15.2C10.1,13.5 11.2,12.2 12.5,11C13.2,12.2 14.2,13 15.2,14.2C16,15.2 16.2,16.4 15.8,17.6C15.2,18.9 14.3,19.5 13.2,19.5Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="13"
+                android:startY="11"
+                android:endX="13"
+                android:endY="20"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFF9C4" />
+                <item android:offset="0.5" android:color="#FFEB3B" />
+                <item android:offset="1.0" android:color="#FFB300" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

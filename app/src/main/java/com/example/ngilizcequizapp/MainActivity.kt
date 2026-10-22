@@ -1,6 +1,7 @@
 package com.example.ngilizcequizapp
 
 import com.google.mlkit.nl.languageid.LanguageIdentification
+import kotlinx.coroutines.launch
 import com.example.ngilizcequizapp.QuizRepository
 import androidx.compose.ui.draw.clip
 import coil.compose.AsyncImage
@@ -86,14 +87,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
 
         speechAssistant = SpeechAssistant(this)
 
-        // ✅ Kullanıcıyı yormadan paketi kontrol et ve yoksa yönlendir
-        speechAssistant.checkAndDownloadTurkish(this)
-        AppDictionary.initialize(this)
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            AppDictionary.initialize(applicationContext)
+        }
         WordStorage.loadFromDisk(this)
-        MistakeJarStore.load(this)
+        AchievementManager.init(this)
+        StreakManager.updateStreak(this)
+        FirestoreSyncManager.init(this)
+        BillingManager.init(this)
+        RewardedAdManager.init(this)
         AppNotificationRouter.pendingRoute = intent?.getStringExtra(AppNotificationRouter.EXTRA_ROUTE)
 
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -103,6 +109,36 @@ class MainActivity : ComponentActivity() {
         setContent {
             AppRootScreen(speechAssistant = speechAssistant)
         }
+    }
+
+    /**
+     * Arka planda ödüllü reklam yükleme fonksiyonu
+     */
+    fun loadRewardedAd(onLoaded: (() -> Unit)? = null, onError: ((String) -> Unit)? = null) {
+        RewardedAdManager.loadRewardedAd(this, onLoaded, onError)
+    }
+
+    /**
+     * Kullanıcı enerjisi bittiğinde veya ödül almak istediğinde reklamı gösteren fonksiyon
+     */
+    fun showRewardedAd(
+        onRewardEarned: (Int) -> Unit = { amount -> EnergyManager.addEnergy(this, amount) },
+        onAdDismissed: (() -> Unit)? = null,
+        onAdFailedToShow: ((String) -> Unit)? = null
+    ) {
+        RewardedAdManager.showRewardedAd(this, onRewardEarned, onAdDismissed, onAdFailedToShow)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        ActivityTracker.onAppResumed(this)
+        MewStreakWidgetProvider.updateStreakWidget(this)
+        BillingManager.queryPurchasesAsync()
+    }
+
+    override fun onPause() {
+        ActivityTracker.onAppPaused(this)
+        super.onPause()
     }
 
     override fun onDestroy() {
@@ -128,8 +164,7 @@ class SpeechAssistant(context: Context) : TextToSpeech.OnInitListener {
     private var isReady = false
     private val languageIdentifier = LanguageIdentification.getClient()
 
-    // 🔴 EKSİK OLANLAR BURADAYDI:
-    private var lastSpeakTime: Long = 0L // Long olduğunu ve 0 olduğunu belirttik
+    private var lastSpeakTime: Long = 0L
 
     init {
         tts = TextToSpeech(context, this, "com.google.android.tts")
@@ -138,75 +173,44 @@ class SpeechAssistant(context: Context) : TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             isReady = true
-            tts?.setSpeechRate(0.8f)
-            // ✅ Motor hazır olduktan sonra kontrolü yap
-            // Not: Bunun için init'te aldığın context'i bir değişkende saklaman gerekir
-            // checkAndDownloadTurkish(myContext)
+            tts?.setSpeechRate(0.85f)
+            tts?.setLanguage(Locale.US)
         }
     }
 
     fun speak(text: String) {
         val currentTime = System.currentTimeMillis()
 
-        // Zaman kilidi kontrolü
-        if (currentTime - lastSpeakTime < 1000) return
-
+        if (currentTime - lastSpeakTime < 400) return
         if (!isReady || text.isBlank()) return
 
         lastSpeakTime = currentTime
 
-        // 🔴 EKSİK OLAN DİĞER TANIM BURADA:
         val hasTurkishChar = text.any { it in "çğıöşüÇĞİÖŞÜıİ" }
 
-        languageIdentifier.identifyLanguage(text)
-            .addOnSuccessListener { languageCode ->
-                android.util.Log.d("TTS_LOG", "📢 TEK ÇAĞRI: $languageCode | Metin: $text")
-
-                val locale = if (languageCode == "tr" || hasTurkishChar || languageCode == "und") {
-                    Locale("tr", "TR")
-                } else {
-                    Locale.US
-                }
-
-                tts?.setLanguage(locale)
-                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "id_$currentTime")
-            }
+        if (hasTurkishChar) {
+            tts?.setLanguage(Locale("tr", "TR"))
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "id_$currentTime")
+        } else {
+            tts?.setLanguage(Locale.US)
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "id_$currentTime")
+        }
     }
 
     fun speakEnglish(text: String) {
         val currentTime = System.currentTimeMillis()
-        if (currentTime - lastSpeakTime < 1000 || !isReady || text.isBlank()) return
+        if (currentTime - lastSpeakTime < 400 || !isReady || text.isBlank()) return
 
         val hasTurkishChar = text.any { it in "çğıöşüÇĞİÖŞÜıİ" }
         if (hasTurkishChar) return
 
-        languageIdentifier.identifyLanguage(text)
-            .addOnSuccessListener { languageCode ->
-                if (languageCode == "tr") return@addOnSuccessListener
-                lastSpeakTime = currentTime
-                tts?.setLanguage(Locale.US)
-                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "english_$currentTime")
-            }
+        lastSpeakTime = currentTime
+        tts?.setLanguage(Locale.US)
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "english_$currentTime")
     }
 
     fun checkAndDownloadTurkish(context: Context) {
-        // 1. Önce motorun dil durumunu sessizce sorgula
-        val result = tts?.isLanguageAvailable(Locale("tr", "TR"))
-
-        // 2. SADECE VE SADECE dil dosyaları kesinlikle yoksa (LANG_MISSING_DATA) indir de.
-        // Eğer dil yüklüyse (LANG_AVAILABLE) veya ülke destekleniyorsa hiçbir şey yapma.
-        if (result == TextToSpeech.LANG_MISSING_DATA) {
-            android.util.Log.d("TTS_LOG", "Dosyalar gerçekten eksik, yönlendiriliyor.")
-
-            val installIntent = Intent().apply {
-                action = TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(installIntent)
-        } else {
-            // Dil yüklü veya destekleniyor; kullanıcıya hiçbir şey hissettirme.
-            android.util.Log.d("TTS_LOG", "Türkçe paketi zaten sistemde mevcut. Sessiz mod aktif.")
-        }
+        // İsteğe bağlı, artık zorunlu çağrılmıyor
     }
 
     fun shutdown() {

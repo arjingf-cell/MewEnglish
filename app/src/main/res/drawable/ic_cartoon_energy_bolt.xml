@@ -1,0 +1,41 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- Cartoon Glow / Drop shadow under the bolt -->
+    <path
+        android:fillColor="#40FFA000"
+        android:pathData="M27,2 L14,24 L24,24 L19,46 L37,20 L27,20 Z" />
+
+    <!-- Thick cartoon dark border -->
+    <path
+        android:fillColor="#3D2200"
+        android:strokeColor="#3D2200"
+        android:strokeWidth="3.5"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M26,3 L13,24 L23,24 L18,45 L36,20 L26,20 Z" />
+
+    <!-- 3D Bevel / Darker orange back layer -->
+    <path
+        android:fillColor="#FF9100"
+        android:pathData="M26,4 L14.5,23 L23.5,23 L19.5,43 L34.5,21 L26,21 Z" />
+
+    <!-- Main vibrant cartoon yellow body -->
+    <path
+        android:fillColor="#FFD600"
+        android:pathData="M25.5,5 L15,22.5 L23,22.5 L19,41 L33,21 L25,21 Z" />
+
+    <!-- Upper shiny reflection highlight (Gloss) -->
+    <path
+        android:fillColor="#FFF59D"
+        android:pathData="M25,6 L17,21 L22,21 L20,32 L22,23 L25,7 Z" />
+
+    <!-- White specular sparkle dot / shine strip -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,7 L19,19 L21,19 L25,7 Z" />
+
+</vector>

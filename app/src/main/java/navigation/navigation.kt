@@ -30,6 +30,7 @@ import androidx.compose.ui.draw.scale
 import java.util.Locale
 import androidx.compose.material.icons.filled.* // Tüm standart ikonları içeri aktarır
 import android.content.Context
+import android.widget.Toast
 import android.net.Uri
 import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
@@ -237,6 +238,7 @@ fun WordPopup(
     onDismiss: () -> Unit,
     sourceStory: String? = null
 ) {
+    val appColors = LocalAppThemeColors.current
     val context = LocalContext.current
     var dictionaryReady by remember { mutableStateOf(false) }
 
@@ -252,13 +254,12 @@ fun WordPopup(
         else AppDictionary.words[cleanWord] ?: "Anlamı sözlükte bulunamadı."
     }
 
-    val VividIceBlue = Color(0xFF5D9CEC)
-    val DeepBlue = Color(0xFF2C3E50)
+    val VividIceBlue = appColors.primary
 
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(32.dp),
-        containerColor = Color.White,
+        containerColor = appColors.surface,
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -306,9 +307,9 @@ fun WordPopup(
         text = {
             Box(modifier = Modifier
                 .fillMaxWidth()
-                .background(VividIceBlue.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
+                .background(appColors.surfaceRaised, RoundedCornerShape(16.dp))
                 .padding(16.dp)) {
-                Text(text = "$translation", color = DeepBlue, fontSize = 18.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                Text(text = "$translation", color = appColors.text, fontSize = 18.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             }
         },
         confirmButton = {
@@ -477,6 +478,9 @@ sealed class Screen(
     }
 
     object QuizDetail : Screen("quiz_detail/{quizId}", "Quiz Detay", icon = Icons.Default.CheckCircle)
+    object Market : Screen("market_screen", "Market", icon = Icons.Default.ShoppingCart)
+    object Welcome : Screen("welcome_screen", "Hoş Geldiniz", icon = Icons.Default.Person)
+    object MewChat : Screen("mew_chat", "Robot Mew Chat", icon = Icons.Default.Chat)
 }
 
 // Alt Bar Menüsü - Burası artık yeni nesneleri kullanıyor
@@ -493,22 +497,36 @@ fun AppScaffold(
     scope: CoroutineScope,
     content: @Composable () -> Unit
 ) {
+    val context = LocalContext.current
     val isDarkMode = LocalIsDarkMode.current
     val appColors = LocalAppThemeColors.current
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
+    var showActiveBoostsDialog by remember { mutableStateOf(false) }
+    var showCatSelector by remember { mutableStateOf(false) }
+
+    val equippedTopBarAvatarRes = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.getEquippedTopBarAvatarRes(context)
+    }
+
+    val isSpaceTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isSpaceThemeActive(context)
+    }
+    val isKingdomTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isKingdomThemeActive(context)
+    }
 
     // --- DİNAMİK RENKLER ---
-    val backgroundColor = appColors.background
-    val BrokenIceBlue = appColors.border
-    val VividIceBlue = appColors.primary
+    val backgroundColor = if (isSpaceTheme || isKingdomTheme) Color.Transparent else appColors.background
+    val BrokenIceBlue = if (isKingdomTheme) Color(0xFFFFD700) else appColors.border
+    val VividIceBlue = if (isKingdomTheme) Color(0xFFFFD700) else appColors.primary
 
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(
-                drawerContainerColor = appColors.surface, // Menü arka planı
+                drawerContainerColor = if (isSpaceTheme) Color(0xFF0C132C) else if (isKingdomTheme) Color(0xFF070F26) else if (isDarkMode) Color(0xFF0F172A) else Color(0xFFFFFFFF), // Menü arka planı
                 drawerShape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp)
             ) {
                 // ✅ HATA ÇÖZÜMÜ: Sadece gerekli parametreleri gönderiyoruz.
@@ -523,20 +541,53 @@ fun AppScaffold(
         }
     ) {
         Scaffold(
+            containerColor = if (isSpaceTheme || isKingdomTheme) Color.Transparent else appColors.background,
             topBar = {
                 Column {
                     TopAppBar(
+                        navigationIcon = {
+                            Box(
+                                modifier = Modifier
+                                    .padding(start = 12.dp, end = 6.dp)
+                                    .size(38.dp)
+                                    .background(
+                                        if (isKingdomTheme) Color(0xFF070F26) else if (isDarkMode) Color(0xFF1E293B) else Color.White,
+                                        CircleShape
+                                    )
+                                    .border(
+                                        width = 2.dp,
+                                        color = VividIceBlue,
+                                        shape = CircleShape
+                                    )
+                                    .clip(CircleShape)
+                                    .clickable { showCatSelector = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Image(
+                                    painter = painterResource(id = equippedTopBarAvatarRes),
+                                    contentDescription = "Profil Resmi",
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(2.dp)
+                                        .clip(CircleShape),
+                                    contentScale = ContentScale.Crop
+                                )
+                            }
+                        },
                         title = {
-                            Image(
-                                painter = painterResource(id = R.drawable.logo_tp_app),
-                                contentDescription = "Logo",
-                                modifier = Modifier.height(35.dp),
-                                contentScale = ContentScale.Fit,
-                                // ✅ Karanlık modda logonun beyaza yakın tonda parlaması için filtre
-                                colorFilter = if (isDarkMode) ColorFilter.tint(Color.White) else null
+                            Text(
+                                text = "MewEnglish",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (isKingdomTheme) Color(0xFFFFF7D6) else appColors.text
                             )
                         },
                         actions = {
+                            ActiveBoostsTopBarButton(
+                                compact = true,
+                                modifier = Modifier.padding(end = 4.dp),
+                                onClick = { showActiveBoostsDialog = true }
+                            )
                             IconButton(onClick = { scope.launch { drawerState.open() } }) {
                                 Icon(
                                     imageVector = Icons.Default.Menu,
@@ -545,68 +596,17 @@ fun AppScaffold(
                                 )
                             }
                         },
-                        colors = TopAppBarDefaults.topAppBarColors(containerColor = backgroundColor)
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = if (isSpaceTheme) Color(0xFF030611).copy(alpha = 0.85f)
+                                             else if (isKingdomTheme) Color(0xFF070F26).copy(alpha = 0.95f)
+                                             else backgroundColor
+                        )
                     )
                     HorizontalDivider(thickness = 0.5.dp, color = BrokenIceBlue.copy(alpha = 0.2f))
                 }
             },
             bottomBar = {
-                NavigationBar(
-                    containerColor = appColors.surface,
-                    tonalElevation = 12.dp
-                ) {
-                    val items = listOf(Screen.Home, Screen.Progress, Screen.Quiz, Screen.Word)
-
-                    items.forEach { screen ->
-                        val isSelected = currentRoute == screen.route
-                        NavigationBarItem(
-                            icon = {
-                                // ✨ PNG ve Vector Karar Mekanizması + %50 Büyütülmüş Boyutlar
-                                if (screen.iconRes != null) {
-                                    // PNG yüklü olanlar için (Home, Kupa, Quiz, Dicti)
-                                    Image(
-                                        painter = painterResource(id = screen.iconRes),
-                                        contentDescription = screen.title,
-                                        // 🚀 %50 BÜYÜTÜLDÜ: 30dp -> 45dp, 26dp -> 39dp
-                                        modifier = Modifier.size(if (isSelected) 45.dp else 39.dp),
-                                        alpha = if (isSelected) 1f else 0.6f // Biraz daha belirgin olması için 0.5'ten 0.6'ya çektim
-                                    )
-                                } else if (screen.icon != null) {
-                                    // PNG olmayanlar için Vector ikonlar da orantılı büyütüldü
-                                    Icon(
-                                        imageVector = screen.icon,
-                                        contentDescription = screen.title,
-                                        modifier = Modifier.size(if (isSelected) 36.dp else 30.dp),
-                                        tint = if (isSelected) VividIceBlue else VividIceBlue.copy(alpha = 0.5f)
-                                    )
-                                }
-                            },
-                            label = {
-                                Text(
-                                    text = screen.title,
-                                    color = if (isSelected) VividIceBlue else VividIceBlue.copy(alpha = 0.5f),
-                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
-                                    fontSize = 10.sp // İkonlar büyüdüğü için yazıyı 1 tık küçülterek alanı dengeledik
-                                )
-                            },
-                            selected = isSelected,
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = VividIceBlue,
-                                unselectedIconColor = VividIceBlue.copy(alpha = 0.5f),
-                                indicatorColor = Color.Transparent
-                            ),
-                            onClick = {
-                                if (currentRoute != screen.route) {
-                                    navController.navigate(screen.route) {
-                                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                }
-                            }
-                        )
-                    }
-                }
+                AppBottomNavigationBar(navController = navController)
             }
         ) { padding ->
             // ✅ BURASI ÇOK KRİTİK: Bütün sayfaların arka planı buradan kararır
@@ -620,7 +620,164 @@ fun AppScaffold(
             }
         }
     }
+
+    if (showActiveBoostsDialog) {
+        ActiveBoostsModalDialog(
+            navController = navController,
+            onDismiss = { showActiveBoostsDialog = false }
+        )
+    }
+
+    if (showCatSelector) {
+        CatSelectorBottomSheet(
+            isForTopBar = true,
+            onDismissRequest = { showCatSelector = false }
+        )
+    }
 }
+
+@Composable
+fun AppBottomNavigationBar(
+    navController: NavHostController
+) {
+    val context = LocalContext.current
+    val appColors = LocalAppThemeColors.current
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+    val VividIceBlue = appColors.primary
+    val isSpaceTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isSpaceThemeActive(context)
+    }
+    val isKingdomTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isKingdomThemeActive(context)
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (isKingdomTheme) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .background(Color(0xFF04091A).copy(alpha = 0.95f))
+            ) {
+                val midX = size.width / 2f
+                val midY = size.height / 2f
+
+                val goldBrush = Brush.horizontalGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        Color(0xFFD4AF37).copy(alpha = 0.7f),
+                        Color(0xFFFFE082),
+                        Color(0xFFD4AF37).copy(alpha = 0.7f),
+                        Color.Transparent
+                    )
+                )
+                drawLine(
+                    brush = goldBrush,
+                    start = androidx.compose.ui.geometry.Offset(0f, midY),
+                    end = androidx.compose.ui.geometry.Offset(size.width, midY),
+                    strokeWidth = 1.5.dp.toPx()
+                )
+
+                val diamondPath = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(midX, midY - 4.dp.toPx())
+                    lineTo(midX + 4.dp.toPx(), midY)
+                    lineTo(midX, midY + 4.dp.toPx())
+                    lineTo(midX - 4.dp.toPx(), midY)
+                    close()
+                }
+                drawPath(path = diamondPath, color = Color(0xFFFFD700))
+                drawCircle(
+                    color = Color.White,
+                    radius = 1.2.dp.toPx(),
+                    center = androidx.compose.ui.geometry.Offset(midX, midY)
+                )
+            }
+        }
+
+        NavigationBar(
+            containerColor = when {
+                isKingdomTheme -> Color(0xFF04091A).copy(alpha = 0.95f)
+                isSpaceTheme -> Color(0xFF060D24).copy(alpha = 0.92f)
+                else -> appColors.surface
+            },
+            tonalElevation = 12.dp
+        ) {
+            val items = listOf(Screen.Home, Screen.Progress, Screen.Quiz, Screen.Word)
+
+            items.forEach { screen ->
+                val isSelected = currentRoute == screen.route
+                val activeTint = if (isKingdomTheme) Color(0xFFFFD700) else if (isSpaceTheme) Color(0xFF60A5FA) else VividIceBlue
+                val unselectedTint = if (isKingdomTheme) Color(0xFFD4AF37).copy(alpha = 0.5f) else if (isSpaceTheme) Color(0xFF93C5FD).copy(alpha = 0.45f) else VividIceBlue.copy(alpha = 0.5f)
+
+                val googleIcon = when (screen) {
+                    Screen.Home -> Icons.Default.Home
+                    Screen.Progress -> Icons.Default.EmojiEvents
+                    Screen.Quiz -> Icons.Default.Quiz
+                    Screen.Word -> Icons.Default.MenuBook
+                    else -> screen.icon ?: Icons.Default.Circle
+                }
+
+                val kingdomIconRes = when (screen) {
+                    Screen.Home -> R.drawable.kingdom_ana_ekran
+                    Screen.Progress -> R.drawable.kingdom_progress
+                    Screen.Quiz -> R.drawable.kingdom_quiz
+                    Screen.Word -> R.drawable.kingdom_dict
+                    else -> screen.iconRes
+                }
+
+                val kingdomIconSize = when {
+                    screen == Screen.Quiz || screen == Screen.Word -> if (isSelected) 50.dp else 44.dp
+                    else -> if (isSelected) 44.dp else 38.dp
+                }
+
+                NavigationBarItem(
+                    icon = {
+                        if (isKingdomTheme && kingdomIconRes != null) {
+                            Image(
+                                painter = painterResource(id = kingdomIconRes),
+                                contentDescription = screen.title,
+                                modifier = Modifier.size(kingdomIconSize),
+                                alpha = if (isSelected) 1f else 0.70f
+                            )
+                        } else {
+                            Icon(
+                                imageVector = googleIcon,
+                                contentDescription = screen.title,
+                                modifier = Modifier.size(if (isSelected) 28.dp else 24.dp),
+                                tint = if (isSelected) activeTint else unselectedTint
+                            )
+                        }
+                    },
+                    label = {
+                        Text(
+                            text = screen.title,
+                            color = if (isSelected) activeTint else unselectedTint,
+                            fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
+                            fontSize = 10.sp
+                        )
+                    },
+                    selected = isSelected,
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = activeTint,
+                        unselectedIconColor = unselectedTint,
+                        indicatorColor = Color.Transparent
+                    ),
+                    onClick = {
+                        if (currentRoute != screen.route) {
+                            navController.navigate(screen.route) {
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
+                    }
+                )
+            }
+        }
+    }
+}
+
 // Bu fonksiyon AppScaffold'un içinde DEĞİL, tamamen dışında olmalı.
 @Composable
 fun DrawerContent(
@@ -629,42 +786,340 @@ fun DrawerContent(
     drawerState: DrawerState? = null,
     modifier: Modifier = Modifier
 ) {
-    val isDarkMode = LocalIsDarkMode.current  // ✅ bunu ekle
+    val context = LocalContext.current
+    val isDarkMode = LocalIsDarkMode.current
     val appColors = LocalAppThemeColors.current
-    val currentBg = appColors.surface
-    val currentText = appColors.text
+
+    val isKingdomTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isKingdomThemeActive(context)
+    }
+    val isSpaceTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isSpaceThemeActive(context)
+    }
+
+    // Tema Renk Paletleri:
+    // klasik: Ferah açık renk zemin, net koyu metin ve standart vurgu renkleri.
+    // kingdom: Koyu asil (antrasit/koyu bordo-siyah) zemin, altın sarısı (Gold) kenarlık, ikon ve başlık vurguları, yüksek kontrastlı açık renk metin.
+    // uzay: Derin kozmik lacivert/mor galaksi zemini, neon mavi/mor aktif menü vurgusu ve parlak beyaz/gümüş metin.
+    val drawerBg = when {
+        isKingdomTheme -> Color(0xFF070F26)
+        isSpaceTheme -> Color(0xFF0C132C)
+        isDarkMode -> Color(0xFF0F172A)
+        else -> Color(0xFFFFFFFF)
+    }
+    val titleColor = when {
+        isKingdomTheme -> Color(0xFFFFD700)
+        isSpaceTheme -> Color(0xFF38BDF8)
+        else -> appColors.primary
+    }
+    val textColor = when {
+        isKingdomTheme -> Color(0xFFFFF7D6)
+        isSpaceTheme -> Color(0xFFF8FAFC)
+        else -> appColors.text
+    }
+    val textMutedColor = when {
+        isKingdomTheme -> Color(0xFFD4AF37)
+        isSpaceTheme -> Color(0xFF94A3B8)
+        else -> appColors.textMuted
+    }
+    val iconTint = when {
+        isKingdomTheme -> Color(0xFFFFD700)
+        isSpaceTheme -> Color(0xFF8B5CF6)
+        else -> appColors.primary
+    }
+    val dividerColor = when {
+        isKingdomTheme -> Color(0xFFFFD700).copy(alpha = 0.25f)
+        isSpaceTheme -> Color(0xFF8B5CF6).copy(alpha = 0.25f)
+        else -> appColors.border.copy(alpha = 0.5f)
+    }
+    val profileCardBg = when {
+        isKingdomTheme -> Color(0xFF0E1A38)
+        isSpaceTheme -> Color(0xFF131B3B)
+        isDarkMode -> Color(0xFF1E293B)
+        else -> Color(0xFFF8FAFC)
+    }
+    val profileBorderColor = when {
+        isKingdomTheme -> Color(0xFFFFD700).copy(alpha = 0.5f)
+        isSpaceTheme -> Color(0xFF8B5CF6).copy(alpha = 0.5f)
+        else -> appColors.border
+    }
+    val badgeBg = when {
+        isKingdomTheme -> Color(0xFFFFD700).copy(alpha = 0.15f)
+        isSpaceTheme -> Color(0xFF8B5CF6).copy(alpha = 0.2f)
+        else -> appColors.primarySoft
+    }
+
+    // Profil Bilgileri
+    val avatarRes = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.getEquippedAvatarRes(context)
+    }
+    val fullName = remember(UserProfileManager.stateRevision) {
+        UserProfileManager.getUserFullName(context)
+    }
+    val effectiveRank = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.getUserEffectiveRank(context)
+    }
+    val streakCount = remember {
+        StreakManager.getStreak(context)
+    }
+    val userXp = remember {
+        QuizTreeProgressStore.getXp(context)
+    }
+
+    val currentUser = remember { com.google.firebase.auth.FirebaseAuth.getInstance().currentUser }
+    val userEmail = remember(UserProfileManager.stateRevision) {
+        UserProfileManager.getUserEmail(context).trim()
+    }
+    val isLinked = remember(UserProfileManager.stateRevision, currentUser) {
+        (currentUser != null && !currentUser.isAnonymous && (!currentUser.email.isNullOrBlank())) ||
+        userEmail.isNotBlank()
+    }
+    val effectiveEmail = if (userEmail.isNotBlank()) userEmail else (currentUser?.email ?: "")
+    var showAccountLinkingDialog by remember { mutableStateOf(false) }
 
     Column(
-        modifier = modifier // Gelen modifier'ı buraya işliyoruz
+        modifier = modifier
             .fillMaxHeight()
-            .width(280.dp)
-            .background(currentBg)
-            .padding(24.dp)
+            .width(300.dp)
+            .background(drawerBg)
+            .padding(horizontal = 20.dp, vertical = 24.dp)
     ) {
-        Text(
-            text = "MewEnglish",
-            color = appColors.primary,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold
-        )
+        // MewEnglish Başlığı
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(bottom = 16.dp, top = 8.dp)
+        ) {
+            Text(
+                text = "MewEnglish",
+                color = titleColor,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
+        }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        // Üst Profil Alanı
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .clickable {
+                    scope?.launch { drawerState?.close() }
+                    navController?.navigate("settings")
+                },
+            color = profileCardBg,
+            shape = RoundedCornerShape(18.dp),
+            border = BorderStroke(1.dp, profileBorderColor),
+            shadowElevation = 2.dp
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(badgeBg)
+                            .border(2.dp, iconTint, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            painter = painterResource(id = avatarRes),
+                            contentDescription = "Avatar",
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(3.dp)
+                                .clip(CircleShape),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = fullName,
+                            color = textColor,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "${effectiveRank.nameStr} · ${effectiveRank.titleStr}",
+                            color = textMutedColor,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isLinked) Color(0xFF10B981) else Color(0xFFF59E0B))
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = if (isLinked) "Bağlı: $effectiveEmail" else "Misafir Hesap • Bağla",
+                                color = if (isLinked) Color(0xFF10B981) else Color(0xFFF59E0B),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
 
-        DrawerItem("Profil", Icons.Default.Person, currentText)
-        DrawerItem("İstatistik", Icons.Default.Star, currentText)
+                Spacer(modifier = Modifier.height(10.dp))
 
-        Spacer(modifier = Modifier.weight(1f))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Streak Badge
+                    Surface(
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp),
+                        color = badgeBg,
+                        border = BorderStroke(0.5.dp, iconTint.copy(alpha = 0.4f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LocalFireDepartment,
+                                contentDescription = null,
+                                tint = if (isKingdomTheme) Color(0xFFFFD700) else Color(0xFFFF7043),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "$streakCount Gün",
+                                color = textColor,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
 
-        HorizontalDivider(color = currentText.copy(alpha = 0.1f))
+                    // XP Badge
+                    Surface(
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp),
+                        color = badgeBg,
+                        border = BorderStroke(0.5.dp, iconTint.copy(alpha = 0.4f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = null,
+                                tint = iconTint,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "$userXp XP",
+                                color = textColor,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
 
-        // AYARLAR TUŞU
+        Spacer(modifier = Modifier.height(16.dp))
+        HorizontalDivider(thickness = 1.dp, color = dividerColor)
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Menü Öğeleri
         DrawerItem(
-            label = "Settings",
-            icon = Icons.Default.Settings,
-            textColor = currentText,
+            label = "Profil",
+            icon = Icons.Default.Person,
+            textColor = textColor,
+            iconTint = iconTint,
             modifier = Modifier.clickable {
                 scope?.launch { drawerState?.close() }
                 navController?.navigate("settings")
+            }
+        )
+        DrawerItem(
+            label = if (isLinked) "Hesap Yönetimi" else "Hesap Bağla (Yedekle)",
+            icon = if (isLinked) Icons.Default.CloudDone else Icons.Default.CloudUpload,
+            textColor = if (isLinked) textColor else Color(0xFF38BDF8),
+            iconTint = if (isLinked) iconTint else Color(0xFF38BDF8),
+            modifier = Modifier.clickable {
+                scope?.launch { drawerState?.close() }
+                if (isLinked) {
+                    navController?.navigate("settings")
+                } else {
+                    showAccountLinkingDialog = true
+                }
+            }
+        )
+        DrawerItem(
+            label = "İstatistik",
+            icon = Icons.Default.Star,
+            textColor = textColor,
+            iconTint = iconTint,
+            modifier = Modifier.clickable {
+                scope?.launch { drawerState?.close() }
+                navController?.navigate(Screen.Progress.route)
+            }
+        )
+        if (AppConfig.IS_MARKET_ENABLED) {
+            DrawerItem(
+                label = "Market",
+                icon = Icons.Default.ShoppingCart,
+                textColor = textColor,
+                iconTint = iconTint,
+                modifier = Modifier.clickable {
+                    scope?.launch { drawerState?.close() }
+                    navController?.navigate(Screen.Market.route)
+                }
+            )
+            DrawerItem(
+                label = "Abonelik (Premium)",
+                icon = Icons.Default.Star,
+                textColor = textColor,
+                iconTint = iconTint,
+                modifier = Modifier.clickable {
+                    scope?.launch { drawerState?.close() }
+                    navController?.navigate("premium_screen")
+                }
+            )
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        HorizontalDivider(thickness = 1.dp, color = dividerColor)
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Ayarlar Tuşu
+        DrawerItem(
+            label = "Ayarlar",
+            icon = Icons.Default.Settings,
+            textColor = textColor,
+            iconTint = iconTint,
+            modifier = Modifier.clickable {
+                scope?.launch { drawerState?.close() }
+                navController?.navigate("settings")
+            }
+        )
+    }
+
+    if (showAccountLinkingDialog) {
+        AccountLinkingDialog(
+            title = "Hesabını Bağla & İlerlemeni Koru 🐾",
+            description = "Puanlarının, lig derecenin ve açtığın kostümlerin hiçbir zaman kaybolmaması için hesabını buluta yedekle.",
+            onDismiss = { showAccountLinkingDialog = false },
+            onLinkedSuccess = {
+                showAccountLinkingDialog = false
+                UserProfileManager.notifyStateChanged()
             }
         )
     }
@@ -677,6 +1132,7 @@ fun EliteHomeScreen(
     showQuizPrompt: Boolean,
     onDismissQuizPrompt: () -> Unit
 ) {
+    val context = LocalContext.current
 
     // 🎨 Tüm veriler EN ÜSTTE tek yerde tanımlandı
     val dailyWords = listOf(
@@ -926,7 +1382,9 @@ fun EliteHomeScreen(
                                 modifier = Modifier
                                     .width(120.dp)   // ✅ Düzeltildi: boyut eklendi
                                     .height(130.dp)  // ✅ Düzeltildi: boyut eklendi
-                                    .clickable { /* Idiom Navigasyon buraya */ }
+                                    .clickable {
+                                        Toast.makeText(context, "Deyimler ve Kalıplar çok yakında aktif olacaktır ✨", Toast.LENGTH_SHORT).show()
+                                    }
                             )
                         }
                     }
@@ -1179,18 +1637,20 @@ fun DrawerItem(
     label: String,
     icon: ImageVector,
     textColor: Color,
+    iconTint: Color = Color(0xFF3897F0),
     modifier: Modifier = Modifier
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 12.dp),
+            .clip(RoundedCornerShape(12.dp))
+            .padding(vertical = 12.dp, horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = Color(0xFF3897F0), // Mew Mavisi ikonlar
+            tint = iconTint,
             modifier = Modifier.size(24.dp)
         )
 
@@ -1200,7 +1660,7 @@ fun DrawerItem(
             text = label,
             color = textColor,
             fontSize = 16.sp,
-            fontWeight = FontWeight.Medium
+            fontWeight = FontWeight.SemiBold
         )
     }
 }
@@ -1554,21 +2014,64 @@ fun QuizListScreen(
     onNavigateToWord: () -> Unit,      // ✅ KURAL: Word (Singular)
     onNavigateToProgress: () -> Unit,
     onNavigateToQuiz: () -> Unit,      // ✅ KURAL: Quiz (Singular)
-    onQuizSelected: (String) -> Unit
+    onQuizSelected: (String) -> Unit,
+    onNavigateToWordQuiz: () -> Unit = {}
 ) {
     val appColors = LocalAppThemeColors.current
     // İçerik buraya...
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var showLockedDialog by remember { mutableStateOf(false) }
 
     val levels = listOf(
         QuizListeningLevelData("A1", "Beginner - Start your journey", Color(0xFF4CAF50)),
         QuizListeningLevelData("A2", "Elementary - Basic communication", Color(0xFF2196F3)),
         QuizListeningLevelData("B1", "Intermediate - Daily conversations", Color(0xFFFF9800)),
         QuizListeningLevelData("B2", "Upper Intermediate - Fluent speaking", Color(0xFFE91E63)),
-        QuizListeningLevelData("C1", "Advanced - Complex topics", Color(0xFF9C27B0)),
-        QuizListeningLevelData("C2", "Proficiency - Master level", Color(0xFF607D8B))
+        QuizListeningLevelData("C1", "Advanced - Complex topics", Color(0xFF9C27B0))
     )
+
+    if (showLockedDialog) {
+        AlertDialog(
+            onDismissRequest = { showLockedDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = appColors.primary,
+                    modifier = Modifier.size(36.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Seviye Kilitli",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 20.sp,
+                    color = appColors.text
+                )
+            },
+            text = {
+                Text(
+                    text = "Bu seviyelere geçebilmek için önceki quizleri en az bir yıldız alacak şekilde tamamlayın",
+                    fontSize = 15.sp,
+                    color = appColors.textMuted,
+                    textAlign = TextAlign.Center
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showLockedDialog = false },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = appColors.primary)
+                ) {
+                    Text("Anladım", fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            },
+            containerColor = appColors.surface,
+            shape = RoundedCornerShape(24.dp)
+        )
+    }
 
     Box(modifier = Modifier
         .fillMaxSize()
@@ -1599,16 +2102,193 @@ fun QuizListScreen(
                     .padding(horizontal = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // ✅ ORTA 3 BUTON (İsimler MainQuizButton oldu)
+                // 🔹 KELİME QUİZİ HERO KARTI
+                val isKingdomTheme = remember(UserCosmeticsStore.stateRevision) { UserCosmeticsStore.isKingdomThemeActive(context) }
+                val isSpaceTheme = remember(UserCosmeticsStore.stateRevision) { UserCosmeticsStore.isSpaceThemeActive(context) }
 
+                val kingdomGoldBrush = remember {
+                    Brush.linearGradient(
+                        listOf(Color(0xFFFFDF7A), Color(0xFFD4AF37), Color(0xFFAA7C11), Color(0xFFFFDF7A))
+                    )
+                }
 
-                Spacer(modifier = Modifier.height(32.dp))
+                val quizHeroBorder = when {
+                    isKingdomTheme -> BorderStroke(1.6.dp, kingdomGoldBrush)
+                    isSpaceTheme -> BorderStroke(1.5.dp, Brush.horizontalGradient(listOf(Color(0xFF38BDF8), Color(0xFF818CF8))))
+                    else -> BorderStroke(1.dp, appColors.border)
+                }
+
+                val quizHeroBg = when {
+                    isKingdomTheme -> Color(0xFF070F26).copy(alpha = 0.92f)
+                    isSpaceTheme -> Color(0xFF0C132C).copy(alpha = 0.90f)
+                    else -> appColors.surface
+                }
+
+                val quizHeroImgRes = when {
+                    isKingdomTheme -> R.drawable.kingdom_word
+                    isSpaceTheme -> R.drawable.bigboxspace2
+                    else -> R.drawable.learn_word
+                }
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(134.dp)
+                        .clickable { onNavigateToWordQuiz() },
+                    shape = RoundedCornerShape(26.dp),
+                    border = quizHeroBorder,
+                    colors = CardDefaults.cardColors(containerColor = quizHeroBg),
+                    elevation = CardDefaults.cardElevation(3.dp)
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        Image(
+                            painter = painterResource(id = quizHeroImgRes),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer(alpha = if (isKingdomTheme) 0.42f else if (isSpaceTheme) 0.48f else 0.38f),
+                            contentScale = ContentScale.Crop
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(
+                                            quizHeroBg.copy(alpha = 0.96f),
+                                            quizHeroBg.copy(alpha = 0.75f),
+                                            Color.Transparent
+                                        )
+                                    )
+                                )
+                        )
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 20.dp, vertical = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = when {
+                                        isKingdomTheme -> Color(0xFF1B3A6B).copy(alpha = 0.7f)
+                                        isSpaceTheme -> Color(0xFF0284C7).copy(alpha = 0.25f)
+                                        else -> appColors.primary.copy(alpha = 0.15f)
+                                    },
+                                    border = when {
+                                        isKingdomTheme -> BorderStroke(1.dp, Color(0xFFFFD700).copy(alpha = 0.7f))
+                                        isSpaceTheme -> BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.6f))
+                                        else -> null
+                                    }
+                                ) {
+                                    Text(
+                                        text = when {
+                                            isKingdomTheme -> "👑 KELİME PRATİĞİ"
+                                            isSpaceTheme -> "🚀 KOZMİK PRATİK"
+                                            else -> "KELİME PRATİĞİ"
+                                        },
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = when {
+                                            isKingdomTheme -> Color(0xFFFFD700)
+                                            isSpaceTheme -> Color(0xFF38BDF8)
+                                            else -> appColors.primary
+                                        },
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    text = "Kelime Quizi",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = when {
+                                        isKingdomTheme || isSpaceTheme -> Color.White
+                                        else -> appColors.text
+                                    }
+                                )
+                                Text(
+                                    text = when {
+                                        isKingdomTheme -> "Kaydettiğin asil kelimeleri kaydırarak test et ve pekiştir!"
+                                        isSpaceTheme -> "Kozmik sözlüğündeki kelimeleri test et ve pekiştir!"
+                                        else -> "Kaydettiğin kelimeleri kaydırarak test et ve pekiştir!"
+                                    },
+                                    fontSize = 11.sp,
+                                    color = when {
+                                        isKingdomTheme -> Color(0xFFFFF7D6).copy(alpha = 0.75f)
+                                        isSpaceTheme -> Color(0xFFE2E8F0).copy(alpha = 0.85f)
+                                        else -> appColors.textMuted
+                                    },
+                                    maxLines = 2
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Button(
+                                onClick = { onNavigateToWordQuiz() },
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = when {
+                                        isKingdomTheme -> Color(0xFF1B3A6B)
+                                        isSpaceTheme -> Color(0xFF0284C7)
+                                        else -> appColors.primary
+                                    }
+                                ),
+                                border = when {
+                                    isKingdomTheme -> BorderStroke(1.dp, Color(0xFFFFD700))
+                                    isSpaceTheme -> BorderStroke(1.dp, Color(0xFF38BDF8))
+                                    else -> null
+                                },
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Quiz,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = when {
+                                        isKingdomTheme -> Color(0xFFFFD700)
+                                        else -> Color.White
+                                    }
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Başlat",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                        }
+
+                        if (isKingdomTheme) {
+                            RoyalBookmarkRibbon(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(end = 18.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 40.dp), thickness = 2.dp, color = appColors.border.copy(alpha = 0.7f))
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Seviye Kartları
                 levels.forEach { level ->
-                    QuizLevelCard(level = level) { onQuizSelected(level.name) }
+                    val isLocked = level.name !in listOf("A1", "A2")
+                    QuizLevelCard(
+                        level = level,
+                        isLocked = isLocked
+                    ) {
+                        if (isLocked) {
+                            showLockedDialog = true
+                        } else {
+                            onQuizSelected(level.name)
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.height(120.dp))
             }
@@ -1750,6 +2430,46 @@ fun LevelCard(level: ListeningLevelData) {
 // Yardımcı Seviye Seçim Bileşeni (Eğer yoksa bunu kullanabilirsin)
 @Composable
 fun LevelsSelectionScreen(onLevelSelected: (String) -> Unit) {
+    var showLockedDialog by remember { mutableStateOf(false) }
+
+    if (showLockedDialog) {
+        AlertDialog(
+            onDismissRequest = { showLockedDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = Color(0xFF0288D1),
+                    modifier = Modifier.size(36.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Seviye Kilitli",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 20.sp
+                )
+            },
+            text = {
+                Text(
+                    text = "Bu seviyelere geçebilmek için önceki quizleri en az bir yıldız alacak şekilde tamamlayın",
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showLockedDialog = false },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0288D1))
+                ) {
+                    Text("Anladım", fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            },
+            shape = RoundedCornerShape(24.dp)
+        )
+    }
+
     // 1. ADIM: Birbirine çok yakın, ufak ton farkları olan Mavi Skalası
     val levels = listOf(
         QuizListeningLevelData("A1", "Başlangıç", Color(0xFFB3E5FC)), // Çok Açık Buz Mavisi
@@ -1795,9 +2515,17 @@ fun LevelsSelectionScreen(onLevelSelected: (String) -> Unit) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 items(levels) { ListeningLevelData ->
+                    val isLocked = ListeningLevelData.name !in listOf("A1", "A2")
                     QuizLevelCard(
                         level = ListeningLevelData,
-                        onCardClick = { onLevelSelected(ListeningLevelData.name) }
+                        isLocked = isLocked,
+                        onCardClick = {
+                            if (isLocked) {
+                                showLockedDialog = true
+                            } else {
+                                onLevelSelected(ListeningLevelData.name)
+                            }
+                        }
                     )
                 }
             }
@@ -1837,7 +2565,7 @@ fun PlaceholderScreen(title: String) {
             .padding(16.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(text = "$title Ekranı Yapım Aşamasında", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.onBackground)
+        Text(text = title, style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.onBackground)
     }
 }
 
@@ -2371,10 +3099,13 @@ fun WordCard(english: String, turkish: String, accentColor: Color, textColor: Co
 // Kelime Kartı Bileşeni
 @Composable
 fun WordCard(wordEntry: WordEntry) {
+    val context = LocalContext.current
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { /* Detayları Göster */ },
+            .clickable {
+                Toast.makeText(context, "${wordEntry.word}: ${wordEntry.translation}", Toast.LENGTH_SHORT).show()
+            },
         shape = RoundedCornerShape(12.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -2950,7 +3681,9 @@ fun EliteReadingEngine(content: String) { // İsmi benzersiz yaptık
             val translation = dictionary[cleanWord]
             Text(
                 text = "$word ",
-                modifier = Modifier.clickable(enabled = translation != null) { /* Dialog aç */ },
+                modifier = Modifier.clickable(enabled = translation != null) {
+                    Toast.makeText(context, "$cleanWord: $translation", Toast.LENGTH_SHORT).show()
+                },
                 color = if (translation != null) Color.White else Color.Gray
             )
         }
@@ -3063,7 +3796,8 @@ data class SavedWord(
     val word: String,
     val meaning: String,
     var userNote: String = "",
-    val sourceStory: String? = null
+    val sourceStory: String? = null,
+    var currentStatus: String = "Kaydedilmiş"
 )
 
 
@@ -3093,29 +3827,39 @@ object WordStorage {
         if (size >= 250) {
             AchievementManager.unlockBadge(context, "epic_lexicon_master")
         }
+        MissionManager.onWordSaved(context)
     }
 
     // Verileri Cihaz Hafızasından Yükle
     fun loadFromDisk(context: Context) {
-        AppDictionary.initialize(context)
-        val sharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val json = sharedPreferences.getString(KEY_SAVED_WORDS, null)
-        if (json != null) {
-            val type = object : TypeToken<List<SavedWord>>() {}.type
-            val list: List<SavedWord> = Gson().fromJson(json, type)
+        try {
+            AppDictionary.initialize(context)
+            val sharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val json = sharedPreferences.getString(KEY_SAVED_WORDS, null)
+            if (json != null) {
+                val type = object : TypeToken<List<SavedWord>>() {}.type
+                val list: List<SavedWord> = Gson().fromJson(json, type) ?: emptyList()
 
-            val hydrated = list.map { savedWord ->
-                val dictionaryMeaning = AppDictionary.words[savedWord.word.lowercase().trim()]
-                if (savedWord.meaning.isBlank() || savedWord.meaning.contains("bulunamad", ignoreCase = true) || savedWord.meaning == "Çeviri alınamadı") {
-                    savedWord.copy(meaning = dictionaryMeaning.orEmpty())
-                } else savedWord
+                val hydrated = list.mapNotNull { savedWord ->
+                    try {
+                        val dictionaryMeaning = AppDictionary.words[savedWord.word.lowercase().trim()]
+                        if (savedWord.meaning.isBlank() || savedWord.meaning.contains("bulunamad", ignoreCase = true) || savedWord.meaning == "Çeviri alınamadı") {
+                            savedWord.copy(meaning = dictionaryMeaning.orEmpty())
+                        } else savedWord
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+                savedWords.clear()
+                savedWords.addAll(hydrated)
+                if (hydrated != list) saveToDisk(context)
             }
-            savedWords.clear()
-            savedWords.addAll(hydrated)
-            if (hydrated != list) saveToDisk(context)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 }
+
 
 @Composable
 fun DictionaryWordRow(word: String, meaning: String) {
@@ -3391,6 +4135,8 @@ private fun ReadingDetailTopBar(
             fontSize = 25.sp,
             fontWeight = FontWeight.Black
         )
+        CartoonEnergyBadge()
+        Spacer(Modifier.width(8.dp))
         FilledIconButton(
             onClick = onSpeak,
             modifier = Modifier.size(44.dp),
@@ -3746,65 +4492,250 @@ fun ActionCard(
 fun MyWordsScreen(navController: NavHostController) {
     val context = LocalContext.current
     val appColors = LocalAppThemeColors.current
+    val isKingdomTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isKingdomThemeActive(context)
+    }
+    val isSpaceTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isSpaceThemeActive(context)
+    }
+    val kingdomGoldBrush = remember {
+        Brush.linearGradient(
+            colors = listOf(
+                Color(0xFFFFDF7A),
+                Color(0xFFD4AF37),
+                Color(0xFFAA7C11),
+                Color(0xFFFFDF7A)
+            )
+        )
+    }
+
     var searchQuery by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { WordStorage.loadFromDisk(context) }
 
-    // Kaydedilen kelimeleri gözlemlenebilir bir state olarak alıyoruz
-    // Not: WordStorage.savedWords'ün bir SnapshotStateList olması anlık güncellenme için önemlidir
     val allSavedWords = WordStorage.savedWords
-
     val filteredWords by remember(searchQuery, allSavedWords.size) {
         derivedStateOf {
             allSavedWords.filter { it.word.contains(searchQuery, ignoreCase = true) }
         }
     }
 
-    // Ekranın tamamına yayılan Buz Mavisi Gradyan
-    val iceBlueGradient = Brush.verticalGradient(
-        colors = listOf(
-            Color(0xFFE1F5FE), // Üst
-            Color(0xFFB3E5FC), // Orta
-            Color(0xFF81D4FA)  // Alt
-        )
-    )
+    val isDark = LocalIsDarkMode.current
 
-    Box(modifier = Modifier
-        .fillMaxSize()
-        .background(iceBlueGradient)) {
-        Column(modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 24.dp)) {
-            Spacer(modifier = Modifier.height(60.dp))
-
-            Text(
-                text = "Kelimelerim",
-                style = TextStyle(fontSize = 32.sp, fontWeight = FontWeight.Black),
-                color = appColors.primary
+    val screenGradient = if (isDark) {
+        Brush.verticalGradient(
+            colors = listOf(
+                appColors.background,
+                appColors.surfaceRaised,
+                appColors.background
             )
+        )
+    } else {
+        Brush.verticalGradient(
+            colors = listOf(
+                Color(0xFFE1F5FE),
+                Color(0xFFB3E5FC),
+                Color(0xFF81D4FA)
+            )
+        )
+    }
 
-            // Arama Çubuğu (Daha şeffaf ve temaya uygun)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .then(if (isKingdomTheme) Modifier else Modifier.background(screenGradient))
+    ) {
+        if (isKingdomTheme) {
+            Image(
+                painter = painterResource(id = R.drawable.kingdom_arkaplan),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF040816).copy(alpha = 0.35f))
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp)
+        ) {
+            Spacer(modifier = Modifier.height(54.dp))
+
+            if (isKingdomTheme) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(130.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    border = BorderStroke(1.5.dp, kingdomGoldBrush)
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        Image(
+                            painter = painterResource(id = R.drawable.kingdom_words_banner),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        RoyalBookmarkRibbon(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(end = 16.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+            } else if (isSpaceTheme) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(130.dp)
+                        .clickable { navController.navigate("word_quiz_screen") },
+                    shape = RoundedCornerShape(24.dp),
+                    border = BorderStroke(1.5.dp, Brush.horizontalGradient(listOf(Color(0xFF38BDF8), Color(0xFF818CF8)))),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0C132C).copy(alpha = 0.90f))
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        Image(
+                            painter = painterResource(id = R.drawable.bigboxspace2),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer(alpha = 0.50f)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(
+                                            Color(0xFF0C132C).copy(alpha = 0.95f),
+                                            Color(0xFF0C132C).copy(alpha = 0.70f),
+                                            Color.Transparent
+                                        )
+                                    )
+                                )
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 20.dp, vertical = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "🚀 KOZMİK SÖZLÜK",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8)
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = "Kelime Quizi",
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "Kayıtlı kelimelerinle pratik yap!",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFFE2E8F0).copy(alpha = 0.85f)
+                                )
+                            }
+                            Button(
+                                onClick = { navController.navigate("word_quiz_screen") },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                                border = BorderStroke(1.dp, Color(0xFF38BDF8))
+                            ) {
+                                Text("Test Et", fontWeight = FontWeight.Bold, color = Color.White)
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = when {
+                        isKingdomTheme -> "👑 Kraliyet Sözlüğü"
+                        isSpaceTheme -> "🚀 Kozmik Sözlük"
+                        else -> "Kelimelerim"
+                    },
+                    style = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Black),
+                    color = when {
+                        isKingdomTheme -> Color(0xFFFFD700)
+                        isSpaceTheme -> Color.White
+                        else -> appColors.primary
+                    }
+                )
+                Button(
+                    onClick = { navController.navigate("word_quiz_screen") },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = when {
+                            isKingdomTheme -> Color(0xFF1B3A6B)
+                            isSpaceTheme -> Color(0xFF0284C7)
+                            else -> appColors.primary
+                        }
+                    ),
+                    border = when {
+                        isKingdomTheme -> BorderStroke(1.dp, Color(0xFFFFD700))
+                        isSpaceTheme -> BorderStroke(1.dp, Color(0xFF38BDF8))
+                        else -> null
+                    },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Quiz,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = if (isKingdomTheme) Color(0xFFFFD700) else Color.White
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text("Kelime Quizi", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            }
+
+            // Arama Çubuğu
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 16.dp),
-                placeholder = { Text("Kelime ara...", color = appColors.textMuted) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = appColors.primary) },
+                    .padding(vertical = 14.dp),
+                placeholder = {
+                    Text(
+                        "Kelime ara...",
+                        color = if (isKingdomTheme) Color(0xFFFFF7D6).copy(alpha = 0.6f) else appColors.textMuted
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = null,
+                        tint = if (isKingdomTheme) Color(0xFFFFD700) else appColors.primary
+                    )
+                },
                 shape = RoundedCornerShape(15.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    // Çerçeve renkleri
-                    focusedBorderColor = appColors.primary,
-                    unfocusedBorderColor = appColors.border,
-
-                    // İç dolgu (container) rengi
-                    focusedContainerColor = appColors.surface.copy(alpha = 0.82f),
-                    unfocusedContainerColor = appColors.surface.copy(alpha = 0.82f),
-
-                    // Yazı ve imleç renkleri
-                    focusedTextColor = appColors.text,
-                    unfocusedTextColor = appColors.text,
-                    cursorColor = appColors.primary
+                    focusedBorderColor = if (isKingdomTheme) Color(0xFFFFD700) else appColors.primary,
+                    unfocusedBorderColor = if (isKingdomTheme) Color(0xFFD4AF37).copy(alpha = 0.5f) else appColors.border,
+                    focusedContainerColor = if (isKingdomTheme) Color(0xFF070F26).copy(alpha = 0.90f) else appColors.surface.copy(alpha = 0.82f),
+                    unfocusedContainerColor = if (isKingdomTheme) Color(0xFF070F26).copy(alpha = 0.75f) else appColors.surface.copy(alpha = 0.82f),
+                    focusedTextColor = if (isKingdomTheme) Color.White else appColors.text,
+                    unfocusedTextColor = if (isKingdomTheme) Color.White else appColors.text,
+                    cursorColor = if (isKingdomTheme) Color(0xFFFFD700) else appColors.primary
                 )
             )
 
@@ -3816,18 +4747,16 @@ fun MyWordsScreen(navController: NavHostController) {
                     item {
                         Text(
                             text = if (searchQuery.isEmpty()) "Henüz kelime kaydetmedin." else "Sonuç bulunamadı.",
-                            color = appColors.textMuted,
+                            color = if (isKingdomTheme) Color(0xFFFFF7D6).copy(alpha = 0.7f) else appColors.textMuted,
                             modifier = Modifier.padding(top = 20.dp)
                         )
                     }
                 }
 
                 items(filteredWords) { wordItem ->
-                    // BURASI GÜNCELLENDİ: Bookmark butonu içeren yeni tasarım
                     SavedWordItemWithDelete(
                         wordItem = wordItem,
                         onRemove = {
-                            // WordStorage içinde silme fonksiyonunu çağırıyoruz
                             WordStorage.savedWords.remove(wordItem)
                             WordStorage.saveToDisk(context)
                         }
@@ -3839,15 +4768,37 @@ fun MyWordsScreen(navController: NavHostController) {
 }
 
 @Composable
-fun SavedWordItemWithDelete(wordItem: SavedWord, onRemove: () -> Unit) { // 'WordData' yerine 'SavedWord' yapıldı
+fun SavedWordItemWithDelete(wordItem: SavedWord, onRemove: () -> Unit) {
+    val context = LocalContext.current
     val appColors = LocalAppThemeColors.current
+    val isDark = LocalIsDarkMode.current
+    val isKingdomTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isKingdomThemeActive(context)
+    }
+    val kingdomGoldBrush = remember {
+        Brush.linearGradient(
+            colors = listOf(
+                Color(0xFFFFDF7A),
+                Color(0xFFD4AF37),
+                Color(0xFFAA7C11),
+                Color(0xFFFFDF7A)
+            )
+        )
+    }
+
+    val cardBg = if (isKingdomTheme) Color(0xFF070F26).copy(alpha = 0.92f) else appColors.surface
+    val cardBorder = if (isKingdomTheme) {
+        BorderStroke(1.3.dp, kingdomGoldBrush)
+    } else BorderStroke(1.dp, appColors.border)
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
         shape = RoundedCornerShape(20.dp),
-        color = appColors.surface.copy(alpha = 0.92f),
-        shadowElevation = 2.dp
+        color = cardBg,
+        border = cardBorder,
+        shadowElevation = if (isDark) 0.dp else 2.dp
     ) {
         Row(
             modifier = Modifier
@@ -3857,27 +4808,24 @@ fun SavedWordItemWithDelete(wordItem: SavedWord, onRemove: () -> Unit) { // 'Wor
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                // Not: Eğer 'SavedWord' içinde 'word' ve 'meaning' isimleri farklıysa
-                // (Örn: term, translation) onları buradaki isimlerle değiştir.
                 Text(
                     text = wordItem.word,
                     style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.ExtraBold),
-                    color = appColors.primary
+                    color = if (isKingdomTheme) Color.White else appColors.primary
                 )
                 Text(
                     text = AppDictionary.words[wordItem.word.lowercase().trim()]
                         ?: wordItem.meaning.ifBlank { "Anlam bulunamadı" },
                     style = TextStyle(fontSize = 15.sp),
-                    color = appColors.textMuted
+                    color = if (isKingdomTheme) Color(0xFFFFD700) else appColors.textMuted
                 )
             }
 
-            // Bookmark şeklinde sil butonu
             IconButton(onClick = onRemove) {
                 Icon(
                     imageVector = Icons.Default.Bookmark,
                     contentDescription = "Kaldır",
-                    tint = appColors.primary,
+                    tint = if (isKingdomTheme) Color(0xFFFFD700) else appColors.primary,
                     modifier = Modifier.size(28.dp)
                 )
             }
@@ -3887,93 +4835,8 @@ fun SavedWordItemWithDelete(wordItem: SavedWord, onRemove: () -> Unit) { // 'Wor
 // OKUMA PARÇALARI
 
 // A1 Seviyesi Paragraf Arşivi
-val allStories = mapOf(
-    "My Special Day" to """
-        Today is a very special day for me. My name is Ali, and I want to tell you about my morning. 
-        I usually wake up at seven o'clock, but today is different. Today is my birthday! 
-        The sun is shining through my window. I feel very happy and energetic. 
-        I get out of bed and go to the kitchen. I can smell fresh coffee and toasted bread. 
-        My mother and father are there. They say, 'Happy Birthday, Ali!' and they give me a big hug. 
-        Everything feels wonderful today.
-    """.trimIndent(),
+val allStories = ReadingDataRepository.allStoriesMap
 
-    "Daily Routine" to """
-        My name is Alex. I am a student. I wake up at 7 o’clock every day. 
-        I wash my face and brush my teeth. Then I have breakfast. I drink tea and eat bread and cheese.
-        After breakfast, I go to school. I listen to my teacher and take notes.
-        At 12 o’clock, I have lunch. In the evening, I go home and have dinner with my family. 
-        At night, I read a book. I go to bed at 11 o’clock.
-    """.trimIndent(),
-
-    "My Family" to """
-        I have a small family. There are four people in my family: my father, my mother, my sister, and me. 
-        My father is a doctor. He is very kind. My mother is a teacher. She loves books. 
-        My sister is five years old. She is very funny. We live in a big house with a garden. 
-        I love my family very much.
-    """.trimIndent(),
-
-    "My Dream House" to """
-        I want to live in a beautiful house. My dream house is near the sea. 
-        It has two floors and four rooms. The living room is big and white. 
-        The kitchen is modern. There is a balcony with a great view. 
-        I want a small garden for my flowers. It is a very peaceful and happy place.
-    """.trimIndent(),
-
-    "At the Grocery Store" to """
-        I am at the grocery store now. I need some food for dinner. 
-        I want to buy milk, eggs, and bread. I also need some fresh fruit. 
-        I like apples and bananas. I see the vegetables. I buy tomatoes and onions. 
-        I go to the cashier and pay for my food. Now I can go home.
-    """.trimIndent(),
-
-    "Summer Weather" to """
-        The weather is very hot today. It is summer. The sky is blue and the sun is bright. 
-        I am wearing a t-shirt and shorts. My friends and I are at the beach. 
-        We swim in the sea and play games. In the evening, it is warm. 
-        I love summer because the days are long and sunny.
-    """.trimIndent(),
-
-    "What Time Is It?" to """
-        Time is very important. I have a busy day today. 
-        At 8 o'clock, I have a meeting. At 10 o'clock, I visit my grandmother. 
-        We drink tea together. At 1 o'clock, I meet my friend for lunch. 
-        In the afternoon, I go to the gym. I always check my watch because I don't want to be late.
-    """.trimIndent(),
-
-    "My Favorite Hobbies" to """
-        I have many hobbies. I like playing the guitar and listening to music. 
-        On weekends, I go to the park and ride my bike. 
-        I also love taking photos of nature. Cooking is another hobby for me. 
-        I like making pizza for my friends. Hobbies make my life very interesting and fun.
-    """.trimIndent(),
-
-    "Where Is The Bank?" to """
-        Excuse me, I am lost. I am looking for the bank. 
-        Is it near here? Go straight and turn left at the pharmacy. 
-        The bank is next to the library. It is a big grey building. 
-        Thank you very much for your help! You are welcome. Have a nice day.
-    """.trimIndent(),
-
-    "Feeling Sick" to """
-        Today, I don't feel well. I have a headache and a cold. 
-        I think I have a fever. I stay in bed and rest. 
-        I drink a lot of water and orange juice. My mother makes chicken soup for me. 
-        I need to see a doctor tomorrow. I hope I feel better soon.
-    """.trimIndent(),
-
-    "Weekend In Paris" to """
-        I am very excited. I am in Paris for the weekend. 
-        I want to see the Eiffel Tower and visit museums. 
-        The city is very beautiful and old. I eat delicious croissants for breakfast. 
-        I walk on the streets and take many pictures. Paris is a wonderful city for a trip.
-    """.trimIndent(),
-
-    "Future Plans" to """
-        I have big plans for the future. Next year, I want to learn a new language. 
-        I also want to travel to Spain and Italy. I plan to work in a big company. 
-        I want to buy a new car and help my parents. I study hard every day to achieve my dreams.
-    """.trimIndent()
-)
 
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalAnimationApi::class)
@@ -4118,8 +4981,6 @@ fun QuizAppNavigation(
 
 
     val context = LocalContext.current
-    val speechAssistant = remember { SpeechAssistant(context) }
-    val dictionaryWords = remember { loadWordsFromAssets(context) }
     var showQuizPrompt by rememberSaveable { mutableStateOf(true) }
 
     LaunchedEffect(AppNotificationRouter.pendingRoute) {
@@ -4129,21 +4990,62 @@ fun QuizAppNavigation(
         }
     }
 
-
-
+    var showLazyAccountLinkDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         AchievementManager.init(context)
+        com.example.ngilizcequizapp.FirestoreSyncManager.initLazyAnonymousAuth(context)
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        NavHost(
-            navController = navController,
-            startDestination = Screen.Home.route
-        ) {
-        // Navigasyon (NavHost) içinde:
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route ?: ""
+    val isQuizSolvingRoute = currentRoute.startsWith("quiz_detail") ||
+            currentRoute.startsWith("listening_selection") ||
+            currentRoute.startsWith("quiz_screen") ||
+            currentRoute.startsWith("reading_content") ||
+            currentRoute == "word_quiz_screen" ||
+            currentRoute == "mistake_review" ||
+            currentRoute == "mistake_practice" ||
+            currentRoute == Screen.Welcome.route
+    val showPlanets = !isQuizSolvingRoute
 
-        composable(Screen.Home.route) {
+    val currentTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.getEquippedTheme(context)
+    }
+    val isSpaceTheme = currentTheme == "uzay"
+    val isKingdomTheme = currentTheme == "kingdom"
+    val appColors = LocalAppThemeColors.current
+
+    val isUserRegistered = remember(com.example.ngilizcequizapp.UserProfileManager.stateRevision) {
+        com.example.ngilizcequizapp.UserProfileManager.isRegistered(context)
+    }
+
+    val navContent = @Composable {
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (showLazyAccountLinkDialog) {
+                AccountLinkingDialog(
+                    title = "İlerlemeni Kaybetmemek İçin Mailini Bağla! 🐾",
+                    description = "Tebrikler! 2 quiz tamamladın. Kazandığın XP, coin ve ilerlemenin kaybolmaması için mailini bağla.",
+                    onDismiss = { showLazyAccountLinkDialog = false },
+                    onLinkedSuccess = { showLazyAccountLinkDialog = false }
+                )
+            }
+
+            NavHost(
+                navController = navController,
+                startDestination = Screen.Home.route
+            ) {
+                composable(Screen.Welcome.route) {
+                    WelcomeOnboardingScreen(
+                        onRegistrationSuccess = {
+                            navController.navigate(Screen.Home.route) {
+                                popUpTo(Screen.Welcome.route) { inclusive = true }
+                            }
+                        }
+                    )
+                }
+
+                composable(Screen.Home.route) {
             DarkEliteHomeScreen(
                 navController = navController,
                 showQuizPrompt = true,
@@ -4180,9 +5082,16 @@ fun QuizAppNavigation(
         }
 
 
-        for (i in 1..QuizDataHolder.quizSteps.size) {
+        val maxQuizCount = maxOf(QuizDataHolder.quizSteps.lastOrNull()?.id ?: 200, QuizDataHolder.quizStepsA2.lastOrNull()?.id ?: 301)
+        val allQuizSteps = QuizDataHolder.quizSteps + QuizDataHolder.quizStepsA2
+
+        for (i in 1..maxQuizCount) {
             composable("test_$i") {
                 val context = LocalContext.current
+                if (!com.example.ngilizcequizapp.EnergyManager.hasEnergy(context)) {
+                    OutOfEnergyDialog(onDismiss = { navController.popBackStack() })
+                    return@composable
+                }
                 val quizList = QuizRepository.getQuizByNumber(i)
 
                 val progressBeforeQuiz = remember(i) { QuizTreeProgressStore.loadAll(context) }
@@ -4199,18 +5108,34 @@ fun QuizAppNavigation(
                     previousResult = previousResult,
                     fullStarCountBefore = fullStarCountBefore,
                     quizIndex = i,
-                    quizTitle = QuizDataHolder.quizSteps.getOrNull(i - 1)?.title ?: "Quiz $i",
+                    quizTitle = allQuizSteps.find { it.id == i }?.title ?: "Quiz $i",
                     onQuizResult = { correctAnswers, totalQuestions, completedAllQuestions ->
                         if (completedAllQuestions) {
                             val prevStars = QuizTreeProgressStore.starsFor(previousResult)
                             val isSecondSolve = prevStars >= 1
 
-                            QuizTreeProgressStore.recordAttempt(
+                            val outcome = QuizTreeProgressStore.recordAttempt(
                                 context = context,
                                 quizIndex = i - 1,
                                 correctAnswers = correctAnswers,
                                 totalQuestions = totalQuestions
                             )
+
+                            // 🎯 Hata Takibi: Freemium & Premium tüm kullanıcıların yanlışları konu bazlı kaydedilir
+                            val currentOutcomeStars = outcome.result.redStars
+                            com.example.ngilizcequizapp.QuizMistakeManager.onQuizCompleted(
+                                context = context,
+                                quizId = i,
+                                correctAnswers = correctAnswers,
+                                totalQuestions = totalQuestions,
+                                stars = currentOutcomeStars
+                            )
+
+                            // 🔔 2 Quizlik XP Threshold: Kullanıcı 2 quiz çözdüğünde ve anonim ise mail bağlama diyalogu açılır
+                            val sessionSolved = com.example.ngilizcequizapp.QuizMistakeManager.incrementSessionQuizzesSolved()
+                            if (sessionSolved == 2 && com.example.ngilizcequizapp.UserProfileManager.isAnonymous(context)) {
+                                showLazyAccountLinkDialog = true
+                            }
 
                             // Rozet tetikleyicileri
                             val isPassed = totalQuestions > 0 && (correctAnswers.toFloat() / totalQuestions.toFloat()) >= 0.7f
@@ -4235,16 +5160,7 @@ fun QuizAppNavigation(
                                 }
                             }
 
-                            if (isSecondSolve) {
-                                val errors = totalQuestions - correctAnswers
-                                val blueStars = when (errors) {
-                                    0 -> 3
-                                    1 -> 2
-                                    2 -> 1
-                                    else -> 0
-                                }
-                                QuizTreeProgressStore.saveReinforcementStars(context, i - 1, blueStars)
-                            }
+                            AchievementManager.checkStarBadges(context)
                         } else {
                             QuizTreeProgressStore.addXp(context, 15)
                         }
@@ -4397,14 +5313,73 @@ fun QuizAppNavigation(
         composable("mistake_jar") {
             MistakeJarScreen(navController)
         }
+        composable("mew_chat") {
+            MewChatScreen(navController)
+        }
+        composable("mistake_practice_session") {
+            val context = LocalContext.current
+            MistakeJarStore.load(context)
+            val pending = remember { MistakeJarStore.mistakes.filter { !it.solved } }
+            val batch = remember { selectMistakeBatch(pending, 5) }
+            val quizQuestions = remember(batch) {
+                batch.map { entry ->
+                    val fromRepo = if (entry.quizIndex > 0) {
+                        val list = runCatching { QuizRepository.getQuizByNumber(entry.quizIndex) }.getOrNull()
+                        list?.find { it.id == entry.questionId } ?: list?.getOrNull(entry.questionNumber - 1)
+                    } else null
+                    fromRepo ?: entry.toQuestion()
+                }
+            }
+
+            if (quizQuestions.isEmpty()) {
+                LaunchedEffect(Unit) { navController.popBackStack() }
+            } else {
+                MainQuizScreen(
+                    quizList = quizQuestions,
+                    ttsHelper = speechAssistant,
+                    navController = navController,
+                    onQuizComplete = { navController.popBackStack() },
+                    quizIndex = -1,
+                    quizTitle = "Hata Torbası Pratiği",
+                    health = 5,
+                    isMistakePractice = true,
+                    mistakeEntries = batch
+                )
+            }
+        }
         composable(
             route = "mistake_review/{mistakeId}",
             arguments = listOf(navArgument("mistakeId") { type = NavType.StringType })
         ) { backStackEntry ->
-            MistakeReviewScreen(
-                navController = navController,
-                mistakeId = backStackEntry.arguments?.getString("mistakeId").orEmpty()
-            )
+            val context = LocalContext.current
+            val rawId = backStackEntry.arguments?.getString("mistakeId").orEmpty()
+            val decodedId = runCatching { java.net.URLDecoder.decode(rawId, "UTF-8") }.getOrDefault(rawId)
+            MistakeJarStore.load(context)
+            val entry = remember(decodedId) { MistakeJarStore.mistakes.firstOrNull { it.id == decodedId || it.id == rawId } }
+
+            if (entry == null) {
+                LaunchedEffect(Unit) { navController.popBackStack() }
+            } else {
+                val question = remember(entry.id) {
+                    val fromRepo = if (entry.quizIndex > 0) {
+                        val list = runCatching { QuizRepository.getQuizByNumber(entry.quizIndex) }.getOrNull()
+                        list?.find { it.id == entry.questionId } ?: list?.getOrNull(entry.questionNumber - 1)
+                    } else null
+                    fromRepo ?: entry.toQuestion()
+                }
+
+                MainQuizScreen(
+                    quizList = listOf(question),
+                    ttsHelper = speechAssistant,
+                    navController = navController,
+                    onQuizComplete = { navController.popBackStack() },
+                    quizIndex = -1,
+                    quizTitle = entry.quizTitle.orEmpty(),
+                    health = 5,
+                    isMistakePractice = true,
+                    mistakeEntries = listOf(entry)
+                )
+            }
         }
         composable("words_screen") {
             MyWordsScreen(navController)
@@ -4451,6 +5426,9 @@ fun QuizAppNavigation(
                         // Seviye belirleme mantığı korunuyor
                         val level = if (quizName.contains("A2")) "A2" else "A1"
                         navController.navigate(Screen.QuizTree.createRoute(level))
+                    },
+                    onNavigateToWordQuiz = {
+                        navController.navigate("word_quiz_screen")
                     }
                 )
             }
@@ -4483,16 +5461,7 @@ fun QuizAppNavigation(
         }
         // --- READING (OKUMA) NAVİGASYONU ---
         composable(Screen.ReadingLevel.route) {
-            AppScaffold(navController, drawerState, scope) {
-                // Burada Reading seviye seçimi ekranın olmalı
-                // Eğer henüz bu ekranı yapmadıysan geçici bir ekran koyabilirsin
-                ReadingLevelSelectionScreen(
-                    navController = navController,
-                    onLevelSelected = { level ->
-                        // Örnek: navController.navigate(Screen.ReadingDetail.createRoute(level))
-                    }
-                )
-            }
+            ReadingScreen(navController)
         }
 
 
@@ -4519,22 +5488,72 @@ fun QuizAppNavigation(
         composable("badges_screen") {
             BadgesScreen(navController)
         }
+
+        composable("missions_screen") {
+            MissionsScreen(navController)
+        }
+
+        composable(Screen.Market.route) {
+            MarketScreen(navController = navController, isDarkMode = isDarkMode)
+        }
+
+        composable("premium_screen") {
+            PremiumScreen(navController = navController, isDarkMode = isDarkMode)
+        }
+
+        composable("word_quiz_screen") {
+            WordQuizScreen(navController = navController)
+        }
     }
 
-    // Global Rozet Bildirimi Overlay'i
-    AchievementManager.activeToast?.let { badge ->
-        AchievementToast(
-            badge = badge,
-            onDismiss = { AchievementManager.activeToast = null }
-        )
+        // Global Rozet Bildirimi Overlay'i
+        AchievementManager.activeToast?.let { badge ->
+            AchievementToast(
+                badge = badge,
+                onDismiss = { AchievementManager.activeToast = null }
+            )
+        }
     }
 }
+
+    if (isSpaceTheme) {
+        SpaceThemeBackground(
+            modifier = Modifier.fillMaxSize(),
+            showPlanets = showPlanets,
+            forceShow = false
+        ) {
+            navContent()
+        }
+    } else if (isKingdomTheme) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Image(
+                painter = painterResource(id = R.drawable.kingdom_arkaplan),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF040816).copy(alpha = 0.35f))
+            )
+            navContent()
+        }
+    } else {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(appColors.background)
+        ) {
+            navContent()
+        }
+    }
 }
 
 @Composable
 fun PlaceholderTestScreen(navController: NavHostController, title: String) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(text = "$title Çok Yakında!", fontWeight = FontWeight.Bold)
+        Text(text = title, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -4561,12 +5580,13 @@ fun ParagraphReadingScreen(
         paragraph.split(Regex("\\s+")).filter { it.isNotBlank() }
     }
 
-    // Renk Ayarları (isDarkMode projenizde global değilse 'false' yapabilirsiniz)
-    var isDarkMode by remember { mutableStateOf(false) }
-    val backgroundColor = if (isDarkMode) Color(0xFF121212) else Color(0xFFF5F7F9)
-    val surfaceColor = if (isDarkMode) Color(0xFF1E1E1E) else Color.White
-    val textColor = if (isDarkMode) Color.White else Color.Black
-    val mewBlue = Color(0xFF3897F0)
+    // Renk Ayarları (global tema)
+    val appColors = LocalAppThemeColors.current
+    val isDark = LocalIsDarkMode.current
+    val backgroundColor = appColors.background
+    val surfaceColor = appColors.surface
+    val textColor = appColors.text
+    val mewBlue = appColors.primary
 
     // --- 2. POPUP GÖSTERİMİ ---
     selectedWordForPopup?.let { word ->
@@ -4614,7 +5634,8 @@ fun ParagraphReadingScreen(
                 .weight(1f),
             shape = RoundedCornerShape(20.dp),
             color = surfaceColor,
-            shadowElevation = 2.dp
+            border = BorderStroke(1.dp, appColors.border),
+            shadowElevation = if (isDark) 0.dp else 2.dp
         ) {
             FlowRow(
                 modifier = Modifier
@@ -4697,20 +5718,22 @@ fun QuizNavigationManager(
             QuizListScreen(
                 onNavigateToMeeting = { selectedQuizTitle = "My Special Day" },
                 onNavigateToThisThat = { selectedQuizTitle = "This / That Quiz" },
-                onNavigateToWord = { /* ... */ },
-                onNavigateToProgress = { /* ... */ },
-                onNavigateToQuiz = { /* ... */ },
+                onNavigateToWord = { Toast.makeText(context, "Kelimelerim yükleniyor...", Toast.LENGTH_SHORT).show() },
+                onNavigateToProgress = { Toast.makeText(context, "İstatistikler açılıyor...", Toast.LENGTH_SHORT).show() },
+                onNavigateToQuiz = { selectedQuizTitle = null },
                 onQuizSelected = { title -> selectedQuizTitle = title }
             )
         }
 
         // Seviye Seçildiğinde (A1, A2 vb.)
         (selectedQuizTitle == "A1" || selectedQuizTitle == "A2") && selectedStoryContent == null -> {
+            val appColors = LocalAppThemeColors.current
             val currentStories = if (selectedQuizTitle == "A1") allStories else a2Stories
 
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .background(appColors.background)
                     .padding(16.dp)
                     .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -4718,6 +5741,7 @@ fun QuizNavigationManager(
                 Text(
                     text = "$selectedQuizTitle Reading List",
                     style = MaterialTheme.typography.headlineMedium,
+                    color = appColors.text,
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
 
@@ -4727,14 +5751,16 @@ fun QuizNavigationManager(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 4.dp),
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = appColors.surfaceRaised),
+                        border = BorderStroke(1.dp, appColors.border)
                     ) {
-                        Text(text = "$title")
+                        Text(text = title, color = appColors.text, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
                 TextButton(onClick = { selectedQuizTitle = null }) {
-                    Text("Geri Dön")
+                    Text("Geri Dön", color = appColors.primary)
                 }
             }
         }
@@ -4760,45 +5786,6 @@ fun evaluatePronunciation(wordScore: Float): String {
         else -> "BLACK"                 // Hata Torbası.
     }
 }
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun SettingsScreen(onBack: () -> Unit) {
-    var isDarkMode by remember { mutableStateOf(false) }
-    val bgColor = if (isDarkMode) Color(0xFF121212) else Color.White
-    val txtColor = if (isDarkMode) Color.White else Color.Black
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Settings", color = txtColor) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Geri", tint = txtColor)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = bgColor)
-            )
-        },
-        containerColor = bgColor
-    ) { padding ->
-        Column(modifier = Modifier
-            .fillMaxSize()
-            .padding(padding)
-            .padding(20.dp)) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Dark Mode", color = txtColor, fontSize = 18.sp)
-                // ✅ KARANLIK MOD ARTIK SADECE BURADA
-                Switch(checked = isDarkMode, onCheckedChange = { isDarkMode = it })
-            }
-        }
-    }
-}
 
 data class QuizListeningLevelData(
     val name: String,
@@ -4808,59 +5795,107 @@ data class QuizListeningLevelData(
 )
 
 @Composable
-fun QuizLevelCard(level: QuizListeningLevelData, onCardClick: () -> Unit) {
+fun QuizLevelCard(level: QuizListeningLevelData, isLocked: Boolean = false, onCardClick: () -> Unit) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .height(110.dp)
-            .padding(vertical = 4.dp) // Kartlar arası nefes payı
+            .padding(vertical = 4.dp)
+            .then(if (isLocked) Modifier.alpha(0.55f) else Modifier)
             .clickable { onCardClick() },
-        shape = RoundedCornerShape(28.dp), // ✅ Daha modern, "elle çizilmiş" gibi yumuşak
-        color = level.color,
-        shadowElevation = 10.dp // ✅ Daha derin gölge
+        shape = RoundedCornerShape(28.dp),
+        color = if (isLocked) level.color.copy(alpha = 0.55f) else level.color,
+        shadowElevation = if (isLocked) 2.dp else 10.dp
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(16.dp)
-        ) {
-            // İkon alanı
-            Box(
+        Box(modifier = Modifier.fillMaxSize()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .size(65.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Color.White.copy(alpha = 0.25f)),
-                contentAlignment = Alignment.Center
+                    .fillMaxSize()
+                    .padding(16.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Star, // Örn: Yıldız ikonu
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(30.dp)
-                )
+                // İkon alanı
+                Box(
+                    modifier = Modifier
+                        .size(65.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(if (isLocked) Color.Black.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.25f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isLocked) Icons.Default.Lock else Icons.Default.Star,
+                        contentDescription = if (isLocked) "Kilitli" else "Açık",
+                        tint = Color.White,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(20.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Level ${level.name}",
+                            color = Color.White,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                        if (isLocked) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color.Black.copy(alpha = 0.30f)
+                            ) {
+                                Text(
+                                    text = "KİLİTLİ",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color.White.copy(alpha = 0.95f),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = if (isLocked) "Önceki quizleri tamamlayarak açın" else level.desc,
+                        color = Color.White.copy(alpha = if (isLocked) 0.75f else 0.85f),
+                        fontSize = 14.sp
+                    )
+                }
+
+                if (isLocked) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.25f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Kilitli",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                } else {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.width(20.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Level ${level.name}", // ✅ KURAL: Bold
-                    color = Color.White,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Black
-                )
-                Text(
-                    text = level.desc, // QuizListeningLevelData sınıfında ne yazıyorsa o (desc/description)
-                    color = Color.White.copy(alpha = 0.85f),
-                    fontSize = 14.sp
+            // Kilitli kartın üstüne filtre / kilit overlay
+            if (isLocked) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.10f))
                 )
             }
-
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(28.dp)
-            )
         }
     }
 }
@@ -6084,6 +7119,7 @@ fun ListeningQuizScreen(
     level: String,
     speechAssistant: SpeechAssistant
 ) {
+    val appColors = LocalAppThemeColors.current
     // --- STATE'LER ---
     var selectedOption by remember { mutableStateOf<Int?>(null) }
     var showSuccess by remember { mutableStateOf(false) }
@@ -6109,13 +7145,13 @@ fun ListeningQuizScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize().background(appColors.background)) {
 
         // -------- ANA İÇERİK --------
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.White)
+                .background(appColors.background)
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -6126,16 +7162,17 @@ fun ListeningQuizScreen(
                 text = "Metni dinledikten sonra hangi resimden bahsettiğini anlamaya çalışınız ve o resme tıklayınız.",
                 textAlign = TextAlign.Center,
                 fontSize = 14.sp,
-                color = Color.Gray
+                color = appColors.textMuted
             )
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // 🔹 level parametresi artık gerçekten kullanılıyor (uyarı da gider)
+            // 🔹 level parametresi
             Text(
                 text = level,
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                color = appColors.primary
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -6143,7 +7180,8 @@ fun ListeningQuizScreen(
             Text(
                 text = "Listen and Choose",
                 style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.ExtraBold
+                fontWeight = FontWeight.ExtraBold,
+                color = appColors.text
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -6175,16 +7213,17 @@ fun ListeningQuizScreen(
                 modifier = Modifier
                     .size(120.dp)
                     .clickable {
-                        speechAssistant.speak(transcript) // ✅ nullable DEĞİL
+                        speechAssistant.speak(transcript)
                     },
                 shape = CircleShape,
-                border = BorderStroke(3.dp, Color(0xFF0288D1))
+                color = appColors.surfaceRaised,
+                border = BorderStroke(3.dp, appColors.primary)
             ) {
                 Icon(
                     imageVector = Icons.Default.VolumeUp,
                     contentDescription = "Play Audio",
                     modifier = Modifier.padding(32.dp),
-                    tint = Color(0xFF0288D1)
+                    tint = appColors.primary
                 )
             }
         }
@@ -6215,32 +7254,61 @@ fun ListeningQuizScreen(
     }
 }
 
-
-
-
-
 @Composable
 fun ListeningLevelSelectionScreen(
     navController: NavHostController,
     onLevelSelected: (String) -> Unit
 ) {
-    // Yeni sınıf ismini (ListeningListeningLevelData) kullanıyoruz
+    val appColors = LocalAppThemeColors.current
+    val isDark = LocalIsDarkMode.current
+    var showLockedDialog by remember { mutableStateOf(false) }
+
+    if (showLockedDialog) {
+        AlertDialog(
+            onDismissRequest = { showLockedDialog = false },
+            title = {
+                Text(
+                    text = "Seviye Kilitli",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp
+                )
+            },
+            text = {
+                Text(
+                    text = "Bu seviyenin kilidini açmak için önceki seviyedeki testleri tamamlamalısınız.",
+                    fontSize = 15.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showLockedDialog = false }) {
+                    Text("Tamam", fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
     val levels = listOf(
-        ListeningListeningLevelData("A1", "Beginner", Color(0xFFE1F5FE), Color(0xFF03A9F4)),
-        ListeningListeningLevelData("A2", "Elementary", Color(0xFFE1F5FE), Color(0xFF03A9F4)),
-        ListeningListeningLevelData("B1", "Intermediate", Color(0xFFFFF3E0), Color(0xFFFB8C00)),
-        ListeningListeningLevelData("B2", "Upper", Color(0xFFFFF3E0), Color(0xFFFB8C00)),
-        ListeningListeningLevelData("C1", "Advanced", Color(0xFFFFEBEE), Color(0xFFE91E63)),
-        ListeningListeningLevelData("C2", "Mastery", Color(0xFFFFEBEE), Color(0xFFE91E63))
+        ListeningListeningLevelData("A1", "Beginner", if (isDark) Color(0xFF1B3040) else Color(0xFFE1F5FE), Color(0xFF03A9F4)),
+        ListeningListeningLevelData("A2", "Elementary", if (isDark) Color(0xFF1B3040) else Color(0xFFE1F5FE), Color(0xFF03A9F4)),
+        ListeningListeningLevelData("B1", "Intermediate", if (isDark) Color(0xFF3E2D1B) else Color(0xFFFFF3E0), Color(0xFFFB8C00)),
+        ListeningListeningLevelData("B2", "Upper", if (isDark) Color(0xFF3E2D1B) else Color(0xFFFFF3E0), Color(0xFFFB8C00)),
+        ListeningListeningLevelData("C1", "Advanced", if (isDark) Color(0xFF3E1F2A) else Color(0xFFFFEBEE), Color(0xFFE91E63)),
+        ListeningListeningLevelData("C2", "Mastery", if (isDark) Color(0xFF3E1F2A) else Color(0xFFFFEBEE), Color(0xFFE91E63))
     )
 
-    // Senin özel gradyan arka planın (WordsScreen ile aynı)
-    val backgroundBrush = Brush.verticalGradient(
-        colors = listOf(SoftGradientBlue, Color.White),
-        startY = 0f,
-        endY = 1000f
-    )
-
+    val backgroundBrush = if (isDark) {
+        Brush.verticalGradient(
+            colors = listOf(appColors.background, appColors.surfaceRaised),
+            startY = 0f,
+            endY = 1000f
+        )
+    } else {
+        Brush.verticalGradient(
+            colors = listOf(SoftGradientBlue, Color.White),
+            startY = 0f,
+            endY = 1000f
+        )
+    }
 
     Box(modifier = Modifier
         .fillMaxSize()
@@ -6257,13 +7325,13 @@ fun ListeningLevelSelectionScreen(
                 text = "Listening Level",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.ExtraBold,
-                color = BrokenIceBlue
+                color = appColors.text
             )
 
             Text(
                 text = "Select your Target",
                 style = MaterialTheme.typography.bodyMedium,
-                color = BrokenIceBlue.copy(alpha = 0.7f)
+                color = appColors.textMuted
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -6271,9 +7339,17 @@ fun ListeningLevelSelectionScreen(
             // Seviye Listesi
             LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 items(levels) { levelItem ->
+                    val isLocked = levelItem.id !in listOf("A1", "A2")
                     LevelSelectionCard(
-                        data = levelItem, // Burada hata almamak için parametre ismini eşitledik
-                        onClick = { onLevelSelected(levelItem.id) }
+                        data = levelItem,
+                        isLocked = isLocked,
+                        onClick = {
+                            if (isLocked) {
+                                showLockedDialog = true
+                            } else {
+                                onLevelSelected(levelItem.id)
+                            }
+                        }
                     )
                 }
             }
@@ -6282,31 +7358,33 @@ fun ListeningLevelSelectionScreen(
 }
 
 @Composable
-fun LevelSelectionCard(data: ListeningListeningLevelData, onClick: () -> Unit) {
+fun LevelSelectionCard(data: ListeningListeningLevelData, isLocked: Boolean = false, onClick: () -> Unit) {
+    val appColors = LocalAppThemeColors.current
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .height(100.dp)
             .clickable { onClick() },
         shape = RoundedCornerShape(24.dp),
-        color = Color.White, // PureWhite değişkenin yoksa Color.White kullan
+        color = appColors.surface,
+        border = BorderStroke(1.dp, appColors.border),
         shadowElevation = 4.dp
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // SOL: İleride resim yüklenecek alan
+            // SOL: İkon alanı
             Box(
                 modifier = Modifier
                     .size(76.dp)
-                    .background(data.backgroundColor, RoundedCornerShape(16.dp)), // ARTIK HATA VERMEZ
+                    .background(data.backgroundColor, RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.Image,
+                    imageVector = if (isLocked) Icons.Default.Lock else Icons.Default.Image,
                     contentDescription = null,
-                    tint = data.accentColor.copy(alpha = 0.4f), // ARTIK HATA VERMEZ
+                    tint = data.accentColor.copy(alpha = if (isLocked) 0.8f else 0.6f),
                     modifier = Modifier.size(32.dp)
                 )
             }
@@ -6316,23 +7394,23 @@ fun LevelSelectionCard(data: ListeningListeningLevelData, onClick: () -> Unit) {
             // ORTA: Bilgiler
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = data.id, // ARTIK HATA VERMEZ
+                    text = data.id,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Black,
                     color = data.accentColor
                 )
                 Text(
-                    text = data.description, // ARTIK HATA VERMEZ
+                    text = if (isLocked) "Önceki seviyeleri tamamlayarak açın" else data.description,
                     fontSize = 14.sp,
-                    color = Color.Gray
+                    color = appColors.textMuted
                 )
             }
 
             Icon(
-                imageVector = Icons.Default.ArrowForwardIos,
+                imageVector = if (isLocked) Icons.Default.Lock else Icons.Default.ArrowForwardIos,
                 contentDescription = null,
-                tint = Color.LightGray,
-                modifier = Modifier.size(16.dp)
+                tint = appColors.textMuted,
+                modifier = Modifier.size(if (isLocked) 20.dp else 16.dp)
             )
         }
     }
@@ -6348,6 +7426,7 @@ data class ListeningListeningLevelData(
 
 @Composable
 fun OptionButton(text: String, isSelected: Boolean, onClick: () -> Unit) {
+    val appColors = LocalAppThemeColors.current
     Button(
         onClick = onClick,
         modifier = Modifier
@@ -6355,16 +7434,17 @@ fun OptionButton(text: String, isSelected: Boolean, onClick: () -> Unit) {
             .height(56.dp),
         shape = RoundedCornerShape(16.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (isSelected) Color(0xFF5D9CEC) else Color(0xFFF0F8FF)
+            containerColor = if (isSelected) appColors.primary else appColors.surfaceRaised
         ),
-        border = if (isSelected) BorderStroke(2.dp, Color(0xFF3897F0)) else null
+        border = if (isSelected) BorderStroke(2.dp, appColors.primary) else BorderStroke(1.dp, appColors.border)
     ) {
-        Text(text = text, color = if (isSelected) Color.White else Color(0xFF2C3E50), fontWeight = FontWeight.Bold)
+        Text(text = text, color = if (isSelected) Color.White else appColors.text, fontWeight = FontWeight.Bold)
     }
 }
 
 @Composable
 fun QuizImageCard(imageRes: Int, isSelected: Boolean, onClick: () -> Unit, modifier: Modifier) {
+    val appColors = LocalAppThemeColors.current
     Surface(
         modifier = modifier
             .fillMaxHeight()
@@ -6372,9 +7452,9 @@ fun QuizImageCard(imageRes: Int, isSelected: Boolean, onClick: () -> Unit, modif
         shape = RoundedCornerShape(24.dp),
         border = BorderStroke(
             width = if (isSelected) 4.dp else 2.dp,
-            color = if (isSelected) Color(0xFF5D9CEC) else Color(0xFFF0F2F1)
+            color = if (isSelected) appColors.primary else appColors.border
         ),
-        color = Color(0xFFF8FAFB)
+        color = appColors.surface
     ) {
         Image(
             painter = painterResource(id = imageRes),
@@ -6391,6 +7471,7 @@ fun ListeningQuizResultScreen(
     correctCount: Int,
     totalQuestions: Int
 ) {
+    val appColors = LocalAppThemeColors.current
     val scoreColor = when {
         correctCount < totalQuestions * 0.4 -> Color(0xFFE74C3C)   // 🔴
         correctCount <= totalQuestions * 0.6 -> Color(0xFFF39C12)  // 🟠
@@ -6400,7 +7481,7 @@ fun ListeningQuizResultScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.White),
+            .background(appColors.background),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -6427,15 +7508,17 @@ fun ListeningQuizResultScreen(
             Text(
                 text = "Listening Quiz Result",
                 fontSize = 18.sp,
-                color = Color.Gray
+                color = appColors.textMuted
             )
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            Button(onClick = {
-                navController.popBackStack()
-            }) {
-                Text("Back")
+            Button(
+                onClick = { navController.popBackStack() },
+                colors = ButtonDefaults.buttonColors(containerColor = appColors.primary),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text("Back", color = Color.White, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -6489,9 +7572,11 @@ fun ResultOverlay(
 }
 @Composable
 fun GuideScreen(navController: NavHostController) {
+    val appColors = LocalAppThemeColors.current
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .background(appColors.background)
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -6499,19 +7584,25 @@ fun GuideScreen(navController: NavHostController) {
         Text(
             text = "Uygulama Guide",
             style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
+            color = appColors.text
         )
         Spacer(modifier = Modifier.height(20.dp))
 
         Text(
             text = "Bu bölümde uygulamanın kullanımı hakkında bilgiler yer alacak.",
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
+            color = appColors.textMuted
         )
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        Button(onClick = { navController.popBackStack() }) {
-            Text("Geri Dön")
+        Button(
+            onClick = { navController.popBackStack() },
+            colors = ButtonDefaults.buttonColors(containerColor = appColors.primary),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Text("Geri Dön", color = Color.White)
         }
     }
 }
@@ -6522,73 +7613,11 @@ fun SettingsScreen(
     onThemeChange: (Boolean) -> Unit,
     onBack: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp)
-    ) {
-        // Üst Başlık ve Geri Butonu
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Geri", tint = MaterialTheme.colorScheme.onBackground)
-            }
-            Text(
-                text = "Settings",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-        }
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        // Tema Ayarı Bölümü
-        Text(
-            text = "Appearance",
-            fontSize = 14.sp,
-            color = Color.Gray,
-            modifier = Modifier.padding(start = 12.dp, bottom = 8.dp)
-        )
-
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 2.dp
-        ) {
-            Row(
-                modifier = Modifier
-                    .padding(16.dp)
-                    .fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    Text(
-                        text = "Dark Mode",
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = if (isDarkMode) "Enabled" else "Disabled",
-                        fontSize = 12.sp,
-                        color = Color.Gray
-                    )
-                }
-
-                // 🚨 İŞTE O TUŞ!
-                Switch(
-                    checked = isDarkMode,
-                    onCheckedChange = { newValue ->
-                        android.util.Log.d("MewEnglish", "Dark Mode Değişimi: $newValue") // 👈 Bu satırı ekle
-                        onThemeChange(newValue)
-                    }
-                )
-            }
-        }
-
-    } // 👈 Surface bloğunu kapatan parantez
+    ProfileSettingsScreen(
+        isDarkMode = isDarkMode,
+        onThemeChange = onThemeChange,
+        onBack = onBack
+    )
 }
 // BOTTOM SHEET EKRANI
 

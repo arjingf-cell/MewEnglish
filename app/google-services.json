@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "223334707150",
+    "project_id": "mewenglish-bfb01",
+    "storage_bucket": "mewenglish-bfb01.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:223334707150:android:674e2d36d814238e9c60e5",
+        "android_client_info": {
+          "package_name": "com.mewenglish.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCvFguqIF_lp-Qtw6rAr341ZpEi86MrVLk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "status": 1
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -34,4 +34,6 @@ sealed class Screen(
     object QuizTree : Screen("quiz_tree/{lvl}", "Quiz", vectorIcon = Icons.Default.AccountTree) {
         fun createRoute(level: String) = "quiz_tree/$level"
     }
+
+    object Market : Screen("market_screen", "Market", vectorIcon = Icons.Default.ShoppingCart)
 }

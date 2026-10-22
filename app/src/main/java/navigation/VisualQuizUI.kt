@@ -26,6 +26,9 @@ fun VisualQuizUI(
     tts: SpeechAssistant,
     onAnswer: (Boolean) -> Unit
 ) {
+    val appColors = LocalAppThemeColors.current
+    val isDark = LocalIsDarkMode.current
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -38,7 +41,7 @@ fun VisualQuizUI(
             style = TextStyle(
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Black,
-                color = Color(0xFF4B4B4B)
+                color = appColors.text
             )
         )
 
@@ -50,9 +53,9 @@ fun VisualQuizUI(
                 .fillMaxWidth()
                 .height(220.dp),
             shape = RoundedCornerShape(28.dp),
-            color = Color.White,
-            shadowElevation = 8.dp,
-            border = BorderStroke(2.dp, Color(0xFFE5E5E5))
+            color = appColors.surface,
+            shadowElevation = if (isDark) 0.dp else 8.dp,
+            border = BorderStroke(1.dp, appColors.border)
         ) {
             Image(
                 painter = painterResource(id = data.imageRes),
@@ -90,9 +93,9 @@ fun VisualQuizUI(
                         .fillMaxWidth()
                         .height(72.dp),
                     shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.White),
-                    border = BorderStroke(2.dp, Color(0xFFE5E5E5)),
-                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
+                    colors = ButtonDefaults.buttonColors(containerColor = appColors.surface),
+                    border = BorderStroke(1.dp, appColors.border),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = if (isDark) 0.dp else 2.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
@@ -113,7 +116,7 @@ fun VisualQuizUI(
                             Text(
                                 text = option,
                                 style = TextStyle(
-                                    color = Color(0xFF4B4B4B),
+                                    color = appColors.text,
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.ExtraBold
                                 )
@@ -123,7 +126,7 @@ fun VisualQuizUI(
                         Icon(
                             imageVector = Icons.Default.VolumeUp,
                             contentDescription = null,
-                            tint = Color(0xFF1CB0F6),
+                            tint = appColors.primary,
                             modifier = Modifier.size(24.dp)
                         )
                     }

@@ -1,0 +1,56 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Oturum Kontrolü
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Belge Sahibi Kontrolü (User ID veya E-posta Eşleşmesi)
+    function isOwner(userId) {
+      return isAuthenticated() && (
+        request.auth.uid == userId ||
+        request.auth.uid == resource.data.id ||
+        (resource.data.email != null && request.auth.token.email == resource.data.email)
+      );
+    }
+
+    // Veri Bütünlüğü ve Pozitif Değer Doğrulaması (Hile ve Manipülasyon Engelleme)
+    function isValidProfileData() {
+      let data = request.resource.data;
+      return (!('coin' in data) || (data.coin is int && data.coin >= 0))
+          && (!('elmas' in data) || (data.elmas is int && data.elmas >= 0))
+          && (!('xp' in data) || (data.xp is int && data.xp >= 0))
+          && (!('streak' in data) || (data.streak is int && data.streak >= 0))
+          && (!('age' in data) || (data.age is int && data.age >= 0 && data.age <= 130));
+    }
+
+    // Kullanıcı Profilleri Koleksiyonu
+    match /user_profiles/{userId} {
+      // Okuma (Read): Yalnızca kimliği doğrulanmış ve kendi belgesine erişen kullanıcı
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId ||
+        request.auth.uid == resource.data.id ||
+        (resource.data.email != null && request.auth.token.email == resource.data.email)
+      );
+
+      // Oluşturma (Create): Kullanıcı sadece kendi kimliğiyle, geçerli pozitif verilerle belge oluşturabilir
+      allow create: if isAuthenticated() 
+                    && (request.auth.uid == userId || request.auth.uid == request.resource.data.id)
+                    && isValidProfileData();
+
+      // Güncelleme (Update): Kendi verilerini negatif olmayan değerlerle güncelleyebilir
+      allow update: if isOwner(userId) && isValidProfileData();
+
+      // Silme (Delete): Google Play Hesap Silme Politikası gereği kullanıcının kendi hesabını silebilmesi
+      allow delete: if isOwner(userId);
+    }
+
+    // Varsayılan Güvenlik: Diğer tüm koleksiyon ve belgelere harici erişimi kapat
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

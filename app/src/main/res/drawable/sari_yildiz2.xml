@@ -1,0 +1,26 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- Outer Glow Ring -->
+    <path
+        android:fillColor="#4DFFD700"
+        android:pathData="M48,48m-46,0a46,46 0,1 1,92 0a46,46 0,1 1,-92 0" />
+    <!-- Sun Ray / Double Star Backing -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M48,2 L56,26 L76,14 L70,38 L94,40 L76,56 L90,76 L66,74 L60,94 L48,76 L36,94 L30,74 L6,76 L20,56 L2,40 L26,38 L20,14 L40,26 Z" />
+    <!-- Main Radiant Gold Star -->
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M48,12 L59,35 L84,37 L65,54 L71,79 L48,65 L25,79 L31,54 L12,37 L37,35 Z" />
+    <!-- Crown / Apex Crest at Top -->
+    <path
+        android:fillColor="#FFFBEB"
+        android:pathData="M48,20 L53,38 L72,39 L57,51 L61,68 L48,58 L35,68 L39,51 L24,39 L43,38 Z" />
+    <!-- Center Jewel -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M48,42 L52,48 L48,54 L44,48 Z" />
+</vector>

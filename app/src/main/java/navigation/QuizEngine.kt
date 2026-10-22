@@ -1,4 +1,11 @@
 package com.example.ngilizcequizapp.quiz.engine
+import com.example.ngilizcequizapp.LocalAppThemeColors
+import com.example.ngilizcequizapp.LocalIsDarkMode
+import com.example.ngilizcequizapp.mewScreenBackground
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.AnnotatedString
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -9,6 +16,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.remember
 import com.example.ngilizcequizapp.QuizRepository
 import com.example.ngilizcequizapp.QuizTreeProgressStore
+import com.example.ngilizcequizapp.UserCosmeticsStore
+import navigation.MarketBoostStore
+import com.example.ngilizcequizapp.CartoonEnergyBadge
 import com.example.ngilizcequizapp.MistakeJarStore
 import com.example.ngilizcequizapp.AchievementManager
 import android.Manifest
@@ -33,6 +43,7 @@ import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -120,7 +131,8 @@ enum class QuestionType {
     FILL_IN_BLANK,
     TRANSLATION_BUILDER,
     PATTERN,
-    SPEAKING
+    SPEAKING,
+    INFO_CARD       // 👈 Bilgi & Anlatım Ekranı (Soru olarak sayılmaz)
 }
 
 data class TranslationQuestion(
@@ -151,12 +163,31 @@ data class SpeakingQuestion(
     val correctAnswer: String
 )
 
+@Composable
+fun safePainterResource(resId: Int, fallbackResId: Int = com.example.ngilizcequizapp.R.drawable.cat_logo): androidx.compose.ui.graphics.painter.Painter {
+    val context = LocalContext.current
+    val targetId = remember(resId) {
+        if (resId <= 0) {
+            fallbackResId
+        } else {
+            val exists = try {
+                context.resources.getResourceName(resId)
+                true
+            } catch (_: Exception) {
+                false
+            }
+            if (exists) resId else fallbackResId
+        }
+    }
+    return painterResource(id = targetId)
+}
+
 data class VocabularyLevelDataQuiz(
     val id: Int,
-    val questionTurkish: String,
-    val imageRes: Int,
-    val correctAnswer: String,
-    val options: List<String>,
+    val questionTurkish: String = "",
+    val imageRes: Int = 0,
+    val correctAnswer: String = "",
+    val options: List<String> = emptyList(),
     // Varsayılanları değiştirdik:
     val speakQuestionInTurkish: Boolean = false, // Soru genelde İngilizce
     val speakOptionsInTurkish: Boolean = true,   // Şıklar genelde Türkçe
@@ -176,7 +207,12 @@ data class VocabularyLevelDataQuiz(
     val patternHighlightTwo: String = "",
     val speakingTitle: String = "",
     val speakingSentence: String = "",
-    val speakingCharacterRes: Int = 0
+    val speakingCharacterRes: Int = 0,
+    val infoTitle: String = "",
+    val infoHighlights: List<String> = emptyList(),
+    val infoTableHeaders: List<String> = emptyList(),
+    val infoTableRows: List<List<String>> = emptyList(),
+    val res: Int = 0
 ) {
     val question: String get() = questionTurkish
     val optionTexts: List<String> get() = options
@@ -379,6 +415,16 @@ fun QuizTopBar(
     isStreakActive: Boolean, // 🚩 BU SATIRI EKLE
     onClose: () -> Unit
 ) {
+    val context = LocalContext.current
+    val appColors = LocalAppThemeColors.current
+    val isKingdomTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isKingdomThemeActive(context)
+    }
+    val goldBrush = remember {
+        Brush.horizontalGradient(
+            listOf(Color(0xFFFFDF7A), Color(0xFFD4AF37), Color(0xFFAA7C11), Color(0xFFFFDF7A))
+        )
+    }
     val barColor = if (isStreakActive) Color(0xFFFFD700) else Color(0xFF58CC02)
     val isStreakActive = streakCount >= 3
     val fireRes = rememberRawResId("fire")
@@ -391,48 +437,65 @@ fun QuizTopBar(
         animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Restart),
         label = "shimmer"
     )
-    val progressBrush = if (isStreakActive) {
-        Brush.linearGradient(
+    val progressBrush = when {
+        isKingdomTheme -> goldBrush
+        isStreakActive -> Brush.linearGradient(
             colors = listOf(Color(0xFF1CB0F6), Color.White, Color(0xFF1CB0F6)),
             start = Offset(shimmerOffset, 0f), end = Offset(shimmerOffset + 300f, 0f)
         )
-    } else SolidColor(Color(0xFF1CB0F6))
+        else -> SolidColor(Color(0xFF1CB0F6))
+    }
 
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onClose) { Icon(Icons.Default.Close, null, tint = Color.Gray) }
-            Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFFF4F0FF)) {
+            IconButton(onClick = onClose) { Icon(Icons.Default.Close, null, tint = if (isKingdomTheme) Color(0xFFFFD700) else appColors.textMuted) }
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = if (isKingdomTheme) Color(0xFF070F26).copy(alpha = 0.94f) else (if (isStreakActive) appColors.warning.copy(alpha = 0.2f) else appColors.primarySoft),
+                border = if (isKingdomTheme) BorderStroke(1.2.dp, goldBrush) else null
+            ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         text = "KOMBO x$streakCount",
                         fontWeight = FontWeight.Black,
-                        fontSize = 14.sp,
-                        color = Color(0xFF6A4BFF)
+                        fontSize = 13.sp,
+                        color = if (isKingdomTheme) Color(0xFFFFD700) else (if (isStreakActive) appColors.warning else appColors.primary)
                     )
                     if (streakCount >= 3) {
                         Spacer(Modifier.width(4.dp))
                         LottieAnimation(
                             composition = fireComposition,
                             iterations = LottieConstants.IterateForever,
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Favorite, null, tint = Color.Red, modifier = Modifier.size(28.dp))
-                Text(text = " $hearts", fontWeight = FontWeight.Black, fontSize = 18.sp, color = Color.Red)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CartoonEnergyBadge()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Favorite, null, tint = appColors.danger, modifier = Modifier.size(20.dp))
+                    Text(text = " $hearts", fontWeight = FontWeight.Black, fontSize = 14.sp, color = appColors.danger)
+                }
             }
         }
-        Text(text = "${currentIndex + 1} / $totalQuestions", modifier = Modifier.padding(start = 52.dp), style = TextStyle(color = Color(0xFF1CB0F6), fontWeight = FontWeight.Black, fontSize = 13.sp))
-        Surface(color = Color(0xFFF0F0F0), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth().height(48.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 10.dp)) {
-                Image(painter = painterResource(id = R.drawable.kupa), contentDescription = null, modifier = Modifier.size(32.dp))
-                Spacer(modifier = Modifier.width(10.dp))
-                Box(modifier = Modifier.weight(1f).height(14.dp).clip(CircleShape).background(Color.White.copy(0.5f))) {
+        Text(text = "${currentIndex + 1} / $totalQuestions", modifier = Modifier.padding(start = 52.dp, bottom = 2.dp), style = TextStyle(color = if (isKingdomTheme) Color(0xFFFFD700) else appColors.primary, fontWeight = FontWeight.Black, fontSize = 12.sp))
+        Surface(
+            color = if (isKingdomTheme) Color(0xFF070F26).copy(alpha = 0.94f) else appColors.surfaceRaised,
+            shape = RoundedCornerShape(16.dp),
+            border = if (isKingdomTheme) BorderStroke(1.dp, goldBrush) else null,
+            modifier = Modifier.fillMaxWidth().height(36.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
+                Image(painter = painterResource(id = R.drawable.kupa), contentDescription = null, modifier = Modifier.size(26.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(modifier = Modifier.weight(1f).height(14.dp).clip(CircleShape).background(if (isKingdomTheme) Color(0xFF1E2D4A) else appColors.border.copy(alpha = 0.5f))) {
                     Box(modifier = Modifier.fillMaxWidth(((currentIndex + 1).toFloat() / totalQuestions)).fillMaxHeight().background(progressBrush))
                 }
             }
@@ -471,13 +534,18 @@ private fun normalizeSpeechForQuiz(text: String): String {
 
 @Composable
 fun Sonucekrani(hearts: Int, totalQuestions: Int, onRestart: () -> Unit, onExit: () -> Unit) {
-    Column(modifier = Modifier.fillMaxSize().background(Color.White).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Text("OYUN BİTTİ", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+    val appColors = LocalAppThemeColors.current
+    Column(modifier = Modifier.fillMaxSize().mewScreenBackground().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Text("OYUN BİTTİ", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = appColors.text)
         Spacer(modifier = Modifier.height(16.dp))
-        Text("Kalan Can: $hearts", fontSize = 20.sp, color = Color.Red)
+        Text("Kalan Can: $hearts", fontSize = 20.sp, color = appColors.danger)
         Spacer(modifier = Modifier.height(32.dp))
-        Button(onClick = onRestart, modifier = Modifier.fillMaxWidth()) { Text("TEKRAR DENE") }
-        TextButton(onClick = onExit) { Text("ÇIKIŞ") }
+        Button(
+            onClick = onRestart,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = appColors.primary)
+        ) { Text("TEKRAR DENE", color = Color.White, fontWeight = FontWeight.Bold) }
+        TextButton(onClick = onExit) { Text("ÇIKIŞ", color = appColors.textMuted) }
     }
 }
 
@@ -487,35 +555,65 @@ fun boslukdoldurma(
     progress: Float,
     health: Int,
     ttsHelper: SpeechAssistant?,
-    // ✅ DÜZELTME: (Boolean) yerine (Boolean, String) yaparak sözleşmeyi eşitledik
     onAnswerResult: (Boolean, String) -> Unit
 ) {
+    val appColors = LocalAppThemeColors.current
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(horizontal = 20.dp, vertical = 14.dp)
+            .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("Boşluğu Doldur:", fontSize = 18.sp, color = Color.Gray)
-        Text(data.questionTurkish, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = appColors.primarySoft,
+            border = BorderStroke(1.dp, appColors.primary.copy(alpha = 0.3f))
+        ) {
+            Text(
+                "BOŞLUK DOLDURMA",
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Black,
+                color = appColors.primary
+            )
+        }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        data.options.forEach { option ->
-            Button(
-                onClick = {
-                    // ✅ DÜZELTME: Hem sonucu hem de seçilen kelimeyi yukarı gönderiyoruz
-                    val isCorrect = option.lowercase() == data.correctAnswer.lowercase()
+        Text(
+            text = data.questionTurkish,
+            fontSize = 26.sp,
+            lineHeight = 32.sp,
+            fontWeight = FontWeight.Black,
+            textAlign = TextAlign.Center,
+            color = appColors.text
+        )
 
-                    // Artık iki parametre gönderdiği için 'Argument type mismatch' hatası biter
-                    onAnswerResult(isCorrect, option)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text(text = option, fontSize = 16.sp)
+        Spacer(modifier = Modifier.height(28.dp))
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            data.options.forEach { option ->
+                Button(
+                    onClick = {
+                        val isCorrect = option.trim().equals(data.correctAnswer.trim(), ignoreCase = true)
+                        onAnswerResult(isCorrect, option)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(62.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = appColors.surface,
+                        contentColor = appColors.text
+                    ),
+                    border = BorderStroke(1.5.dp, appColors.border)
+                ) {
+                    Text(text = option, fontSize = 19.sp, fontWeight = FontWeight.Black)
+                }
             }
         }
     }
@@ -541,22 +639,25 @@ fun MainQuizScreen(
     fullStarCountBefore: Int = 0,
     quizIndex: Int = -1,
     quizTitle: String = "Quiz",
-    health: Int = 5
+    health: Int = 5,
+    isMistakePractice: Boolean = false,
+    mistakeEntries: List<com.example.ngilizcequizapp.MistakeEntry> = emptyList()
 ) {
     val context = LocalContext.current
-    var currentIndex by remember { mutableIntStateOf(0) }
-    var hearts by remember { mutableIntStateOf(health) }
-    var score by remember { mutableIntStateOf(0) }
-    var blankAnswers by remember { mutableIntStateOf(0) }
-    var consecutiveCorrect by remember { mutableIntStateOf(0) }
-    var quizCompleted by remember { mutableStateOf(false) }
+    var currentIndex by rememberSaveable(quizIndex) { mutableIntStateOf(0) }
+    var hearts by rememberSaveable(quizIndex) { mutableIntStateOf(health) }
+    var score by rememberSaveable(quizIndex) { mutableIntStateOf(0) }
+    var blankAnswers by rememberSaveable(quizIndex) { mutableIntStateOf(0) }
+    var consecutiveCorrect by rememberSaveable(quizIndex) { mutableIntStateOf(0) }
+    var quizCompleted by rememberSaveable(quizIndex) { mutableStateOf(false) }
 
-    var showSheet by remember { mutableStateOf(false) }
-    var isAnswerCorrect by remember { mutableStateOf(false) }
+    var showSheet by rememberSaveable(quizIndex) { mutableStateOf(false) }
+    var isAnswerCorrect by rememberSaveable(quizIndex) { mutableStateOf(false) }
     var triggerStars by remember { mutableStateOf(false) }
-    var showComboMilestone by remember { mutableStateOf(false) }
+    var showComboMilestone by rememberSaveable(quizIndex) { mutableStateOf(false) }
     var showConfetti by remember { mutableStateOf(false) }
-    var showNeutralSpeakingSheet by remember { mutableStateOf(false) }
+    var showNeutralSpeakingSheet by rememberSaveable(quizIndex) { mutableStateOf(false) }
+    var showWordsDialog by rememberSaveable(quizIndex) { mutableStateOf(false) }
 
     val currentQuestion = quizList.getOrNull(currentIndex)
     val isStreakActive = consecutiveCorrect >= 3
@@ -571,20 +672,46 @@ fun MainQuizScreen(
             quizIndex = quizIndex - 1,
             isReinforcement = QuizTreeProgressStore.hasReinforcementXp(context, quizIndex - 1)
         )
+        val xpMul = if (isMistakePractice) MarketBoostStore.getXpMultiplier(context) else outcome.xpMultiplier
+        val finalEarnedXp = if (isMistakePractice) (score * 5 * xpMul) else outcome.earnedXp
+        val finalEarnedCoins = if (completedAllQuestions) outcome.earnedCoins else 0
+        val finalEarnedGems = if (completedAllQuestions) outcome.earnedGems else 0
+
         QuizResultScreen(
             navController,
             score,
             quizList.size,
-            earnedCoins = if (completedAllQuestions) outcome.earnedCoins else 0,
-            earnedGems = if (completedAllQuestions) outcome.earnedGems else 0,
-            earnedXp = outcome.earnedXp,
+            earnedCoins = finalEarnedCoins,
+            earnedGems = finalEarnedGems,
+            earnedXp = finalEarnedXp,
             isReinforcement = outcome.isReinforcement,
             blankAnswers = blankAnswers,
+            xpMultiplier = xpMul,
+            coinMultiplier = outcome.coinMultiplier,
+            gemMultiplier = outcome.gemMultiplier,
             onDone = {
-                onQuizResult(score, quizList.size, completedAllQuestions)
-                onQuizComplete()
+                if (isMistakePractice && mistakeEntries.isNotEmpty()) {
+                    showWordsDialog = true
+                } else {
+                    onQuizResult(score, quizList.size, completedAllQuestions)
+                    onQuizComplete()
+                }
             }
         )
+
+        if (showWordsDialog) {
+            com.example.ngilizcequizapp.SaveQuizWordsDialog(
+                entries = mistakeEntries,
+                onDismiss = {
+                    showWordsDialog = false
+                    onQuizComplete()
+                },
+                onFinish = {
+                    showWordsDialog = false
+                    onQuizComplete()
+                }
+            )
+        }
         return
     }
 
@@ -598,6 +725,16 @@ fun MainQuizScreen(
             val newCombo = consecutiveCorrect + 1
             consecutiveCorrect = newCombo
             score++
+            if (isMistakePractice) {
+                val entry = mistakeEntries.getOrNull(currentIndex)
+                if (entry != null) {
+                    MistakeJarStore.markSolved(context, entry.id)
+                    AchievementManager.unlockBadge(context, "common_first_fix")
+                    if (MistakeJarStore.mistakes.none { !it.solved }) {
+                        AchievementManager.unlockBadge(context, "rare_jar_emptier")
+                    }
+                }
+            }
             if (newCombo == 4) {
                 showComboMilestone = true
                 shouldShowSheet = false
@@ -608,26 +745,28 @@ fun MainQuizScreen(
         } else {
             consecutiveCorrect = 0
             hearts--
-            AchievementManager.unlockBadge(context, "common_first_mistake")
-            if (MistakeJarStore.mistakes.size >= 5) {
-                AchievementManager.unlockBadge(context, "regular_jar_fill")
-            }
-            if (quizIndex >= 0) {
-                MistakeJarStore.record(
-                    context = context,
-                    quizIndex = quizIndex,
-                    quizTitle = quizTitle,
-                    questionNumber = currentIndex + 1,
-                    question = currentQuestion,
-                    selectedAnswer = selectedText
-                )
+            if (!isMistakePractice) {
+                AchievementManager.unlockBadge(context, "common_first_mistake")
+                if (MistakeJarStore.mistakes.size >= 5) {
+                    AchievementManager.unlockBadge(context, "regular_jar_fill")
+                }
+                if (quizIndex >= 0) {
+                    MistakeJarStore.record(
+                        context = context,
+                        quizIndex = quizIndex,
+                        quizTitle = quizTitle,
+                        questionNumber = currentIndex + 1,
+                        question = currentQuestion,
+                        selectedAnswer = selectedText
+                    )
+                }
             }
         }
         showSheet = shouldShowSheet
     }
 
     // ✅ contentAlignment = Alignment.BottomCenter: Paneli dibe yaslar
-    Box(modifier = Modifier.fillMaxSize().background(Color.White), contentAlignment = Alignment.BottomCenter) {
+    Box(modifier = Modifier.fillMaxSize().mewScreenBackground(), contentAlignment = Alignment.BottomCenter) {
 
         Column(modifier = Modifier.fillMaxSize()) {
             if (false && currentQuestion.questionType == QuestionType.TRANSLATION_BUILDER) {
@@ -695,7 +834,7 @@ fun MainQuizScreen(
                         data = currentQuestion,
                         tts = ttsHelper,
                         onAnswer = { text: String ->
-                            val isCorrect = text.lowercase() == currentQuestion.correctAnswer.lowercase()
+                            val isCorrect = text.trim().equals(currentQuestion.correctAnswer.trim(), ignoreCase = true)
                             onAnswerResult(isCorrect, text)
                         }
                     )
@@ -733,7 +872,7 @@ fun MainQuizScreen(
                         progress = (currentIndex.toFloat() / quizList.size).coerceIn(0f, 1f),
                         energy = hearts,
                         onClose = onQuizComplete,
-                        onSpeak = { ttsHelper.speakEnglish(currentQuestion.questionTurkish) },
+                        onSpeak = { ttsHelper.speak(currentQuestion.questionTurkish) },
                         onAnswer = { isCorr, text -> onAnswerResult(isCorr, text) }
                     )
 
@@ -746,8 +885,20 @@ fun MainQuizScreen(
 
                     QuestionType.SPEAKING -> SpeakingQuizContent(
                         data = currentQuestion,
+                        tts = ttsHelper,
                         onAnswer = { isCorr, text -> onAnswerResult(isCorr, text) },
                         onCannotSpeak = { showNeutralSpeakingSheet = true }
+                    )
+
+                    QuestionType.INFO_CARD -> InfoCardQuizContent(
+                        data = currentQuestion,
+                        onContinue = {
+                            if (currentIndex >= quizList.size - 1) {
+                                quizCompleted = true
+                            } else {
+                                currentIndex++
+                            }
+                        }
                     )
 
                     else -> Unit
@@ -780,6 +931,7 @@ fun MainQuizScreen(
             QuizResultSheet(
                 isCorrect = isAnswerCorrect,
                 correctAnswer = currentQuestion.correctAnswer,
+                tts = if (currentQuestion.questionType == QuestionType.LISTENING) null else ttsHelper,
                 onContinue = {
                     showSheet = false
                     if (currentIndex >= quizList.size - 1 || hearts <= 0) {
@@ -808,13 +960,133 @@ fun MainQuizScreen(
     }
 }
 
+data class SpeakingEvaluationResult(
+    val isCorrect: Boolean,
+    val matchedList: List<Boolean>,
+    val mispronouncedCount: Int,
+    val totalWords: Int
+)
+
+private fun evaluateSpeakingPronunciation(
+    sentence: String,
+    spokenText: String
+): SpeakingEvaluationResult {
+    val wordRegex = Regex("[a-zA-Z0-9']+")
+    val targetWordsWithRange = wordRegex.findAll(sentence).toList()
+    if (targetWordsWithRange.isEmpty()) {
+        val normalizedSpoken = normalizeSpeechForQuiz(spokenText)
+        val normalizedTarget = normalizeSpeechForQuiz(sentence)
+        val isCorr = normalizedSpoken.isNotEmpty() && normalizedSpoken == normalizedTarget
+        return SpeakingEvaluationResult(
+            isCorrect = isCorr,
+            matchedList = emptyList(),
+            mispronouncedCount = if (isCorr) 0 else 1,
+            totalWords = 1
+        )
+    }
+
+    val spokenCleanWords = spokenText
+        .lowercase(Locale.ROOT)
+        .replace("doesn't", "does not")
+        .replace("don't", "do not")
+        .replace("isn't", "is not")
+        .replace("aren't", "are not")
+        .replace("can't", "can not")
+        .replace(Regex("[^a-z0-9 ]"), " ")
+        .split(Regex("\\s+"))
+        .filter { it.isNotBlank() }
+
+    val remainingSpoken = spokenCleanWords.toMutableList()
+    val matchResults = mutableListOf<Boolean>()
+
+    for (match in targetWordsWithRange) {
+        val targetWord = match.value
+        val matchIdx = remainingSpoken.indexOfFirst { spoken -> isWordMatch(targetWord, spoken) }
+        if (matchIdx >= 0) {
+            matchResults.add(true)
+            remainingSpoken.removeAt(matchIdx)
+        } else {
+            matchResults.add(false)
+        }
+    }
+
+    val totalWords = targetWordsWithRange.size
+    val matchedCount = matchResults.count { it }
+    val mispronouncedCount = totalWords - matchedCount
+
+    // Pedagojik Kural:
+    // 1 kelimelik cümlelerde hata toleransı yok (kelime doğru bilinmeli).
+    // 2 kelimelik cümlelerde en fazla 1 kelime yanlış telaffuz edilirse doğru kabul edilir.
+    // 3 ve daha fazla kelimelik cümlelerde 1 veya 2 kelime yanlış telaffuz edilirse doğru kabul edilir.
+    val isCorrect = when (totalWords) {
+        0 -> true
+        1 -> mispronouncedCount == 0
+        2 -> mispronouncedCount <= 1 && matchedCount >= 1
+        else -> mispronouncedCount <= 2 && matchedCount >= 1
+    }
+
+    return SpeakingEvaluationResult(
+        isCorrect = isCorrect,
+        matchedList = matchResults,
+        mispronouncedCount = mispronouncedCount,
+        totalWords = totalWords
+    )
+}
+
+private fun isWordMatch(target: String, spoken: String): Boolean {
+    val t = target.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]"), "")
+    val s = spoken.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]"), "")
+    if (t == s) return true
+    if (t.isEmpty() || s.isEmpty()) return false
+
+    // Kısaltma ve genel kalıplar
+    if (t == "dont" && (s == "do" || s == "not" || s == "dont")) return true
+    if (t == "doesnt" && (s == "does" || s == "not" || s == "doesnt")) return true
+    if (t == "cant" && (s == "can" || s == "not" || s == "cant")) return true
+
+    val maxLen = maxOf(t.length, s.length)
+    val minLen = minOf(t.length, s.length)
+
+    // Zor kelimeler için tolerans (Levenshtein mesafesi)
+    if (minLen >= 4 && maxLen - minLen <= 1) {
+        if (levenshteinDistance(t, s) <= 1) return true
+    }
+    if (minLen >= 7 && maxLen - minLen <= 2) {
+        if (levenshteinDistance(t, s) <= 2) return true
+    }
+    return false
+}
+
+private fun levenshteinDistance(s1: String, s2: String): Int {
+    val dp = Array(s1.length + 1) { IntArray(s2.length + 1) }
+    for (i in 0..s1.length) dp[i][0] = i
+    for (j in 0..s2.length) dp[0][j] = j
+    for (i in 1..s1.length) {
+        for (j in 1..s2.length) {
+            val cost = if (s1[i - 1] == s2[j - 1]) 0 else 1
+            dp[i][j] = minOf(
+                dp[i - 1][j] + 1,
+                dp[i][j - 1] + 1,
+                dp[i - 1][j - 1] + cost
+            )
+        }
+    }
+    return dp[s1.length][s2.length]
+}
+
 @Composable
 fun SpeakingQuizContent(
     data: VocabularyLevelDataQuiz,
+    tts: SpeechAssistant? = null,
     onAnswer: (Boolean, String) -> Unit,
     onCannotSpeak: () -> Unit
 ) {
     val context = LocalContext.current
+    val localTts = tts ?: remember(context) { SpeechAssistant(context) }
+    val coroutineScope = rememberCoroutineScope()
+    val isDark = LocalIsDarkMode.current
+    val appColors = LocalAppThemeColors.current
+
     val question = SpeakingQuestion(
         id = data.id,
         title = data.speakingTitle.ifBlank { data.questionTurkish },
@@ -822,9 +1094,51 @@ fun SpeakingQuizContent(
         characterRes = data.speakingCharacterRes.takeIf { it != 0 } ?: data.imageRes,
         correctAnswer = data.correctAnswer
     )
+    val targetSentence = remember(question.sentence, question.correctAnswer) {
+        question.sentence.ifBlank { question.correctAnswer }
+    }
+
     var isRecording by rememberSaveable(data.id) { mutableStateOf(false) }
     var transcript by rememberSaveable(data.id) { mutableStateOf("") }
     var speechError by rememberSaveable(data.id) { mutableStateOf("") }
+    var wordEvaluationState by rememberSaveable(data.id) { mutableStateOf<List<Boolean>?>(null) }
+    var latestEvaluation by remember(data.id) { mutableStateOf<SpeakingEvaluationResult?>(null) }
+
+    val wordRegex = remember { Regex("[a-zA-Z0-9']+") }
+    val targetWordsWithRange = remember(question.sentence) {
+        wordRegex.findAll(question.sentence).toList()
+    }
+
+    val sentenceAnnotatedString = remember(question.sentence, wordEvaluationState, isDark) {
+        val currentEval = wordEvaluationState
+        if (currentEval == null || targetWordsWithRange.isEmpty()) {
+            AnnotatedString(question.sentence)
+        } else {
+            buildAnnotatedString {
+                var cursor = 0
+                val yellowColor = if (isDark) Color(0xFFFACC15) else Color(0xFFD97706)
+                val greenColor = if (isDark) Color(0xFF4ADE80) else Color(0xFF16A34A)
+
+                targetWordsWithRange.forEachIndexed { index, match ->
+                    if (match.range.first > cursor) {
+                        append(question.sentence.substring(cursor, match.range.first))
+                    }
+                    val isWordMatched = currentEval.getOrNull(index) ?: true
+                    val wordColor = if (isWordMatched) greenColor else yellowColor
+
+                    pushStyle(SpanStyle(color = wordColor, fontWeight = FontWeight.Black))
+                    append(match.value)
+                    pop()
+
+                    cursor = match.range.last + 1
+                }
+                if (cursor < question.sentence.length) {
+                    append(question.sentence.substring(cursor))
+                }
+            }
+        }
+    }
+
     val micColor by animateColorAsState(
         targetValue = if (isRecording) Color(0xFFE84B6A) else Color(0xFF2F80ED),
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
@@ -865,6 +1179,8 @@ fun SpeakingQuizContent(
             override fun onReadyForSpeech(params: Bundle?) {
                 isRecording = true
                 speechError = ""
+                wordEvaluationState = null
+                latestEvaluation = null
             }
 
             override fun onBeginningOfSpeech() {
@@ -881,10 +1197,10 @@ fun SpeakingQuizContent(
             override fun onError(error: Int) {
                 isRecording = false
                 speechError = when (error) {
-                    SpeechRecognizer.ERROR_NO_MATCH -> "Sesi anlayamadim, tekrar dene."
-                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Ses duyamadim, tekrar dene."
+                    SpeechRecognizer.ERROR_NO_MATCH -> "Sesi anlayamadım, tekrar dene."
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Ses duyamadım, tekrar dene."
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Mikrofon izni gerekli."
-                    else -> "Konusma algilanamadi, tekrar dene."
+                    else -> "Konuşma algılanamadı, tekrar dene."
                 }
             }
 
@@ -896,11 +1212,20 @@ fun SpeakingQuizContent(
                     .orEmpty()
                 transcript = spokenText
                 if (spokenText.isBlank()) {
-                    speechError = "Sesi anlayamadim, tekrar dene."
+                    speechError = "Sesi anlayamadım, tekrar dene."
                     return
                 }
-                val isCorrect = normalizeSpeechForQuiz(spokenText) == normalizeSpeechForQuiz(question.correctAnswer)
-                onAnswer(isCorrect, spokenText)
+                val eval = evaluateSpeakingPronunciation(
+                    sentence = targetSentence,
+                    spokenText = spokenText
+                )
+                wordEvaluationState = eval.matchedList
+                latestEvaluation = eval
+
+                // Yanlış cevap verilirse doğru telaffuz otomatik okunsun
+                if (!eval.isCorrect) {
+                    localTts.speakEnglish(targetSentence)
+                }
             }
 
             override fun onPartialResults(partialResults: Bundle?) {
@@ -931,9 +1256,12 @@ fun SpeakingQuizContent(
             Toast.makeText(context, "Mikrofon izni gerekli", Toast.LENGTH_SHORT).show()
         }
     }
+    var showAudioDisclosureDialog by remember { mutableStateOf(false) }
     fun startSpeakingRecognition() {
         speechError = ""
         transcript = ""
+        wordEvaluationState = null
+        latestEvaluation = null
         if (!speechRecognizerAvailable) {
             speechError = "Bu cihazda konusma tanima servisi bulunamadi."
             return
@@ -945,68 +1273,153 @@ fun SpeakingQuizContent(
         if (hasPermission) {
             speechRecognizer?.startListening(speechIntent)
         } else {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            showAudioDisclosureDialog = true
         }
+    }
+
+    if (showAudioDisclosureDialog) {
+        AlertDialog(
+            onDismissRequest = { showAudioDisclosureDialog = false },
+            containerColor = Color(0xFF131D38),
+            shape = RoundedCornerShape(22.dp),
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Mic,
+                    contentDescription = null,
+                    tint = Color(0xFF38BDF8),
+                    modifier = Modifier.size(36.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Mikrofon İzni Bilgilendirmesi",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    textAlign = TextAlign.Center
+                )
+            },
+            text = {
+                Text(
+                    text = "MewEnglish, telaffuzunuzu analiz etmek ve konuşma pratiğinizi değerlendirmek amacıyla sesinizi algılar.\n\nSes verileriniz sunucularımızda KESİNLİKLE kaydedilmez veya üçüncü taraflarla paylaşılmaz; tamamen anlık olarak cihazınızda işlenir.",
+                    color = Color(0xFFCBD5E1),
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    textAlign = TextAlign.Center
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showAudioDisclosureDialog = false
+                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8))
+                ) {
+                    Text(
+                        text = "Anladım ve İzin Ver",
+                        color = Color(0xFF0F172A),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAudioDisclosureDialog = false }) {
+                    Text("Vazgeç", color = Color(0xFF94A3B8))
+                }
+            }
+        )
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7FBFF))
-            .padding(22.dp),
+            .mewScreenBackground()
+            .padding(horizontal = 20.dp, vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             text = question.title,
             modifier = Modifier.fillMaxWidth(),
-            color = Color(0xFF13233A),
-            fontSize = 28.sp,
-            lineHeight = 34.sp,
+            color = appColors.text,
+            fontSize = 26.sp,
+            lineHeight = 32.sp,
             fontWeight = FontWeight.Black,
             textAlign = TextAlign.Center
         )
 
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(18.dp))
 
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(26.dp),
-            color = Color.White,
+            color = appColors.surface,
             shadowElevation = 8.dp,
-            border = BorderStroke(1.dp, Color(0xFFDDEAF7))
+            border = BorderStroke(1.dp, appColors.border)
         ) {
             Row(
                 modifier = Modifier.padding(18.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.VolumeUp,
-                    contentDescription = "Ses",
-                    tint = Color(0xFF2F80ED),
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(Color(0xFFEAF3FF), CircleShape)
-                        .padding(8.dp)
-                )
-                Spacer(Modifier.width(14.dp))
                 Text(
-                    text = question.sentence,
+                    text = sentenceAnnotatedString,
                     modifier = Modifier.weight(1f),
-                    color = Color(0xFF172B4D),
+                    color = appColors.text,
                     fontSize = 22.sp,
                     lineHeight = 29.sp,
                     fontWeight = FontWeight.ExtraBold
                 )
+
+                Spacer(Modifier.width(12.dp))
+
+                IconButton(
+                    onClick = {
+                        localTts.speakEnglish(targetSentence)
+                    },
+                    modifier = Modifier
+                        .size(46.dp)
+                        .background(
+                            if (wordEvaluationState != null) appColors.primary else appColors.primarySoft,
+                            CircleShape
+                        )
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = "Seslendir",
+                        tint = if (wordEvaluationState != null) Color.White else appColors.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
         }
 
-        Spacer(Modifier.height(26.dp))
+        if (wordEvaluationState != null) {
+            val mispronouncedCount = wordEvaluationState?.count { !it } ?: 0
+            if (mispronouncedCount in 1..2) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = (if (isDark) Color(0xFFFACC15) else Color(0xFFD97706)).copy(alpha = 0.15f),
+                    modifier = Modifier.padding(top = 10.dp)
+                ) {
+                    Text(
+                        text = "⚡ Sarı kelimelerin telaffuzuna dikkat et (Kabul edildi)",
+                        color = if (isDark) Color(0xFFFACC15) else Color(0xFFB45309),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
 
         LottieAnimation(
             composition = speakingComposition,
             iterations = 1,
             modifier = Modifier
-                .size(190.dp)
+                .size(175.dp)
                 .clip(RoundedCornerShape(32.dp))
         )
 
@@ -1014,7 +1427,7 @@ fun SpeakingQuizContent(
 
         Surface(
             modifier = Modifier
-                .size(96.dp)
+                .size(92.dp)
                 .scale(micScale)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -1029,44 +1442,69 @@ fun SpeakingQuizContent(
                     imageVector = Icons.Default.Mic,
                     contentDescription = "Mikrofon",
                     tint = Color.White,
-                    modifier = Modifier.size(44.dp)
+                    modifier = Modifier.size(42.dp)
                 )
             }
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
         Text(
             text = if (isRecording) "Dinleniyor..." else "Mikrofona bas ve tekrar et",
-            color = if (isRecording) Color(0xFFE84B6A) else Color(0xFF60758F),
+            color = if (isRecording) appColors.danger else appColors.textMuted,
             fontSize = 14.sp,
             fontWeight = FontWeight.Bold
         )
         if (transcript.isNotBlank()) {
             Text(
                 text = "\"$transcript\"",
-                color = Color(0xFF13233A),
+                color = appColors.text,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 6.dp)
+                modifier = Modifier.padding(top = 4.dp)
             )
         }
         if (speechError.isNotBlank()) {
             Text(
                 text = speechError,
-                color = Color(0xFFB54747),
+                color = appColors.danger,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 6.dp)
+                modifier = Modifier.padding(top = 4.dp)
             )
         }
 
-        TextButton(onClick = onCannotSpeak, modifier = Modifier.padding(top = 8.dp)) {
+        if (latestEvaluation != null) {
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = {
+                    latestEvaluation?.let { eval ->
+                        onAnswer(eval.isCorrect, transcript)
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (latestEvaluation?.isCorrect == true) appColors.primary else appColors.danger
+                )
+            ) {
+                Text(
+                    text = "KONTROL ET",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color.White
+                )
+            }
+        }
+
+        TextButton(onClick = onCannotSpeak, modifier = Modifier.padding(top = 4.dp)) {
             Text(
                 text = "ŞİMDİ KONUŞAMAM",
-                color = Color(0xFF60758F),
-                fontSize = 14.sp,
+                color = appColors.textMuted,
+                fontSize = 13.sp,
                 fontWeight = FontWeight.Black
             )
         }
@@ -1078,6 +1516,7 @@ fun PatternQuizContent(
     data: VocabularyLevelDataQuiz,
     onAnswer: (String) -> Unit
 ) {
+    val appColors = LocalAppThemeColors.current
     val pattern = PatternQuestion(
         id = data.id,
         title = data.patternTitle,
@@ -1091,102 +1530,171 @@ fun PatternQuizContent(
     )
     var selectedOption by rememberSaveable(data.id) { mutableStateOf<String?>(null) }
 
-    Column(
+    val shuffledOptions = remember(data.id, pattern.options, pattern.correctAnswer) {
+        val base = if (pattern.options.isNotEmpty()) pattern.options else listOf(pattern.correctAnswer)
+        val withCorrect = if (pattern.correctAnswer.isNotBlank() && !base.contains(pattern.correctAnswer)) {
+            listOf(pattern.correctAnswer) + base
+        } else base
+        val distinctList = withCorrect.distinct()
+        if (distinctList.size <= 1) {
+            distinctList
+        } else {
+            val random = kotlin.random.Random(data.id.toLong() * 997L + 13L)
+            var shuffled = distinctList.shuffled(random)
+            if (shuffled.first() == pattern.correctAnswer) {
+                val swapIndex = 1 + ((data.id % (shuffled.size - 1)).toInt())
+                val mutable = shuffled.toMutableList()
+                val temp = mutable[0]
+                mutable[0] = mutable[swapIndex]
+                mutable[swapIndex] = temp
+                shuffled = mutable
+            }
+            shuffled
+        }
+    }
+
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7FBFF))
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+            .mewScreenBackground()
     ) {
-        Surface(shape = RoundedCornerShape(50), color = Color(0xFFEAF3FF)) {
-            Text(
-                text = "YENI KALIP",
-                modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
-                color = Color(0xFF246BFE),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Black
-            )
-        }
+        val isCompact = maxHeight < 700.dp
+        val isVeryCompact = maxHeight < 620.dp
 
-        Text(
-            text = "Eksik olan kelimeyi seç",
-            color = Color(0xFF13233A),
-            fontSize = 27.sp,
-            lineHeight = 32.sp,
-            fontWeight = FontWeight.Black
-        )
+        val contentPadding = if (isVeryCompact) 12.dp else 16.dp
+        val cardSpacing = if (isVeryCompact) 8.dp else 12.dp
+        val optionHeight = if (isVeryCompact) 50.dp else if (isCompact) 56.dp else 62.dp
+        val optionFontSize = if (isVeryCompact) 16.sp else 18.sp
+        val titleFontSize = if (isVeryCompact) 20.sp else if (isCompact) 23.sp else 26.sp
+        val questionFontSize = if (isVeryCompact) 17.sp else if (isCompact) 19.sp else 22.sp
+        val exampleFontSize = if (isVeryCompact) 15.sp else if (isCompact) 17.sp else 19.sp
+        val buttonSpacing = if (isVeryCompact) 6.dp else 10.dp
 
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
-            color = Color.White,
-            shadowElevation = 7.dp,
-            border = BorderStroke(1.dp, Color(0xFFE2ECF6))
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = contentPadding, vertical = 10.dp)
         ) {
+            // Üst Soru ve Kart Alanı (Taşmayı önlemek için weight(1f) ve içten scroll destekli)
             Column(
-                modifier = Modifier.padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(cardSpacing)
             ) {
-                if (pattern.title.isNotBlank()) {
-                    Text(pattern.title, color = Color(0xFF7B5CFF), fontWeight = FontWeight.Black, fontSize = 15.sp)
-                }
-                HighlightedPatternText(pattern.exampleOne, pattern.highlightOne)
-                HighlightedPatternText(pattern.exampleTwo, pattern.highlightTwo)
-                
-                val displayedQuestionText = remember(pattern.questionText, pattern.correctAnswer) {
-                    val corr = pattern.correctAnswer.trim()
-                    if (corr.isNotBlank()) {
-                        val index = pattern.questionText.indexOf(corr, ignoreCase = true)
-                        if (index >= 0) {
-                            pattern.questionText.substring(0, index) + ".........." + pattern.questionText.substring(index + corr.length)
-                        } else {
-                            pattern.questionText
-                        }
-                    } else {
-                        pattern.questionText
-                    }
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = appColors.primarySoft,
+                    border = BorderStroke(1.dp, appColors.primary.copy(alpha = 0.3f))
+                ) {
+                    Text(
+                        text = "YENİ KALIP",
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                        color = appColors.primary,
+                        fontSize = if (isVeryCompact) 11.sp else 12.sp,
+                        fontWeight = FontWeight.Black
+                    )
                 }
 
                 Text(
-                    text = displayedQuestionText,
-                    color = Color(0xFF13233A),
-                    fontSize = 21.sp,
-                    lineHeight = 28.sp,
-                    fontWeight = FontWeight.ExtraBold
+                    text = "Eksik olan kelimeyi seç",
+                    color = appColors.text,
+                    fontSize = titleFontSize,
+                    lineHeight = (titleFontSize.value + 5).sp,
+                    fontWeight = FontWeight.Black
                 )
-            }
-        }
 
-        Spacer(Modifier.weight(1f))
-
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            pattern.options.forEach { option ->
-                val isSelected = selectedOption == option
-                Button(
-                    onClick = { selectedOption = option },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(58.dp),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isSelected) Color(0xFFEAF3FF) else Color.White,
-                        contentColor = Color(0xFF13233A)
-                    ),
-                    border = BorderStroke(2.dp, if (isSelected) Color(0xFF2F80ED) else Color(0xFFD9E7F5))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    color = appColors.surface,
+                    shadowElevation = 4.dp,
+                    border = BorderStroke(1.dp, appColors.border)
                 ) {
-                    Text(option, fontSize = 18.sp, fontWeight = FontWeight.Black)
+                    Column(
+                        modifier = Modifier.padding(if (isVeryCompact) 12.dp else 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(if (isVeryCompact) 8.dp else 12.dp)
+                    ) {
+                        if (pattern.title.isNotBlank()) {
+                            Text(
+                                text = pattern.title,
+                                color = appColors.primary,
+                                fontWeight = FontWeight.Black,
+                                fontSize = if (isVeryCompact) 14.sp else 16.sp
+                            )
+                        }
+
+                        if (pattern.exampleOne.isNotBlank()) {
+                            HighlightedPatternText(pattern.exampleOne, pattern.highlightOne, exampleFontSize)
+                        }
+                        if (pattern.exampleTwo.isNotBlank()) {
+                            HighlightedPatternText(pattern.exampleTwo, pattern.highlightTwo, exampleFontSize)
+                        }
+
+                        val displayedQuestionText = remember(pattern.questionText, pattern.correctAnswer) {
+                            val corr = pattern.correctAnswer.trim()
+                            if (corr.isNotBlank()) {
+                                val index = pattern.questionText.indexOf(corr, ignoreCase = true)
+                                if (index >= 0) {
+                                    pattern.questionText.substring(0, index) + ".........." + pattern.questionText.substring(index + corr.length)
+                                } else {
+                                    pattern.questionText
+                                }
+                            } else {
+                                pattern.questionText
+                            }
+                        }
+
+                        Text(
+                            text = displayedQuestionText,
+                            color = appColors.text,
+                            fontSize = questionFontSize,
+                            lineHeight = (questionFontSize.value + 6).sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
                 }
             }
-            AnimatedVisibility(visible = selectedOption != null) {
-                Button(
-                    onClick = { selectedOption?.let(onAnswer) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2F80ED))
-                ) {
-                    Text("KONTROL ET", fontSize = 16.sp, fontWeight = FontWeight.Black)
+
+            Spacer(Modifier.height(cardSpacing))
+
+            // Alt Butonlar ve Kontrol Tuşu Alanı (Asla aşağı taşmaz, her zaman görünür)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(buttonSpacing)
+            ) {
+                shuffledOptions.forEach { option ->
+                    val isSelected = selectedOption == option
+                    Button(
+                        onClick = { selectedOption = option },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(optionHeight),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isSelected) appColors.primarySoft else appColors.surface,
+                            contentColor = if (isSelected) appColors.primary else appColors.text
+                        ),
+                        border = BorderStroke(if (isSelected) 2.5.dp else 1.5.dp, if (isSelected) appColors.primary else appColors.border)
+                    ) {
+                        Text(option, fontSize = optionFontSize, fontWeight = FontWeight.Black)
+                    }
+                }
+
+                AnimatedVisibility(visible = selectedOption != null) {
+                    Button(
+                        onClick = { selectedOption?.let(onAnswer) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(if (isVeryCompact) 52.dp else 58.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = appColors.primary)
+                    ) {
+                        Text("KONTROL ET", fontSize = 17.sp, fontWeight = FontWeight.Black, color = Color.White)
+                    }
                 }
             }
         }
@@ -1194,8 +1702,13 @@ fun PatternQuizContent(
 }
 
 @Composable
-private fun HighlightedPatternText(sentence: String, highlight: String) {
-    val highlightColor = Color(0xFF7B5CFF)
+private fun HighlightedPatternText(
+    sentence: String,
+    highlight: String,
+    fontSize: TextUnit = 19.sp
+) {
+    val appColors = LocalAppThemeColors.current
+    val highlightColor = appColors.primary
     val text = remember(sentence, highlight) {
         buildAnnotatedString {
             val start = if (highlight.isNotBlank()) sentence.indexOf(highlight) else -1
@@ -1212,12 +1725,266 @@ private fun HighlightedPatternText(sentence: String, highlight: String) {
     }
     Text(
         text = text,
-        color = Color(0xFF344760),
-        fontSize = 19.sp,
-        lineHeight = 26.sp,
+        color = appColors.text,
+        fontSize = fontSize,
+        lineHeight = (fontSize.value + 7).sp,
         fontWeight = FontWeight.SemiBold
     )
 }
+
+@Composable
+fun InfoCardQuizContent(
+    data: VocabularyLevelDataQuiz,
+    onContinue: () -> Unit
+) {
+    val context = LocalContext.current
+
+    val appColors = LocalAppThemeColors.current
+
+    // Rastgele 3 animasyondan birini seç: party_penguin, binge_panda, astronaut
+    val animCandidates = remember(data.id) {
+        listOf("party_penguin", "binge_panda", "astronaut").shuffled()
+    }
+    
+    val resolvedAnimRes = remember(data.id) {
+        animCandidates.mapNotNull { name ->
+            val resId = context.resources.getIdentifier(name, "raw", context.packageName)
+            if (resId != 0) resId else null
+        }.firstOrNull() ?: R.raw.cat_fishing_on_moon
+    }
+
+    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(resolvedAnimRes))
+
+    // Metin İçindeki Vurgulu Kelimelerin Temaya Uygun Renkle Vurgulanması
+    val annotatedText = remember(data.questionTurkish, data.infoHighlights, appColors) {
+        buildAnnotatedString {
+            val fullText = data.questionTurkish
+            if (data.infoHighlights.isEmpty()) {
+                append(fullText)
+            } else {
+                val highlightStyle = androidx.compose.ui.text.SpanStyle(
+                    color = appColors.primary,
+                    fontWeight = FontWeight.Black
+                )
+                
+                val textLower = fullText.lowercase()
+                val matches = mutableListOf<Pair<Int, Int>>()
+                for (target in data.infoHighlights.filter { it.isNotBlank() }) {
+                    val targetLower = target.lowercase()
+                    var startPos = 0
+                    while (startPos < fullText.length) {
+                        val foundIndex = textLower.indexOf(targetLower, startPos)
+                        if (foundIndex != -1) {
+                            matches.add(foundIndex to (foundIndex + target.length))
+                            startPos = foundIndex + target.length
+                        } else {
+                            break
+                        }
+                    }
+                }
+
+                val sortedMatches = matches.sortedBy { it.first }
+                var lastPos = 0
+                for ((start, end) in sortedMatches) {
+                    if (start >= lastPos) {
+                        append(fullText.substring(lastPos, start))
+                        withStyle(highlightStyle) {
+                            append(fullText.substring(start, end))
+                        }
+                        lastPos = end
+                    }
+                }
+                if (lastPos < fullText.length) {
+                    append(fullText.substring(lastPos))
+                }
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .mewScreenBackground()
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // 1. Üst Kısım: Rozet Başlığı ve Animasyon (SABİT - Animasyona scroll yok)
+        Surface(shape = RoundedCornerShape(50), color = appColors.primarySoft) {
+            Text(
+                text = data.infoTitle.ifBlank { "BİLGİ & İPUCU" },
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                color = appColors.primary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Black
+            )
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // Rastgele Seçilen Lottie Animasyonu (SABİT)
+        LottieAnimation(
+            composition = composition,
+            iterations = LottieConstants.IterateForever,
+            modifier = Modifier
+                .size(170.dp)
+                .padding(vertical = 2.dp)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // 2. Alt Kısım: Açıklama Kartı (SCROLL EKLENDİ - Animasyon hariç bu kısım kaydırılabilir)
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                color = appColors.surface,
+                shadowElevation = 4.dp,
+                border = BorderStroke(1.dp, appColors.border)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    if (data.questionTurkish.isNotBlank()) {
+                        Text(
+                            text = annotatedText,
+                            color = appColors.text,
+                            fontSize = 17.sp,
+                            lineHeight = 25.sp,
+                            fontWeight = FontWeight.Medium,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+
+                    if (data.infoTableHeaders.isNotEmpty() && data.infoTableRows.isNotEmpty()) {
+                        if (data.questionTurkish.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(14.dp))
+                        }
+                        InfoCardTableView(
+                            headers = data.infoTableHeaders,
+                            rows = data.infoTableRows
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // 3. En Altta Sabit Tıklanabilir Buton (Her zaman görünür ve tıklanabilir)
+        Button(
+            onClick = onContinue,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            shape = RoundedCornerShape(18.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = appColors.primary,
+                contentColor = Color.White
+            ),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
+        ) {
+            Text(
+                text = "ANLADIM",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Black,
+                color = Color.White
+            )
+        }
+    }
+}
+
+@Composable
+fun InfoCardTableView(
+    headers: List<String>,
+    rows: List<List<String>>
+) {
+    if (headers.isEmpty() || rows.isEmpty()) return
+    val appColors = LocalAppThemeColors.current
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = appColors.surface,
+        border = BorderStroke(1.5.dp, appColors.primary.copy(alpha = 0.35f)),
+        shadowElevation = 2.dp
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // Başlık Satırı
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(appColors.primarySoft)
+                    .padding(vertical = 10.dp, horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                headers.forEach { header ->
+                    Text(
+                        text = header,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 4.dp),
+                        color = appColors.primary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Black,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+
+            // Başlık Altı Ayracı
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.5.dp)
+                    .background(appColors.primary.copy(alpha = 0.25f))
+            )
+
+            // Veri Satırları
+            rows.forEachIndexed { rowIndex, row ->
+                val rowBg = if (rowIndex % 2 == 1) appColors.primarySoft.copy(alpha = 0.25f) else Color.Transparent
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(rowBg)
+                        .padding(vertical = 9.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    row.forEach { cellText ->
+                        Text(
+                            text = cellText,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 4.dp),
+                            color = appColors.text,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+
+                if (rowIndex < rows.size - 1) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(0.8.dp)
+                            .background(appColors.border.copy(alpha = 0.6f))
+                    )
+                }
+            }
+        }
+    }
+}
+
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -1230,12 +1997,38 @@ fun TranslationBuilderScreen(
     onSpeak: () -> Unit,
     onAnswer: (Boolean, String) -> Unit
 ) {
-    val allWords = remember(question) { question.correctWords + question.extraWords }
-    val bankIds by rememberSaveable(question.id) { mutableStateOf(allWords.indices.toList().shuffled()) }
-    var selectedIds by rememberSaveable(question.id) { mutableStateOf(emptyList<Int>()) }
-    var showWrongHint by rememberSaveable(question.id) { mutableStateOf(false) }
-    val selectedWords = selectedIds.map { allWords[it] }
-    val isCorrect = selectedWords == question.correctWords
+    val safeCorrectWords = remember(question) {
+        if (question.correctWords.isNotEmpty()) {
+            question.correctWords
+        } else if (question.fullAnswerTurkish.isNotBlank()) {
+            question.fullAnswerTurkish.trim().split("\\s+".toRegex()).filter { it.isNotBlank() }
+        } else {
+            listOf("answer")
+        }
+    }
+    val allWords = remember(question, safeCorrectWords) {
+        val combined = (safeCorrectWords + question.extraWords).filter { it.isNotBlank() }
+        if (combined.isEmpty()) listOf("word") else combined
+    }
+
+    val questionKey = "${question.id}_${question.qEnglish}"
+    var bankIds by remember(questionKey) { mutableStateOf(allWords.indices.toList().shuffled()) }
+    var selectedIds by remember(questionKey) { mutableStateOf(emptyList<Int>()) }
+    var showWrongHint by remember(questionKey) { mutableStateOf(false) }
+
+    LaunchedEffect(questionKey, allWords) {
+        if (bankIds.any { it !in allWords.indices } || bankIds.size != allWords.size) {
+            bankIds = allWords.indices.toList().shuffled()
+            selectedIds = emptyList()
+        }
+    }
+
+    val selectedWords = selectedIds.mapNotNull { allWords.getOrNull(it) }
+    val targetWords = remember(question, safeCorrectWords) {
+        if (question.correctWords.isNotEmpty()) question.correctWords else safeCorrectWords
+    }
+    val isCorrect = selectedWords.size == targetWords.size &&
+        selectedWords.map { it.trim().lowercase() } == targetWords.map { it.trim().lowercase() }
 
     fun chooseWord(id: Int) {
         showWrongHint = false
@@ -1249,80 +2042,40 @@ fun TranslationBuilderScreen(
         selectedIds = selectedIds.filterNot { it == id }
     }
 
+    val appColors = LocalAppThemeColors.current
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7FBFF))
+            .mewScreenBackground()
             .padding(horizontal = 20.dp, vertical = 16.dp)
     ) {
         Column(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            if (false) Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = onClose,
-                    modifier = Modifier
-                        .size(42.dp)
-                        .background(Color.White.copy(alpha = .08f), CircleShape)
-                ) {
-                    Icon(Icons.Default.Close, contentDescription = "Kapat", tint = Color.White)
-                }
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 14.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text("KOMBO x$comboCount", color = Color(0xFF8D7CFF), fontSize = 13.sp, fontWeight = FontWeight.Black)
-                    Spacer(Modifier.height(8.dp))
-                    LinearProgressIndicator(
-                        progress = { progress.coerceIn(0f, 1f) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(9.dp)
-                            .clip(CircleShape),
-                        color = Color(0xFF38D67A),
-                        trackColor = Color.White.copy(alpha = .12f)
-                    )
-                }
-                Surface(shape = RoundedCornerShape(22.dp), color = Color.White.copy(alpha = .08f)) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.Bolt, contentDescription = null, tint = Color(0xFF30B8FF), modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("$energy", color = Color.White, fontWeight = FontWeight.Black)
-                    }
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Surface(shape = RoundedCornerShape(50), color = Color(0xFFEAF3FF)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Surface(shape = RoundedCornerShape(50), color = appColors.primarySoft) {
                     Text(
-                        "YENI KELIME",
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                        color = Color(0xFF246BFE),
+                        "CÜMLE KURMA",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        color = appColors.primary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Black
                     )
                 }
-                Text("Aşağıdaki cümleyi çevir", color = Color(0xFF13233A), fontSize = 27.sp, fontWeight = FontWeight.Black)
+                Text("Aşağıdaki cümleyi çevir", color = appColors.text, fontSize = 22.sp, fontWeight = FontWeight.Black)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(
                         onClick = onSpeak,
                         modifier = Modifier
-                            .size(48.dp)
-                            .background(Color(0xFF1CB0F6), CircleShape)
+                            .size(46.dp)
+                            .background(appColors.primary, CircleShape)
                     ) {
                         Icon(Icons.Default.VolumeUp, contentDescription = "Seslendir", tint = Color.White)
                     }
                     Spacer(Modifier.width(12.dp))
-                    Text(question.qEnglish, color = Color(0xFF172B4D), fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(question.qEnglish, color = appColors.text, fontSize = 21.sp, fontWeight = FontWeight.ExtraBold)
                 }
             }
 
@@ -1336,7 +2089,7 @@ fun TranslationBuilderScreen(
             if (showWrongHint) {
                 Text(
                     "Sıralama da önemli. Bir kez daha deneyelim.",
-                    color = Color(0xFFFF8A9A),
+                    color = appColors.danger,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -1347,7 +2100,9 @@ fun TranslationBuilderScreen(
                 selectedIds = selectedIds,
                 allWords = allWords,
                 onChoose = ::chooseWord,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
             )
 
             Button(
@@ -1362,23 +2117,17 @@ fun TranslationBuilderScreen(
                 enabled = selectedIds.isNotEmpty(),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(58.dp),
+                    .height(56.dp),
                 shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF1CB0F6),
-                    disabledContainerColor = Color(0xFFE9F1FA),
-                    disabledContentColor = Color(0xFF8A9AAF)
+                    containerColor = appColors.primary,
+                    disabledContainerColor = appColors.surfaceRaised,
+                    disabledContentColor = appColors.textMuted
                 )
             ) {
-                Text("KONTROL ET", fontWeight = FontWeight.Black, fontSize = 16.sp)
+                Text("KONTROL ET", fontWeight = FontWeight.Black, fontSize = 16.sp, color = Color.White)
             }
         }
-
-        if (false) SuccessPanel(
-            visible = isCorrect,
-            onContinue = { onAnswer(true, question.fullAnswerTurkish) },
-            modifier = Modifier.align(Alignment.BottomCenter)
-        )
     }
 }
 
@@ -1390,13 +2139,14 @@ fun AnswerArea(
     onRemove: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val appColors = LocalAppThemeColors.current
     Surface(
         modifier = modifier
-            .heightIn(min = 120.dp),
+            .heightIn(min = 110.dp),
         shape = RoundedCornerShape(24.dp),
-        color = Color.White,
-        shadowElevation = 10.dp,
-        border = BorderStroke(1.dp, Color(0xFFDDEAF7))
+        color = appColors.surface,
+        shadowElevation = 8.dp,
+        border = BorderStroke(1.dp, appColors.border)
     ) {
         FlowRow(
             modifier = Modifier.padding(14.dp),
@@ -1404,10 +2154,12 @@ fun AnswerArea(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             if (selectedIds.isEmpty()) {
-                Text("Cevabını burada oluştur", color = Color(0xFF8A9AAF), fontSize = 15.sp)
+                Text("Cevabını burada oluştur", color = appColors.textMuted, fontSize = 15.sp)
             }
             selectedIds.forEach { id ->
-                WordChip(text = allWords[id], selected = true, onClick = { onRemove(id) })
+                allWords.getOrNull(id)?.let { word ->
+                    WordChip(text = word, selected = true, onClick = { onRemove(id) })
+                }
             }
         }
     }
@@ -1415,11 +2167,12 @@ fun AnswerArea(
 
 @Composable
 fun WordChipPlaceholder(text: String, modifier: Modifier = Modifier) {
+    val appColors = LocalAppThemeColors.current
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(18.dp),
-        color = Color(0xFFF2F4F8),
-        border = BorderStroke(1.dp, Color(0xFFE2ECF6))
+        color = appColors.surfaceRaised,
+        border = BorderStroke(1.dp, appColors.border)
     ) {
         Text(
             text = text,
@@ -1446,10 +2199,11 @@ fun WordBank(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         bankIds.forEach { id ->
+            val word = allWords.getOrNull(id) ?: return@forEach
             if (id in selectedIds) {
-                WordChipPlaceholder(text = allWords[id])
+                WordChipPlaceholder(text = word)
             } else {
-                WordChip(text = allWords[id], selected = false, onClick = { onChoose(id) })
+                WordChip(text = word, selected = false, onClick = { onChoose(id) })
             }
         }
     }
@@ -1457,18 +2211,19 @@ fun WordBank(
 
 @Composable
 fun WordChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val appColors = LocalAppThemeColors.current
     Surface(
         modifier = modifier
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(18.dp),
-        color = if (selected) Color(0xFFEAF3FF) else Color.White,
+        color = if (selected) appColors.primarySoft else appColors.surface,
         shadowElevation = if (selected) 9.dp else 5.dp,
-        border = BorderStroke(1.dp, if (selected) Color(0xFF2F80ED) else Color(0xFFD9E7F5))
+        border = BorderStroke(1.dp, if (selected) appColors.primary else appColors.border)
     ) {
         Text(
             text = text,
             modifier = Modifier.padding(horizontal = 18.dp, vertical = 13.dp),
-            color = Color(0xFF13233A),
+            color = if (selected) appColors.primary else appColors.text,
             fontSize = 17.sp,
             fontWeight = FontWeight.Black
         )
@@ -1477,6 +2232,7 @@ fun WordChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Mod
 
 @Composable
 fun SuccessPanel(visible: Boolean, onContinue: () -> Unit, modifier: Modifier = Modifier) {
+    val appColors = LocalAppThemeColors.current
     AnimatedVisibility(
         visible = visible,
         modifier = modifier.fillMaxWidth(),
@@ -1486,14 +2242,14 @@ fun SuccessPanel(visible: Boolean, onContinue: () -> Unit, modifier: Modifier = 
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp),
-            color = Color(0xFF38D67A),
+            color = appColors.success,
             shadowElevation = 18.dp
         ) {
             Column(
                 modifier = Modifier.padding(22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("Doğru!", color = Color(0xFF102118), fontSize = 30.sp, fontWeight = FontWeight.Black)
+                Text("Doğru!", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black)
                 Spacer(Modifier.height(14.dp))
                 Button(
                     onClick = onContinue,
@@ -1501,7 +2257,7 @@ fun SuccessPanel(visible: Boolean, onContinue: () -> Unit, modifier: Modifier = 
                         .fillMaxWidth()
                         .height(58.dp),
                     shape = RoundedCornerShape(18.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFF102118))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = appColors.success)
                 ) {
                     Text("DEVAM ET", fontWeight = FontWeight.Black, fontSize = 16.sp)
                 }
@@ -1512,6 +2268,7 @@ fun SuccessPanel(visible: Boolean, onContinue: () -> Unit, modifier: Modifier = 
 
 @Composable
 fun ComboMilestoneDialog(onContinue: () -> Unit) {
+    val appColors = LocalAppThemeColors.current
     val dogRes = rememberRawResId("flirting_dog")
     val dogComposition by rememberLottieComposition(
         dogRes?.let { LottieCompositionSpec.RawRes(it) } ?: LottieCompositionSpec.RawRes(R.raw.star_badge)
@@ -1519,14 +2276,15 @@ fun ComboMilestoneDialog(onContinue: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = .24f))
+            .background(Color.Black.copy(alpha = .45f))
             .padding(28.dp),
         contentAlignment = Alignment.Center
     ) {
         Surface(
             shape = RoundedCornerShape(28.dp),
-            color = Color.White,
-            shadowElevation = 18.dp
+            color = appColors.surface,
+            shadowElevation = 18.dp,
+            border = BorderStroke(1.dp, appColors.border)
         ) {
             Column(
                 modifier = Modifier.padding(22.dp),
@@ -1539,7 +2297,7 @@ fun ComboMilestoneDialog(onContinue: () -> Unit) {
                 )
                 Text(
                     "İyi ilerliyorsun, devam!",
-                    color = Color(0xFF13233A),
+                    color = appColors.text,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Black,
                     textAlign = TextAlign.Center
@@ -1549,9 +2307,9 @@ fun ComboMilestoneDialog(onContinue: () -> Unit) {
                     onClick = onContinue,
                     modifier = Modifier.fillMaxWidth().height(54.dp),
                     shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2F80ED))
+                    colors = ButtonDefaults.buttonColors(containerColor = appColors.primary)
                 ) {
-                    Text("DEVAM ET", fontWeight = FontWeight.Black)
+                    Text("DEVAM ET", fontWeight = FontWeight.Black, color = Color.White)
                 }
             }
         }
@@ -1585,22 +2343,24 @@ fun SpeakingNeutralSheet(
     correctAnswer: String,
     onContinue: () -> Unit
 ) {
+    val appColors = LocalAppThemeColors.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        color = Color.White,
-        shadowElevation = 8.dp
+        color = appColors.surface,
+        shadowElevation = 8.dp,
+        border = BorderStroke(1.dp, appColors.border)
     ) {
         Column(
             modifier = Modifier.padding(24.dp).navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "Dogru cevap",
+                text = "Doğru cevap",
                 style = TextStyle(
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF60758F)
+                    color = appColors.textMuted
                 )
             )
             Spacer(modifier = Modifier.height(8.dp))
@@ -1610,7 +2370,7 @@ fun SpeakingNeutralSheet(
                     fontSize = 22.sp,
                     lineHeight = 28.sp,
                     fontWeight = FontWeight.Black,
-                    color = Color(0xFF13233A)
+                    color = appColors.text
                 ),
                 textAlign = TextAlign.Center
             )
@@ -1618,7 +2378,7 @@ fun SpeakingNeutralSheet(
             Button(
                 onClick = onContinue,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2F80ED)),
+                colors = ButtonDefaults.buttonColors(containerColor = appColors.primary),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Text("DEVAM ET", fontWeight = FontWeight.Bold, color = Color.White)
@@ -1631,12 +2391,36 @@ fun SpeakingNeutralSheet(
 fun QuizResultSheet(
     isCorrect: Boolean,
     correctAnswer: String,
+    tts: SpeechAssistant? = null,
     onContinue: () -> Unit
 ) {
+    val context = LocalContext.current
+    val isDark = LocalIsDarkMode.current
+    val appColors = LocalAppThemeColors.current
+    val isKingdomTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isKingdomThemeActive(context)
+    }
+    val goldBrush = remember {
+        Brush.horizontalGradient(
+            listOf(Color(0xFFFFDF7A), Color(0xFFD4AF37), Color(0xFFAA7C11), Color(0xFFFFDF7A))
+        )
+    }
+    val sheetBg = when {
+        isKingdomTheme -> if (isCorrect) Color(0xFF070F26).copy(alpha = 0.98f) else Color(0xFF200910).copy(alpha = 0.98f)
+        isCorrect -> if (isDark) Color(0xFF103326) else Color(0xFFE8F5E9)
+        else -> if (isDark) Color(0xFF38151D) else Color(0xFFFFEBEE)
+    }
+    val titleColor = when {
+        isKingdomTheme -> if (isCorrect) Color(0xFFFFD700) else Color(0xFFFF7A90)
+        isCorrect -> if (isDark) Color(0xFF55D6A7) else Color(0xFF2E7D32)
+        else -> if (isDark) Color(0xFFFF7A90) else Color(0xFFC62828)
+    }
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        color = if (isCorrect) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
+        color = sheetBg,
+        border = if (isKingdomTheme) (if (isCorrect) BorderStroke(1.5.dp, goldBrush) else BorderStroke(1.5.dp, Color(0xFFFF7A90))) else null,
         shadowElevation = 8.dp
     ) {
         Column(
@@ -1644,20 +2428,51 @@ fun QuizResultSheet(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = if (isCorrect) "Harika! ✨" else "Doğru Cevap:",
-                style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold, color = if (isCorrect) Color(0xFF2E7D32) else Color(0xFFC62828))
+                text = if (isCorrect) (if (isKingdomTheme) "Harika! Krallık Başarısı ✨" else "Harika! ✨") else "Doğru Cevap:",
+                style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold, color = titleColor)
             )
             if (!isCorrect) {
-                Text(text = correctAnswer, style = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Black))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.padding(top = 4.dp)
+                ) {
+                    Text(
+                        text = correctAnswer,
+                        style = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Black, color = if (isKingdomTheme) Color(0xFFFFF7D6) else appColors.text)
+                    )
+                    if (tts != null) {
+                        Spacer(modifier = Modifier.width(10.dp))
+                        IconButton(
+                            onClick = { tts.speakEnglish(correctAnswer) },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(appColors.danger.copy(alpha = 0.15f), CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = "Dinle",
+                                tint = appColors.danger,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                }
             }
             Spacer(modifier = Modifier.height(16.dp))
             Button(
                 onClick = onContinue,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = if (isCorrect) Color(0xFF4CAF50) else Color(0xFFFF5252)),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isKingdomTheme && isCorrect) Color(0xFFD4AF37) else if (isCorrect) appColors.success else appColors.danger
+                ),
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Text("DEVAM ET", fontWeight = FontWeight.Bold, color = Color.White)
+                Text(
+                    "DEVAM ET",
+                    fontWeight = FontWeight.Black,
+                    color = if (isKingdomTheme && isCorrect) Color(0xFF040816) else Color.White
+                )
             }
         }
     }
@@ -1672,15 +2487,24 @@ fun QuizResultScreen(
     earnedXp: Int = 0,
     isReinforcement: Boolean = false,
     blankAnswers: Int = 0,
+    xpMultiplier: Int = 1,
+    coinMultiplier: Int = 1,
+    gemMultiplier: Int = 1,
     onDone: () -> Unit
 ) {
+    val context = LocalContext.current
+    val appColors = LocalAppThemeColors.current
+    val isDark = LocalIsDarkMode.current
+    val isKingdomTheme = remember(UserCosmeticsStore.stateRevision) {
+        UserCosmeticsStore.isKingdomThemeActive(context)
+    }
     val safeScore = score.coerceIn(0, totalQuestions.coerceAtLeast(0))
     val safeBlankAnswers = blankAnswers.coerceIn(0, (totalQuestions - safeScore).coerceAtLeast(0))
     val wrongAnswers = (totalQuestions - safeScore - safeBlankAnswers).coerceAtLeast(0)
     val percentage = if (totalQuestions > 0) safeScore * 100 / totalQuestions else 0
     val result = when {
         totalQuestions > 0 && safeScore == totalQuestions -> QuizResultPresentation(
-            R.raw.premium, "Muhteşem sonuç!", Color(0xFF147D64),
+            R.raw.premium, "Muhteşem sonuç!", if (isDark) Color(0xFF35C2FF) else Color(0xFF147D64),
             listOf(
                 "$safeScore doğruyla kusursuz bir sonuç çıkardın. Tebrikler!",
                 "Bütün soruları doğru cevapladın; emeğinin karşılığı harika görünüyor.",
@@ -1689,7 +2513,7 @@ fun QuizResultScreen(
             )
         )
         wrongAnswers == 1 -> QuizResultPresentation(
-            R.raw.star_badge, "Harika iş!", Color(0xFF2878B5),
+            R.raw.star_badge, "Harika iş!", if (isDark) Color(0xFF55D6A7) else Color(0xFF2878B5),
             listOf(
                 "$safeScore doğru yaptın; yalnızca bir soru seni zorladı. Çok güçlü bir sonuç!",
                 "Tek bir soruyla fark kaçtı, ama konuya çok iyi hakimsin.",
@@ -1698,7 +2522,7 @@ fun QuizResultScreen(
             )
         )
         percentage >= 70 -> QuizResultPresentation(
-            R.raw.star_blast, "Çok iyi gidiyorsun!", Color(0xFF5A6F1D),
+            R.raw.star_blast, "Çok iyi gidiyorsun!", if (isDark) Color(0xFFFFC857) else Color(0xFF5A6F1D),
             listOf(
                 "$safeScore doğru cevapla güçlü bir sonuç elde ettin. Tebrikler!",
                 "%$percentage başarı, konuyu iyi kavradığını gösteriyor.",
@@ -1707,7 +2531,7 @@ fun QuizResultScreen(
             )
         )
         else -> QuizResultPresentation(
-            R.raw.cat_fishing_on_moon, "Her deneme bir adım", Color(0xFF52606D),
+            R.raw.cat_fishing_on_moon, "Her deneme bir adım", if (isDark) Color(0xFFA8BED2) else Color(0xFF52606D),
             listOf(
                 "$safeScore doğru cevap, hangi konulara dönmen gerektiğini gösterdi. Sakin sakin devam edebilirsin.",
                 "Bu tur öğrenme yolunun bir parçası. Yanlışlarına göz atıp yeniden deneyebilirsin.",
@@ -1727,7 +2551,7 @@ fun QuizResultScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7F9FA))
+            .mewScreenBackground()
             .verticalScroll(rememberScrollState())
             .statusBarsPadding()
             .navigationBarsPadding()
@@ -1743,7 +2567,7 @@ fun QuizResultScreen(
             result.title,
             fontSize = 28.sp,
             fontWeight = FontWeight.Black,
-            color = Color(0xFF17212B),
+            color = if (isKingdomTheme) Color(0xFFFFD700) else appColors.text,
             textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(10.dp))
@@ -1752,25 +2576,39 @@ fun QuizResultScreen(
             fontSize = 17.sp,
             lineHeight = 24.sp,
             fontWeight = FontWeight.Medium,
-            color = Color(0xFF425466),
+            color = if (isKingdomTheme) Color(0xFFFFF7D6).copy(alpha = 0.85f) else appColors.textMuted,
             textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(24.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            ResultCountCard("Doğru", safeScore, Color(0xFF21845B), Color(0xFFE7F5EE), Modifier.weight(1f))
-            ResultCountCard("Boş", safeBlankAnswers, Color(0xFF60758F), Color(0xFFE9EEF4), Modifier.weight(1f))
-            ResultCountCard("Yanlış", wrongAnswers, Color(0xFFB54747), Color(0xFFFBECEC), Modifier.weight(1f))
+            val correctColor = if (isKingdomTheme) Color(0xFFFFD700) else if (isDark) Color(0xFF55D6A7) else Color(0xFF21845B)
+            val correctBg = if (isKingdomTheme) Color(0xFF070F26).copy(alpha = 0.94f) else if (isDark) Color(0xFF103326) else Color(0xFFE7F5EE)
+            val blankColor = if (isKingdomTheme) Color(0xFF94A3B8) else if (isDark) Color(0xFFA8BED2) else Color(0xFF60758F)
+            val blankBg = if (isKingdomTheme) Color(0xFF070F26).copy(alpha = 0.94f) else if (isDark) appColors.surfaceRaised else Color(0xFFE9EEF4)
+            val wrongColor = if (isKingdomTheme) Color(0xFFFF7A90) else if (isDark) Color(0xFFFF7A90) else Color(0xFFB54747)
+            val wrongBg = if (isKingdomTheme) Color(0xFF070F26).copy(alpha = 0.94f) else if (isDark) Color(0xFF38151D) else Color(0xFFFBECEC)
+
+            ResultCountCard("Doğru", safeScore, correctColor, correctBg, Modifier.weight(1f))
+            ResultCountCard("Boş", safeBlankAnswers, blankColor, blankBg, Modifier.weight(1f))
+            ResultCountCard("Yanlış", wrongAnswers, wrongColor, wrongBg, Modifier.weight(1f))
         }
         Spacer(modifier = Modifier.height(12.dp))
-        Text("%$percentage başarı", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = result.color)
+        Text("%$percentage başarı", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = if (isKingdomTheme) Color(0xFFFFD700) else result.color)
         Spacer(modifier = Modifier.height(28.dp))
         Button(
             onClick = onDone,
             modifier = Modifier.fillMaxWidth().height(56.dp),
             shape = RoundedCornerShape(8.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = result.color)
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isKingdomTheme) Color(0xFFD4AF37) else result.color
+            )
         ) {
-            Text("TAMAMLA", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(
+                "TAMAMLA",
+                color = if (isKingdomTheme) Color(0xFF040816) else Color.White,
+                fontWeight = FontWeight.Black,
+                fontSize = 16.sp
+            )
         }
         Spacer(Modifier.height(14.dp))
         LottieAnimation(
@@ -1778,12 +2616,28 @@ fun QuizResultScreen(
             iterations = 1,
             modifier = Modifier.size(72.dp)
         )
+        if (coinMultiplier > 1 && earnedCoins > 0) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFFFFB300).copy(alpha = 0.18f),
+                border = BorderStroke(1.dp, Color(0xFFFFB300)),
+                modifier = Modifier.padding(bottom = 6.dp)
+            ) {
+                Text(
+                    text = "⚡ 2X COIN BOOST AKTİF",
+                    color = Color(0xFFFFB300),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                )
+            }
+        }
         Text(
             text = when {
                 earnedCoins > 0 && isReinforcement ->
-                    "+$earnedCoins coin: Yeni kırmızı pekiştirme yıldızların için kazandın."
+                    "+$earnedCoins coin: Yeni kırmızı pekiştirme yıldızların için kazandın.${if (coinMultiplier > 1) " (2X Katlandı!)" else ""}"
                 earnedCoins > 0 ->
-                    "+$earnedCoins coin: İlk çözümündeki yıldız başarın için kazandın."
+                    "+$earnedCoins coin: İlk çözümündeki yıldız başarın için kazandın.${if (coinMultiplier > 1) " (2X Katlandı!)" else ""}"
                 isReinforcement ->
                     "Bu tur yeni kırmızı yıldız açılmadığı için coin eklenmedi."
                 else ->
@@ -1793,7 +2647,7 @@ fun QuizResultScreen(
             fontSize = 14.sp,
             lineHeight = 20.sp,
             fontWeight = FontWeight.SemiBold,
-            color = Color(0xFF52606D),
+            color = appColors.textMuted,
             modifier = Modifier.padding(horizontal = 12.dp)
         )
         Spacer(Modifier.height(14.dp))
@@ -1812,8 +2666,24 @@ fun QuizResultScreen(
                 text = "+$earnedXp XP",
                 fontSize = 18.sp,
                 fontWeight = FontWeight.ExtraBold,
-                color = Color(0xFF24527A)
+                color = appColors.primary
             )
+            if (xpMultiplier > 1 && earnedXp > 0) {
+                Spacer(Modifier.width(6.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF8B5CF6).copy(alpha = 0.18f),
+                    border = BorderStroke(1.dp, Color(0xFF8B5CF6))
+                ) {
+                    Text(
+                        text = "2X BOOST",
+                        color = Color(0xFF8B5CF6),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
         }
         if (earnedGems > 0) {
             Row(
@@ -1831,8 +2701,24 @@ fun QuizResultScreen(
                     text = "+$earnedGems elmas kazandın",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF24527A)
+                    color = appColors.primary
                 )
+                if (gemMultiplier > 1) {
+                    Spacer(Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF00B0FF).copy(alpha = 0.18f),
+                        border = BorderStroke(1.dp, Color(0xFF00B0FF))
+                    ) {
+                        Text(
+                            text = "2X",
+                            color = Color(0xFF00B0FF),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Black,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
             }
         }
     }
@@ -1866,17 +2752,19 @@ private fun ResultCountCard(
 
 @Composable
 fun StatCard(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    val appColors = LocalAppThemeColors.current
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(16.dp),
-        color = Color.White,
-        shadowElevation = 4.dp
+        color = appColors.surfaceRaised,
+        shadowElevation = 4.dp,
+        border = BorderStroke(1.dp, appColors.border)
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(text = label, fontSize = 14.sp, color = Color.Gray)
+            Text(text = label, fontSize = 14.sp, color = appColors.textMuted)
             Text(text = value, fontSize = 22.sp, fontWeight = FontWeight.Black, color = color)
         }
     }
@@ -1887,28 +2775,36 @@ fun VisualQuizContent(
     tts: SpeechAssistant,
     onAnswer: (Boolean, String) -> Unit
 ) {
+    val appColors = LocalAppThemeColors.current
     var selectedOption by remember(data) { mutableStateOf<String?>(null) }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = Color.White,
+            shape = RoundedCornerShape(20.dp),
+            color = appColors.surface,
             shadowElevation = 4.dp,
-            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp)
+            border = BorderStroke(1.dp, appColors.border),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
         ) {
             Text(
-                // 🚨 "Hangisi" ve soru işaretleri kaldırıldı, sadece kelime kaldı.
                 text = data.questionTurkish,
-                modifier = Modifier.padding(20.dp),
-                fontWeight = FontWeight.Bold,
-                fontSize = 22.sp, // Kelime tek başına kalacağı için fontu biraz büyüttüm
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                fontWeight = FontWeight.Black,
+                fontSize = 24.sp,
+                lineHeight = 30.sp,
                 textAlign = TextAlign.Center,
-                color = Color.Black
+                color = appColors.text
             )
         }
+
+        Spacer(modifier = Modifier.height(6.dp))
 
         val shuffledOptions = remember(data) {
             val zipped = data.options.zip(data.optionImages.ifEmpty { List(data.options.size) { null } })
@@ -1917,57 +2813,60 @@ fun VisualQuizContent(
 
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.weight(1f)
         ) {
             itemsIndexed(shuffledOptions) { index, pair ->
                 val optionText = pair.first
                 val isSelected = selectedOption == optionText
-                val imageToDisplay = pair.second ?: R.drawable.cat_logo
+                val imageToDisplay = if (pair.second != null && pair.second != 0) pair.second!! else R.drawable.cat_logo
 
                 Surface(
                     modifier = Modifier
-                        .aspectRatio(1f)
+                        .aspectRatio(1.10f)
                         .clickable {
                             selectedOption = optionText
                             tts.speakEnglish(optionText)
                         }
                         .border(
-                            width = if (isSelected) 3.dp else 1.dp,
-                            color = if (isSelected) Color(0xFF1CB0F6) else Color(0xFFE5E5E5),
+                            width = if (isSelected) 3.dp else 1.5.dp,
+                            color = if (isSelected) appColors.primary else appColors.border,
                             shape = RoundedCornerShape(16.dp)
                         ),
                     shape = RoundedCornerShape(16.dp),
-                    color = if (isSelected) Color(0xFFE3F2FD) else Color.White
+                    color = if (isSelected) appColors.primarySoft else appColors.surface
                 ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
-                        modifier = Modifier.padding(8.dp)
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
                     ) {
-                        // VisualQuizContent içindeki Image kısmını bul ve şununla değiştir:
                         Image(
-                            painter = painterResource(
-                                id = imageToDisplay
+                            painter = safePainterResource(
+                                resId = imageToDisplay,
+                                fallbackResId = R.drawable.cat_logo
                             ),
                             contentDescription = optionText,
                             modifier = Modifier
-                                .size(data.imageSize.dp)
-                                .padding(data.imagePadding.dp)
+                                .weight(1f, fill = false)
+                                .sizeIn(maxHeight = 92.dp, maxWidth = 92.dp)
+                                .padding(2.dp)
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = optionText,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isSelected) Color(0xFF1CB0F6) else Color.DarkGray
+                            fontWeight = FontWeight.Black,
+                            fontSize = 18.sp,
+                            maxLines = 1,
+                            color = if (isSelected) appColors.primary else appColors.text
                         )
                     }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         Button(
             onClick = {
@@ -1976,10 +2875,14 @@ fun VisualQuizContent(
                 }
             },
             enabled = selectedOption != null,
-            modifier = Modifier.fillMaxWidth().height(58.dp).padding(bottom = 8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(60.dp)
+                .navigationBarsPadding(),
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = if (selectedOption != null) Color(0xFF1CB0F6) else Color(0xFFE5E5E5)
+                containerColor = if (selectedOption != null) appColors.primary else appColors.border,
+                contentColor = Color.White
             )
         ) {
             Text(
@@ -1987,8 +2890,8 @@ fun VisualQuizContent(
                 style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Black)
             )
         }
-    } // 🚨 Column burada kapanıyor
-} // 🚨 VisualQuizContent fonksiyonu burada kapanıyor
+    }
+}
 
 @Composable
 fun ListeningQuizContent(
@@ -1996,60 +2899,64 @@ fun ListeningQuizContent(
     tts: SpeechAssistant,
     onAnswer: (String) -> Unit
 ) {
+    val appColors = LocalAppThemeColors.current
     var isTextVisible by remember { mutableStateOf(false) }
-    val primaryColor = Color(0xFF1CB0F6)
+    var selectedOption by rememberSaveable(data.id) { mutableStateOf<String?>(null) }
+    val primaryColor = appColors.primary
     val shuffledOptions = remember(data.id) { data.options.shuffled() }
 
-    // ✅ YENİ: Soru dili kontrolü ile otomatik seslendirme
     LaunchedEffect(data.id) {
         isTextVisible = false
+        selectedOption = null
         tts.speakEnglish(data.question)
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(horizontal = 18.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // --- KARAKTER VE KONUŞMA BALONU ---
+        // --- KARAKTER VE KONUŞMA BALONU (Daha büyük ve belirgin) ---
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(vertical = 30.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp)
         ) {
-            // ✅ MANUEL BOYUTLANDIRMA BURADA UYGULANIYOR
             Image(
-                painter = painterResource(id = data.imageRes),
+                painter = safePainterResource(
+                    resId = if (data.imageRes != 0) data.imageRes else R.drawable.professor_cat,
+                    fallbackResId = R.drawable.professor_cat
+                ),
                 contentDescription = null,
                 modifier = Modifier
-                    .size(data.imageSize.dp) // Manuel size
-                    .padding(data.imagePadding.dp) // Manuel padding
+                    .size(105.dp)
+                    .padding(2.dp)
             )
 
             Spacer(modifier = Modifier.width(12.dp))
 
             Surface(
-                color = Color.White,
+                color = appColors.surface,
                 shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd = 20.dp),
-                shadowElevation = 6.dp,
+                shadowElevation = 5.dp,
+                border = BorderStroke(1.5.dp, appColors.border),
                 modifier = Modifier.weight(1f)
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    // Soru Metni Alanı (Gizli/Açık)
+                Column(modifier = Modifier.padding(14.dp)) {
                     Box(modifier = Modifier.fillMaxWidth().animateContentSize()) {
                         if (isTextVisible) {
                             Text(
                                 text = data.question,
-                                color = Color.Black,
-                                style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                color = appColors.text,
+                                style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Black, lineHeight = 26.sp)
                             )
                         } else {
                             Text(
                                 text = "???",
-                                color = Color.Gray.copy(alpha = 0.3f),
-                                style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                                color = appColors.textMuted.copy(alpha = 0.6f),
+                                style = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Black)
                             )
                         }
                     }
@@ -2061,10 +2968,14 @@ fun ListeningQuizContent(
                         horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        TextButton(onClick = { isTextVisible = !isTextVisible }) {
+                        TextButton(
+                            onClick = { isTextVisible = !isTextVisible },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
                             Text(
                                 text = if (isTextVisible) "Gizle" else "Metni Gör",
-                                fontSize = 12.sp,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
                                 color = primaryColor
                             )
                         }
@@ -2075,43 +2986,75 @@ fun ListeningQuizContent(
                             },
                             modifier = Modifier
                                 .size(40.dp)
-                                .background(primaryColor.copy(alpha = 0.1f), CircleShape)
+                                .background(primaryColor.copy(alpha = 0.15f), CircleShape)
                         ) {
-                            Icon(Icons.Default.VolumeUp, contentDescription = null, tint = primaryColor)
+                            Icon(
+                                Icons.Default.VolumeUp,
+                                contentDescription = null,
+                                tint = primaryColor,
+                                modifier = Modifier.size(22.dp)
+                            )
                         }
                     }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
-        // --- CEVAP BUTONLARI ---
-        // --- CEVAP BUTONLARI (GÜNCELLENDİ) ---
+        // --- CEVAP BUTONLARI (Sorunun hemen altında) ---
         Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             shuffledOptions.forEach { option ->
+                val isSelected = selectedOption == option
                 Button(
                     onClick = {
-                        onAnswer(option)
+                        selectedOption = option
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp),
+                        .height(60.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White,
-                        contentColor = Color.Black
+                        containerColor = if (isSelected) appColors.primarySoft else appColors.surface,
+                        contentColor = if (isSelected) appColors.primary else appColors.text
                     ),
-                    border = BorderStroke(2.dp, Color(0xFFE5E5E5))
+                    border = BorderStroke(if (isSelected) 2.5.dp else 1.5.dp, if (isSelected) appColors.primary else appColors.border)
                 ) {
                     Text(
                         text = option,
-                        style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Black)
                     )
                 }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Button(
+                onClick = {
+                    selectedOption?.let(onAnswer)
+                },
+                enabled = selectedOption != null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(58.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (selectedOption != null) primaryColor else appColors.surface,
+                    disabledContainerColor = appColors.surface.copy(alpha = 0.5f)
+                ),
+                border = BorderStroke(1.dp, if (selectedOption != null) primaryColor else appColors.border)
+            ) {
+                Text(
+                    text = "KONTROL ET",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 18.sp,
+                    color = if (selectedOption != null) Color.White else appColors.textMuted
+                )
             }
         }
     }
@@ -2123,10 +3066,9 @@ fun eslestirme(
     health: Int,
     onAnswerResult: (Boolean) -> Unit
 ) {
+    val appColors = LocalAppThemeColors.current
     // ✅ YENİ MODEL UYUMU: data.options artık direkt String listesi!
     val pairs: List<Pair<String, String>> = remember(data) {
-        // .map { it.text } kısmını sildik çünkü zaten String elimizde.
-        // data.options: ["Elma", "Armut"], correctAnswer: "apple,pear" varsayalım.
         data.options.zip(data.correctAnswer.split(","))
     }
 
@@ -2147,7 +3089,7 @@ fun eslestirme(
         Spacer(modifier = Modifier.height(30.dp))
         Text(
             text = "Kelimeleri Eşleştir",
-            style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4B4B4B))
+            style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold, color = appColors.text)
         )
         Spacer(modifier = Modifier.height(20.dp))
 
@@ -2216,16 +3158,19 @@ fun MatchingChip(
     isMatched: Boolean,
     onClick: () -> Unit
 ) {
+    val appColors = LocalAppThemeColors.current
+    val isDark = LocalIsDarkMode.current
+
     val borderColor = when {
-        isMatched -> Color(0xFFC3F6D5)
-        isSelected -> Color(0xFF1CB0F6)
-        else -> Color(0xFFE5E5E5)
+        isMatched -> if (isDark) Color(0xFF2E9D78) else Color(0xFFC3F6D5)
+        isSelected -> appColors.primary
+        else -> appColors.border
     }
 
     val bgColor = when {
-        isMatched -> Color(0xFFE8F5E9)
-        isSelected -> Color(0xFFE3F2FD)
-        else -> Color.White
+        isMatched -> if (isDark) Color(0xFF103326) else Color(0xFFE8F5E9)
+        isSelected -> appColors.primarySoft
+        else -> appColors.surface
     }
 
     Surface(
@@ -2242,7 +3187,11 @@ fun MatchingChip(
             Text(
                 text = word,
                 fontWeight = FontWeight.Bold,
-                color = if (isMatched) Color(0xFF4CAF50) else Color.Black
+                color = when {
+                    isMatched -> if (isDark) Color(0xFF55D6A7) else Color(0xFF2E7D32)
+                    isSelected -> appColors.primary
+                    else -> appColors.text
+                }
             )
         }
     }

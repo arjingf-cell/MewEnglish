@@ -21,12 +21,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-
-
-import androidx.compose.foundation.shape.CircleShape // ✅ Doğrusu bu
-
-
-
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.CircleShape
+import com.example.ngilizcequizapp.LocalAppThemeColors
+import com.example.ngilizcequizapp.LocalIsDarkMode
 
 // --- 1. VERİ MODELLERİ (Bunlar en üstte durmalı ki motor bunları tanısın) ---
 data class VisualQuizOption(
@@ -48,11 +46,19 @@ fun VisualQuizScreen(
     quizStep: VisualQuizStep,
     onAnswerSelected: (Boolean) -> Unit
 ) {
+    val appColors = LocalAppThemeColors.current
+    val isDark = LocalIsDarkMode.current
     var selectedId by remember { mutableStateOf<Int?>(null) }
 
-    val backgroundGradient = Brush.verticalGradient(
-        colors = listOf(Color(0xFFEBF5FF), Color(0xFFFFFFFF))
-    )
+    val backgroundGradient = if (isDark) {
+        Brush.verticalGradient(
+            colors = listOf(appColors.background, appColors.surfaceRaised)
+        )
+    } else {
+        Brush.verticalGradient(
+            colors = listOf(Color(0xFFEBF5FF), Color(0xFFFFFFFF))
+        )
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(backgroundGradient)) {
         Column(
@@ -61,25 +67,41 @@ fun VisualQuizScreen(
         ) {
             // Karakter ve Balon
             Row(modifier = Modifier.fillMaxWidth().padding(top = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                // Burada R.drawable.prof_kedi kısmında hala hata alırsan
-                // şimdilik res/drawable içindeki kesin olan bir resim adını yaz.
-                Box(modifier = Modifier.size(80.dp)) {
-                    // Image(painter = painterResource(id = R.drawable.prof_kedi), contentDescription = null)
-                }
+                Box(modifier = Modifier.size(80.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Surface(shape = RoundedCornerShape(16.dp), color = Color.White, shadowElevation = 2.dp) {
-                    Text(text = quizStep.characterSpeech, modifier = Modifier.padding(12.dp), fontSize = 14.sp)
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = appColors.surface,
+                    border = BorderStroke(1.dp, appColors.border),
+                    shadowElevation = if (isDark) 0.dp else 2.dp
+                ) {
+                    Text(
+                        text = quizStep.characterSpeech,
+                        modifier = Modifier.padding(12.dp),
+                        fontSize = 14.sp,
+                        color = appColors.text
+                    )
                 }
             }
 
             Spacer(modifier = Modifier.height(20.dp))
 
             // Soru Alanı
-            Surface(shape = RoundedCornerShape(24.dp), color = Color.White, modifier = Modifier.fillMaxWidth()) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = appColors.surface,
+                border = BorderStroke(1.dp, appColors.border),
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Column(modifier = Modifier.padding(20.dp)) {
-                    Text(text = quizStep.question, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text(
+                        text = quizStep.question,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = appColors.text
+                    )
                     Spacer(modifier = Modifier.height(10.dp))
-                    HorizontalDivider(color = Color(0xFF1CB0F6), thickness = 4.dp)
+                    HorizontalDivider(color = appColors.primary, thickness = 4.dp)
                 }
             }
 
@@ -108,7 +130,7 @@ fun VisualQuizScreen(
                 modifier = Modifier.fillMaxWidth().height(60.dp).padding(bottom = 8.dp),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (selectedId != null) Color(0xFF1CB0F6) else Color.LightGray
+                    containerColor = if (selectedId != null) appColors.primary else if (isDark) appColors.surfaceRaised else Color.LightGray
                 )
             ) {
                 Text("KONTROL ET", fontWeight = FontWeight.ExtraBold, color = Color.White)
@@ -116,9 +138,12 @@ fun VisualQuizScreen(
         }
     }
 }
+
 @Composable
 fun AnswerCard(option: VisualQuizOption, isSelected: Boolean, onSelect: () -> Unit) {
-    val borderColor = if (isSelected) Color(0xFF1CB0F6) else Color(0xFFE5E5E5)
+    val appColors = LocalAppThemeColors.current
+    val isDark = LocalIsDarkMode.current
+    val borderColor = if (isSelected) appColors.primary else appColors.border
 
     Surface(
         modifier = Modifier
@@ -126,27 +151,30 @@ fun AnswerCard(option: VisualQuizOption, isSelected: Boolean, onSelect: () -> Un
             .clickable { onSelect() }
             .border(2.dp, borderColor, RoundedCornerShape(16.dp)),
         shape = RoundedCornerShape(16.dp),
-        color = if (isSelected) Color(0xFFE3F2FD) else Color.White
+        color = if (isSelected) (if (isDark) appColors.surfaceRaised else Color(0xFFE3F2FD)) else appColors.surface
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Box(
                 modifier = Modifier
                     .size(70.dp)
-                    .background(Color(0xFF1CB0F6).copy(alpha = 0.1f), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                // Buradaki imageRes referansı data class'tan geliyor
-                // Image(painter = painterResource(id = option.imageRes), contentDescription = null, modifier = Modifier.size(50.dp))
-            }
+                    .background(appColors.primary.copy(alpha = 0.1f), CircleShape)
+            )
             Spacer(modifier = Modifier.height(8.dp))
-            Text(text = option.text, fontWeight = FontWeight.Bold)
+            Text(
+                text = option.text,
+                fontWeight = FontWeight.Bold,
+                color = if (isSelected) appColors.primary else appColors.text
+            )
         }
     }
 }
+
 @Composable
 fun AnswerOptionCard(isSelected: Boolean, onClick: () -> Unit) {
-    val borderColor = if (isSelected) Color(0xFF1CB0F6) else Color(0xFFE5E5E5)
-    val bgColor = if (isSelected) Color(0xFFE3F2FD) else Color.White
+    val appColors = LocalAppThemeColors.current
+    val isDark = LocalIsDarkMode.current
+    val borderColor = if (isSelected) appColors.primary else appColors.border
+    val bgColor = if (isSelected) (if (isDark) appColors.surfaceRaised else Color(0xFFE3F2FD)) else appColors.surface
 
     Surface(
         modifier = Modifier
@@ -161,14 +189,12 @@ fun AnswerOptionCard(isSelected: Boolean, onClick: () -> Unit) {
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.padding(8.dp)
         ) {
-            // PNG arkasındaki mavi yuvarlak
             Box(
                 modifier = Modifier
                     .size(70.dp)
-                    .background(Color(0xFF1CB0F6).copy(alpha = 0.2f), CircleShape),
+                    .background(appColors.primary.copy(alpha = 0.2f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                // Cevap PNG'si
                 Box(modifier = Modifier.size(50.dp).background(Color.Transparent))
             }
 
@@ -177,7 +203,7 @@ fun AnswerOptionCard(isSelected: Boolean, onClick: () -> Unit) {
             Text(
                 text = "Cevap Metni",
                 fontWeight = FontWeight.Bold,
-                color = if (isSelected) Color(0xFF1CB0F6) else Color.Gray
+                color = if (isSelected) appColors.primary else appColors.textMuted
             )
         }
     }

@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Color as AndroidColor
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -132,10 +133,10 @@ fun BadgeImage(
             Image(
                 painter = painterResource(id = resId),
                 contentDescription = badge.name,
-                modifier = Modifier.fillMaxSize().scale(1.1f).offset(y = (-3).dp).clip(RoundedCornerShape(12.dp)),
-                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().scale(1.18f),
+                contentScale = ContentScale.Fit,
                 colorFilter = if (isUnlocked) null else ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) }),
-                alpha = 1f
+                alpha = if (isUnlocked) 1f else 0.45f
             )
         } else {
             Box(
@@ -184,13 +185,28 @@ fun BadgePopupDialog(
     isUnlocked: Boolean,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
+    val appColors = LocalAppThemeColors.current
+    val isDark = LocalIsDarkMode.current
+    val isKingdomTheme = remember {
+        UserCosmeticsStore.isKingdomThemeActive(context)
+    }
+    val goldBrush = remember {
+        Brush.horizontalGradient(
+            listOf(Color(0xFFFFDF7A), Color(0xFFD4AF37), Color(0xFFAA7C11), Color(0xFFFFDF7A))
+        )
+    }
+
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
                 .shadow(12.dp, RoundedCornerShape(16.dp)),
             shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B))
+            colors = CardDefaults.cardColors(
+                containerColor = if (isKingdomTheme) Color(0xFF070F26).copy(alpha = 0.96f) else appColors.surface
+            ),
+            border = if (isKingdomTheme) BorderStroke(1.5.dp, goldBrush) else androidx.compose.foundation.BorderStroke(1.dp, appColors.border)
         ) {
             Row(
                 modifier = Modifier
@@ -201,21 +217,21 @@ fun BadgePopupDialog(
                 BadgeImage(
                     badge = badge,
                     context = LocalContext.current,
-                    modifier = Modifier.size(72.dp),
+                    modifier = Modifier.size(86.dp),
                     isUnlocked = isUnlocked
                 )
                 Spacer(modifier = Modifier.width(16.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = badge.name,
-                        color = Color(0xFF00E5FF), // açık mavi
+                        color = if (isKingdomTheme) Color(0xFFFFD700) else badge.rarity.color,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 18.sp
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = badge.description,
-                        color = Color(0xFFCBD5E1), // açık gri
+                        color = if (isKingdomTheme) Color(0xFFFFF7D6).copy(alpha = 0.85f) else appColors.textMuted,
                         fontSize = 13.sp,
                         lineHeight = 18.sp
                     )
@@ -223,7 +239,7 @@ fun BadgePopupDialog(
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = if (isUnlocked) "Rozet Kazanıldı!" else "Kilitli (Simülasyon panelinden açabilirsiniz)",
-                        color = if (isUnlocked) Color(0xFF22C55E) else Color.Gray,
+                        color = if (isUnlocked) Color(0xFF22C55E) else (if (isKingdomTheme) Color(0xFF64748B) else appColors.textMuted),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         fontStyle = FontStyle.Italic
@@ -237,21 +253,23 @@ fun BadgePopupDialog(
 @Composable
 fun BadgesScreen(navController: NavController) {
     val context = LocalContext.current
+    val appColors = LocalAppThemeColors.current
+    val isDark = LocalIsDarkMode.current
+    val isKingdomTheme = remember {
+        UserCosmeticsStore.isKingdomThemeActive(context)
+    }
+    val goldBrush = remember {
+        Brush.horizontalGradient(
+            listOf(Color(0xFFFFDF7A), Color(0xFFD4AF37), Color(0xFFAA7C11), Color(0xFFFFDF7A))
+        )
+    }
     var selectedBadge by remember { mutableStateOf<BadgeData?>(null) }
     var showSimulator by remember { mutableStateOf(false) }
-
-    val window = remember(context) {
-        (context as? android.app.Activity)?.window
-    }
 
     // Initialize badges state
     LaunchedEffect(Unit) {
         AchievementManager.init(context)
         AchievementManager.unlockBadge(context, "common_explorer")
-        window?.let {
-            it.statusBarColor = android.graphics.Color.parseColor("#F8FAFC")
-            it.navigationBarColor = android.graphics.Color.parseColor("#F8FAFC")
-        }
     }
 
     Scaffold(
@@ -259,9 +277,9 @@ fun BadgesScreen(navController: NavController) {
             TopAppBar(
                 title = {
                     Text(
-                        "Rozetlerim",
+                        if (isKingdomTheme) "👑 Kraliyet Nişanları" else "Rozetlerim",
                         fontWeight = FontWeight.Black,
-                        color = Color(0xFF1E293B)
+                        color = if (isKingdomTheme) Color(0xFFFFF7D6) else appColors.text
                     )
                 },
                 navigationIcon = {
@@ -269,30 +287,49 @@ fun BadgesScreen(navController: NavController) {
                         Icon(
                             imageVector = Icons.Default.ArrowBack,
                             contentDescription = "Geri",
-                            tint = Color(0xFF1E293B)
+                            tint = if (isKingdomTheme) Color(0xFFFFD700) else appColors.text
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = if (isKingdomTheme) Color(0xFF070F26).copy(alpha = 0.95f) else appColors.surface
+                )
             )
         },
-        containerColor = Color(0xFFF8FAFC)
+        containerColor = if (isKingdomTheme) Color.Transparent else appColors.background
     ) { paddingValues ->
-        LazyColumn(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues),
-            contentPadding = PaddingValues(16.dp)
+                .padding(paddingValues)
         ) {
-            // 🛠 Simülasyon Paneli Butonu
-            item {
+            if (isKingdomTheme) {
+                Image(
+                    painter = painterResource(id = R.drawable.kingdom_arkaplan),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFF040816).copy(alpha = 0.40f))
+                )
+            }
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp)
+            ) {
+            // 🛠 Simülasyon Paneli Butonu (Yalnızca Demo Modunda)
+            if (com.example.ngilizcequizapp.UserProfileManager.isDemoMode(context)) {
+                item {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 16.dp),
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFEFF6FF)),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFBFDBFE))
+                    colors = CardDefaults.cardColors(containerColor = appColors.surfaceRaised),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, appColors.border)
                 ) {
                     Column(
                         modifier = Modifier
@@ -307,7 +344,7 @@ fun BadgesScreen(navController: NavController) {
                             Text(
                                 "Rozet Test Simülatörü",
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF1E40AF),
+                                color = appColors.primary,
                                 fontSize = 14.sp
                             )
                             Button(
@@ -332,7 +369,7 @@ fun BadgesScreen(navController: NavController) {
                                 Text(
                                     "Aşağıdaki butonlara tıklayarak istediğiniz rozeti anında açabilir, toast bildirimini ve kilit açılma animasyonlarını test edebilirsiniz:",
                                     fontSize = 11.sp,
-                                    color = Color(0xFF1E3A8A)
+                                    color = appColors.textMuted
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 
@@ -382,6 +419,7 @@ fun BadgesScreen(navController: NavController) {
                     }
                 }
             }
+            }
 
             // Rozet Kategorileri
             val rarities = BadgeRarity.values()
@@ -415,21 +453,27 @@ fun BadgesScreen(navController: NavController) {
                                         .clickable {
                                             selectedBadge = badge
                                         },
-                                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isKingdomTheme) {
+                                            if (isUnlocked) Color(0xFF070F26).copy(alpha = 0.94f) else Color(0xFF040816).copy(alpha = 0.70f)
+                                        } else appColors.surface
+                                    ),
+                                    border = if (isKingdomTheme) {
+                                        if (isUnlocked) BorderStroke(1.5.dp, goldBrush) else BorderStroke(1.dp, Color(0xFF1E2D4A))
+                                    } else androidx.compose.foundation.BorderStroke(1.dp, appColors.border),
                                     elevation = CardDefaults.cardElevation(2.dp),
                                     shape = RoundedCornerShape(16.dp)
                                 ) {
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(12.dp),
+                                            .padding(horizontal = 6.dp, vertical = 8.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally
                                     ) {
                                         BadgeImage(
                                             badge = badge,
                                             context = context,
-                                            modifier = Modifier.size(60.dp),
+                                            modifier = Modifier.size(72.dp),
                                             isUnlocked = isUnlocked
                                         )
                                         Spacer(modifier = Modifier.height(8.dp))
@@ -437,7 +481,11 @@ fun BadgesScreen(navController: NavController) {
                                             text = badge.name,
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = if (isUnlocked) Color(0xFF1E293B) else Color.Gray,
+                                            color = if (isKingdomTheme) {
+                                                if (isUnlocked) Color(0xFFFFF7D6) else Color(0xFF64748B)
+                                            } else {
+                                                if (isUnlocked) appColors.text else appColors.textMuted
+                                            },
                                             textAlign = TextAlign.Center,
                                             maxLines = 1
                                         )
@@ -453,6 +501,7 @@ fun BadgesScreen(navController: NavController) {
                         }
                     }
                 }
+            }
             }
         }
     }
@@ -533,6 +582,8 @@ fun AchievementToast(
         onDismiss()
     }
 
+    val appColors = LocalAppThemeColors.current
+
     AnimatedVisibility(
         visible = isVisible,
         enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
@@ -547,8 +598,8 @@ fun AchievementToast(
                 .fillMaxWidth()
                 .shadow(8.dp, RoundedCornerShape(16.dp)),
             shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+            colors = CardDefaults.cardColors(containerColor = appColors.surface),
+            border = androidx.compose.foundation.BorderStroke(1.dp, appColors.border)
         ) {
             Row(
                 modifier = Modifier
@@ -573,7 +624,7 @@ fun AchievementToast(
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = badge.description,
-                        color = Color(0xFF475569),
+                        color = appColors.textMuted,
                         fontSize = 12.sp,
                         lineHeight = 16.sp
                     )
